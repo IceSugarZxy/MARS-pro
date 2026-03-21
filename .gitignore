@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Qt
+*.pyc
+*.pyo
+ui/*.py
+
+# Data
+data/raw_data/*
+data/plot_data/*
+!data/raw_data/.gitkeep
+!data/plot_data/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Config (可保留模板)
+# configuration.txt
