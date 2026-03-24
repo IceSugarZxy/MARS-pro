@@ -61,7 +61,7 @@ class DataProcess(QObject):
     signal_offset_data_process_finished = pyqtSignal(bool)              # 偏置数据处理完成信号
     signal_measure_data_process = pyqtSignal()                          # 测量数据处理信号
     signal_measure_data_process_finished = pyqtSignal(object, object)   # 测量数据处理完成信号
-    signal_measure_data_progress = pyqtSignal(int)                      # 测量数据处理进度信号
+    signal_measure_data_progress = pyqtSignal(int, int)                 # 测量数据处理进度信号 (当前数据量, 总数据量)
     signal_self_detect_process = pyqtSignal()                           # 自检消息处理信号
     signal_self_detect_finished = pyqtSignal(str)                       # 自检完成信号，参数为轴 ('X'/'Z')
     # ========================================================================
@@ -293,9 +293,9 @@ class DataProcess(QObject):
                 # 尝试解码
                 try:
                     text = DataProcess._position_buffer.decode('utf-8')
-                    # 查找最后一个完整的 X:数字,Z:数字 模式
+                    # 查找最后一个完整的 X:数字,Z:数字 模式（支持负数）
                     import re
-                    pattern = r'X:(\d+),Z:(\d+)'
+                    pattern = r'X:(-?\d+),Z:(-?\d+)'
                     matches = re.findall(pattern, text)
                     if matches:
                         last_match = matches[-1]
@@ -371,8 +371,8 @@ class DataProcess(QObject):
 
                     # 已处理的数据从缓冲区删除
                     del temp_buffer[0:batch_size * 2]
-                    # 发出进度信号，用于更新UI
-                    self.signal_measure_data_progress.emit(len(measure_list))
+                    # 发出进度信号，用于更新UI (当前数据量, 期望总数据量)
+                    self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
                     logger.debug(f"缓冲区处理完成，本批处理 {batch_size} 组，当前总数据点: {len(measure_list)}，缓冲区剩余: {len(temp_buffer)} 字节")
 
                 # ============================================================

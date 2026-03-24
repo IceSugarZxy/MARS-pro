@@ -59,6 +59,10 @@ class SerialCommand(QObject):
         # 偏置校准标志
         self._offset_calibrating = False
 
+        # 位置查询重试计数（用于自检后反向移动）
+        self._position_query_retry_count = 0
+        self._max_position_query_retries = 3
+
         logger.debug("SerialCommand 初始化完成")
 
     @contextmanager
@@ -158,6 +162,7 @@ class SerialCommand(QObject):
     def auto_press(self) -> None:
         """发送自动下压命令（Z轴）"""
         self._pending_retract_axis = 'Z'
+        self._position_query_retry_count = 0
         logger.info("开始Z轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
         self.data_process.clear_data_queue()
@@ -167,6 +172,7 @@ class SerialCommand(QObject):
     def auto_press_left(self) -> None:
         """发送向左贴靠命令（X轴）"""
         self._pending_retract_axis = 'X'
+        self._position_query_retry_count = 0
         logger.info("开始X轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
         self.data_process.clear_data_queue()
@@ -201,10 +207,16 @@ class SerialCommand(QObject):
         if self._pending_retract_axis:
             # 检查位置数据有效性
             if position_data[0] is None or position_data[1] is None:
-                logger.warning(f"位置数据无效，重新查询位置: {position_data}")
-                # 重新触发位置查询
-                self.position_query()
+                self._position_query_retry_count += 1
+                if self._position_query_retry_count >= self._max_position_query_retries:
+                    logger.error(f"位置数据无效，已达最大重试次数({self._max_position_query_retries})，放弃反向移动")
+                    self._pending_retract_axis = None
+                    self._position_query_retry_count = 0
+                else:
+                    logger.warning(f"位置数据无效，重新查询位置 ({self._position_query_retry_count}/{self._max_position_query_retries}): {position_data}")
+                    self.position_query()
             else:
+                self._position_query_retry_count = 0
                 self._execute_retract(position_data)
         # 2. 处理方向键移动任务
         elif self._pending_move_task:

@@ -69,7 +69,16 @@ class MeasureWindow(QMainWindow):
         
         # 初始化显示控件
         self._init_display_controls()
-        
+
+        # 初始化状态自动恢复定时器（用于瞬时操作提示2秒后自动清空）
+        self._status_auto_recover_timer = QTimer(self)
+        self._status_auto_recover_timer.timeout.connect(self._clear_status_message)
+
+    def _clear_status_message(self):
+        """清空状态消息，恢复默认状态"""
+        if self.status_label:
+            self.status_label.setText("")
+            self.status_label.setStyleSheet("")
 
     def _connect_position_data_signal(self):
         """连接位置数据处理完成信号
@@ -177,8 +186,8 @@ class MeasureWindow(QMainWindow):
         self.polar_num_edit = self.findChild(QLineEdit, "lineEdit_polarNum")
         # 备注
         self.remark_edit = self.findChild(QLineEdit, "lineEdit_remark")
-        # 线圈编号
-        self.coil_code_edit = self.findChild(QLineEdit, "lineEdit_coilCode")
+        # 气隙
+        self.airgap_edit = self.findChild(QLineEdit, "lineEdit_arigap")
         # 磁强计（默认值）
         self.magnetometer_edit = None
         # 磁化器（默认值）
@@ -225,13 +234,15 @@ class MeasureWindow(QMainWindow):
         
         # 距离输入框
         self.distance_edit = self.findChild(QLineEdit, "lineEdit_distance")
-        
-        # 初始化默认值
+
+        # 初始化样品信息默认值
+        self._set_input_defaults()
+
+        # 初始化结果显示默认值
         self._update_display_defaults()
-    
-    def _update_display_defaults(self):
-        """更新显示默认值"""
-        # 设置输入框默认值
+
+    def _set_input_defaults(self):
+        """设置输入框的默认值（仅在初始化时调用）"""
         self.tester_edit.setText("测试员")
         self.mag_condition_edit.setText("标准条件")
         self.probe_edit.setText("标准探头")
@@ -240,12 +251,26 @@ class MeasureWindow(QMainWindow):
         self.material_edit.setText("磁性材料")
         self.polar_num_edit.setText("")
         self.remark_edit.setText("测试备注")
-        self.coil_code_edit.setText("线圈")
-        
+        self.airgap_edit.setText("--")
+
+    def _update_display_defaults(self):
+        """更新显示默认值 - 只重置结果显示区域，不重置样品信息输入框"""
         # 设置距离输入框默认值（单位：mm）
         if self.distance_edit:
             self.distance_edit.setText("1")
-        
+
+    def _reset_sample_inputs(self):
+        """重置样品信息输入框为默认值"""
+        self.sample_code_edit.setText("样品")
+        self.sample_name_edit.setText("测试样品")
+        self.material_edit.setText("磁性材料")
+        self.airgap_edit.setText("--")
+        self.remark_edit.setText("测试备注")
+        self.tester_edit.setText("测试员")
+        self.mag_condition_edit.setText("标准条件")
+        self.probe_edit.setText("标准探头")
+        self.polar_num_edit.setText("")
+
         # 设置结果显示默认值（按照指定顺序）
         # N极相关
         self.n_max_edit.setText("0.00")
@@ -324,6 +349,9 @@ class MeasureWindow(QMainWindow):
         measure_type = dialog.get_measure_type()
         vertical_distance = dialog.get_vertical_distance()
 
+        # 重置样品信息输入框
+        self._reset_sample_inputs()
+
         # 设置测量类型到数据处理器
         self.data_process.measure_type = measure_type
 
@@ -332,7 +360,7 @@ class MeasureWindow(QMainWindow):
             'sample_code': self.sample_code_edit.text().strip() if self.sample_code_edit else '',
             'sample_name': self.sample_name_edit.text().strip() if self.sample_name_edit else '',
             'material': self.material_edit.text().strip() if self.material_edit else '',
-            'coil_code': self.coil_code_edit.text().strip() if self.coil_code_edit else '',
+            'coil_code': self.airgap_edit.text().strip() if self.airgap_edit else '',
             'remark': self.remark_edit.text().strip() if self.remark_edit else '',
             'tester': self.tester_edit.text().strip() if self.tester_edit else '',
             'mag_condition': self.mag_condition_edit.text().strip() if self.mag_condition_edit else '',
@@ -425,7 +453,7 @@ class MeasureWindow(QMainWindow):
     def _save_data_button_clicked(self):
         """保存数据按钮点击事件"""
         logger.info("保存数据按钮被点击")
-        self._update_status("正在保存数据...")
+        self._update_status("正在保存数据...", auto_recover=True)
         success = self.save_plot_data()
         if success:
             logger.info("数据保存成功")
@@ -437,7 +465,7 @@ class MeasureWindow(QMainWindow):
     def _measure_serial_button_clicked(self):
         """串口按钮点击事件 - 同步home界面的串口设置功能"""
         logger.info("串口按钮被点击")
-        self._update_status("打开串口设置...")
+        self._update_status("打开串口设置...", auto_recover=True)
         
         if self.home_window and hasattr(self.home_window, 'serial_window'):
             if self.home_window.serial_window:
@@ -453,7 +481,7 @@ class MeasureWindow(QMainWindow):
     def _measure_history_button_clicked(self):
         """数据按钮点击事件 - 同步home界面的历史数据功能"""
         logger.info("数据按钮被点击")
-        self._update_status("打开数据历史...")
+        self._update_status("打开数据历史...", auto_recover=True)
         
         if self.home_window and hasattr(self.home_window, 'history_window'):
             if self.home_window.history_window:
@@ -467,7 +495,7 @@ class MeasureWindow(QMainWindow):
     def _measure_setting_button_clicked(self):
         """设置按钮点击事件 - 同步home界面的测试位置功能"""
         logger.info("设置按钮被点击")
-        self._update_status("打开测试位置...")
+        self._update_status("打开测试位置...", auto_recover=True)
         
         if self.home_window and hasattr(self.home_window, 'position_window'):
             if self.home_window.position_window:
@@ -481,7 +509,7 @@ class MeasureWindow(QMainWindow):
     def _measure_compare_button_clicked(self):
         """对比按钮点击事件 - 同步home界面的数据比对功能"""
         logger.info("对比按钮被点击")
-        self._update_status("打开数据对比...")
+        self._update_status("打开数据对比...", auto_recover=True)
         
         if self.home_window and hasattr(self.home_window, 'compare_window'):
             if self.home_window.compare_window:
@@ -500,7 +528,7 @@ class MeasureWindow(QMainWindow):
         if distance is None:
             return
 
-        self._update_status("向上移动...")
+        self._update_status("向上移动...", auto_recover=True)
         # 设置任务并发送位置查询，等位置处理完成后再执行移动
         self.serial_command.set_move_task('Z', -1, distance)
         self.serial_command.position_query()
@@ -513,7 +541,7 @@ class MeasureWindow(QMainWindow):
         if distance is None:
             return
 
-        self._update_status("向下移动...")
+        self._update_status("向下移动...", auto_recover=True)
         self.serial_command.set_move_task('Z', 1, distance)
         self.serial_command.position_query()
 
@@ -525,7 +553,7 @@ class MeasureWindow(QMainWindow):
         if distance is None:
             return
 
-        self._update_status("向左移动...")
+        self._update_status("向左移动...", auto_recover=True)
         self.serial_command.set_move_task('X', 1, distance)
         self.serial_command.position_query()
 
@@ -537,7 +565,7 @@ class MeasureWindow(QMainWindow):
         if distance is None:
             return
 
-        self._update_status("向右移动...")
+        self._update_status("向右移动...", auto_recover=True)
         self.serial_command.set_move_task('X', -1, distance)
         self.serial_command.position_query()
 
@@ -692,23 +720,30 @@ class MeasureWindow(QMainWindow):
         # 启用所有功能按钮
         self._enable_function_buttons()
     
-    def _update_status(self, message, is_error=False):
+    def _update_status(self, message, is_error=False, auto_recover=False):
         """更新状态标签显示
-        
+
         Args:
             message: 要显示的消息
             is_error: 是否为错误信息
+            auto_recover: 是否自动恢复（2秒后清空），用于瞬时操作提示
         """
         if self.status_label:
             # 设置消息文本
             self.status_label.setText(message)
-            
+
             # 根据消息类型设置样式
             if is_error:
                 self.status_label.setStyleSheet("color: red; font-weight: bold;")
             else:
                 self.status_label.setStyleSheet("color: green; font-weight: bold;")
-            
+
+            # 如果设置了自动恢复，启动定时器
+            if auto_recover:
+                # 停止之前的定时器（如果存在）
+                if hasattr(self, '_status_auto_recover_timer') and self._status_auto_recover_timer.isActive():
+                    self._status_auto_recover_timer.stop()
+                self._status_auto_recover_timer.start(1000)
             # logger.info(f"状态更新: {message}")
         else:
             logger.info(f"状态标签未找到，消息: {message}")
@@ -724,7 +759,7 @@ class MeasureWindow(QMainWindow):
             'sample_code': self.sample_code_edit.text().strip() if self.sample_code_edit else '',
             'sample_name': self.sample_name_edit.text().strip() if self.sample_name_edit else '',
             'material': self.material_edit.text().strip() if self.material_edit else '',
-            'coil_code': self.coil_code_edit.text().strip() if self.coil_code_edit else '',
+            'coil_code': self.airgap_edit.text().strip() if self.airgap_edit else '',
             'remark': self.remark_edit.text().strip() if self.remark_edit else '',
             'tester': self.tester_edit.text().strip() if self.tester_edit else '',
             'mag_condition': self.mag_condition_edit.text().strip() if self.mag_condition_edit else '',
@@ -842,10 +877,14 @@ class MeasureWindow(QMainWindow):
         # 发射数据处理完成信号
         self.measure_data_processor.data_processed.emit(angle_data, mag_data)
     
-    def _on_measure_data_progress(self, data_count):
+    def _on_measure_data_progress(self, current_count, total_count):
         """测量数据进度信号处理"""
-        # 实时更新状态显示当前处理的数据量
-        status_msg = f"正在测量... 已处理数据量: {data_count}"
+        # 计算百分比
+        if total_count > 0:
+            percentage = min(100, round(current_count / total_count * 100, 1))
+            status_msg = f"正在测量... {percentage}%"
+        else:
+            status_msg = f"正在测量... 已处理数据量: {current_count}"
         self._update_status(status_msg)
     
     def _on_measure_data_processed(self, angle_data, mag_data):
@@ -865,14 +904,14 @@ class MeasureWindow(QMainWindow):
 
             # 根据测量类型决定是否进行波形分析
             if self.data_process.measure_type == "vertical":
-                # 垂直测量：直接完成，不做分析，但仍保存数据
+                # 垂直测量：直接完成，不做分析，不保存数据
                 sample_info = self._collect_sample_info_from_ui()
                 self.data_process.set_sample_info(sample_info)
-                self.data_process.save_plot_measure_data(angle_data, mag_data)
                 success_msg = "垂直测量完成"
                 self._update_status(success_msg)
             else:
                 # 旋转测量：进行波形分析
+                self._update_status("数据处理中...")
                 enable_concentricity = self.radioButton_Concentricity.isChecked() if self.radioButton_Concentricity else True
                 results = self.wave_analyzer.analyze_waveform(angle_data, mag_data, enable_concentricity)
 
@@ -883,9 +922,6 @@ class MeasureWindow(QMainWindow):
                 sample_info = self._collect_sample_info_from_ui()
                 sample_info['polar_num'] = results.get('pole_num', '') if results else ''
                 self.data_process.set_sample_info(sample_info)
-
-                # 保存处理后的数据到plot_data
-                self.data_process.save_plot_measure_data(angle_data, mag_data, results)
 
                 # 波形绘制和数据分析全部完成，结束测试
                 success_msg = "测试完成，数据已分析并显示"
@@ -1026,16 +1062,14 @@ class MeasureWindow(QMainWindow):
             sample_code = self.sample_code_edit.text()
             material = self.material_edit.text()
             polar_num = self.polar_num_edit.text()
-            magnetometer = self.magnetometer_edit.text() if self.magnetometer_edit else ""
-            magnetizer = self.magnetizer_edit.text() if self.magnetizer_edit else ""
             remark = self.remark_edit.text()
-            coil_code = self.coil_code_edit.text()
-            
+            coil_code = self.airgap_edit.text()
+
             # 写入CSV文件
             with open(file_path, 'w', encoding='utf-8', newline='') as csvfile:
                 import csv
                 writer = csv.writer(csvfile)
-                
+
                 # 写入头部信息
                 writer.writerow(["样品名称", sample_name])
                 writer.writerow(["测试员", tester])
@@ -1044,10 +1078,8 @@ class MeasureWindow(QMainWindow):
                 writer.writerow(["样品编号", sample_code])
                 writer.writerow(["材料", material])
                 writer.writerow(["极数", polar_num])
-                writer.writerow(["磁强计", magnetometer])
-                writer.writerow(["磁化器", magnetizer])
                 writer.writerow(["备注", remark])
-                writer.writerow(["线圈编号", coil_code])
+                writer.writerow(["气隙", coil_code])
                 writer.writerow(["保存时间", timestamp])
                 writer.writerow([])  # 空行分隔
                 

@@ -155,67 +155,85 @@ class WaveAnalysis:
             # Part 2: 过零点分析
             # logger.info("=== 过零点分析 ===")
             zero_crossings = []
-            angles_at_zero = [x[0]]
-            
+            zero_angles = []
+
             # 检测过零点
             for i in range(len(y) - 1):
                 if y[i] * y[i+1] <= 0:
                     if len(zero_crossings) == 0 or (i - zero_crossings[-1] > 10):
                         zero_crossings.append(i)
-            
+
             # logger.info(f"检测到过零点索引: {zero_crossings}")
-            
+
             # 线性拟合计算过零点角度
             # logger.info("=== 过零点角度计算 ===")
             for idx in zero_crossings:
                 try:
                     fit_start = max(0, idx - 10)
                     fit_end = min(len(x), idx + 11)
-                    
+
                     if fit_end - fit_start >= 2:
                         x_fit = x[fit_start:fit_end]
                         y_fit = y[fit_start:fit_end]
                         coefficients = np.polyfit(x_fit, y_fit, 1)
-                        
+
                         if coefficients[0] != 0:
                             zero_angle = -coefficients[1] / coefficients[0]
                             if x[0] <= zero_angle <= x[-1]:
-                                angles_at_zero.append(zero_angle)
+                                zero_angles.append(zero_angle)
                                 # logger.info(f"  过零点{i+1}: 索引={idx}, 角度={zero_angle:.2f}°")
                 except Exception as e:
                     logger.info(f"  过零点{i+1}计算失败: {e}")
                     continue
-            
-            angles_at_zero.append(x[-1])
-            angles_at_zero.sort()
+
+            zero_angles.sort()
+
+            # 构建角度列表：从0度到第一个过零点，然后从最后一个过零点回绕到360度
+            # 0到第一个过零点 + 最后一个过零点 + 第一个过零点到最后一个过零点
+            if len(zero_angles) >= 2:
+                angles_at_zero = [x[0]] + zero_angles + [x[-1]]
+            elif len(zero_angles) == 1:
+                # 只有一个过零点时，整个范围作为一个间隔
+                angles_at_zero = [x[0], zero_angles[0], x[-1]]
+            else:
+                angles_at_zero = [x[0], x[-1]]
+
+            # print(f"最终过零点角度: {[f'{a:.2f}°' for a in angles_at_zero]}")
             # print(f"最终过零点角度: {[f'{a:.2f}°' for a in angles_at_zero]}")
 
             # 计算极间隔和误差
             # logger.info("=== 极间隔分析 ===")
             N_interval, S_interval, SinglePolarValue = [], [], []
             SinglePolarError, PolarErrorSumList = [], []
-            
-            if len(angles_at_zero) > 1:
+
+            if len(angles_at_zero) > 2:
                 # logger.info(f"过零点数量: {len(angles_at_zero)}")
-                
-                # 计算N极和S极间隔
-                for i in range(len(angles_at_zero)-1):
+
+                # 第一个间隔和最后一个间隔需要合并（首尾相连）
+                # angles_at_zero = [0, first_zc, ..., last_zc, 360]
+                # 合并后的第一个N极间隔 = (360 - last_zc) + (first_zc - 0)
+                wrap_interval = (angles_at_zero[-1] - angles_at_zero[-2]) + (angles_at_zero[1] - angles_at_zero[0])
+                N_interval.append(wrap_interval)
+
+                # 计算中间的S极和N极间隔
+                for i in range(1, len(angles_at_zero) - 2):
                     interval = angles_at_zero[i+1] - angles_at_zero[i]
                     if interval > 0:
-                        if i % 2 == 0:
-                            N_interval.append(interval)
-                            # logger.info(f"  N极间隔{i//2+1}: {interval:.2f}°")
-                        else:
+                        if i % 2 == 1:  # i=1,3,5...为S极间隔
                             S_interval.append(interval)
-                            # logger.info(f"  S极间隔{i//2+1}: {interval:.2f}°")
-                
-                # 单对极周期
-                # logger.info("=== 单对极周期计算 ===")
-                for i in range(0, len(angles_at_zero)-2, 2):
-                    interval = angles_at_zero[i+2] - angles_at_zero[i]
-                    if interval > 0:
-                        SinglePolarValue.append(interval)
-                        # logger.info(f"  单对极周期{i//2+1}: {interval:.2f}°")
+                        else:  # i=2,4,6...为N极间隔
+                            N_interval.append(interval)
+
+                # 验证间隔数量一致性
+                if len(N_interval) > 0 and len(S_interval) > 0:
+                    logger.info(f"  N极间隔数量: {len(N_interval)}, S极间隔数量: {len(S_interval)}")
+
+                # 单对极周期 = 相邻的N极间隔+S极间隔
+                # 单对极周期计算使用合并后的间隔对
+                for i in range(len(N_interval)):
+                    if i < len(S_interval):
+                        polar_cycle = N_interval[i] + S_interval[i]
+                        SinglePolarValue.append(polar_cycle)
                 
                 # 单极误差
                 # logger.info("=== 单极误差计算 ===")

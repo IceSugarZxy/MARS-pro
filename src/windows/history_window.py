@@ -21,6 +21,9 @@ class HistoryWindow(QMainWindow):
         
         # 保存测量窗口引用
         self.measure_window = measure_window
+
+        # 文件路径存储字典（键：行号，值：文件路径）
+        self._file_paths = {}
         
         # 从history_window.ui文件加载界面
         ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "history_window.ui")
@@ -42,11 +45,13 @@ class HistoryWindow(QMainWindow):
         """初始化表格设置"""
         # 设置表格列宽
         header = self.tableWidget_files.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 样品名称
+        header.setSectionResizeMode(0, QHeaderView.Stretch)            # 样品名称
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # 测试员
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # 保存时间
-        header.setSectionResizeMode(3, QHeaderView.Stretch)           # 文件路径
-        
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 极对数
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 气隙
+        header.setSectionResizeMode(5, QHeaderView.Stretch)            # 备注
+
         # 设置表格行高
         self.tableWidget_files.verticalHeader().setDefaultSectionSize(35)
     
@@ -115,7 +120,10 @@ class HistoryWindow(QMainWindow):
             file_info = {
                 'sample_name': '未知样品',
                 'tester': '未知测试员',
-                'save_time': '未知时间'
+                'save_time': '未知时间',
+                'pole_num': '--',
+                'air_gap': '--',
+                'remark': '--'
             }
             
             with open(file_path, 'r', encoding='utf-8') as csvfile:
@@ -136,6 +144,12 @@ class HistoryWindow(QMainWindow):
                             file_info['tester'] = value
                         elif key == "保存时间":
                             file_info['save_time'] = value
+                        elif key == "极数":
+                            file_info['pole_num'] = value
+                        elif key == "气隙":
+                            file_info['air_gap'] = value
+                        elif key == "备注":
+                            file_info['remark'] = value
                         
                         # 如果已经读取到数据标题行，停止读取
                         if key == "角度(度)":
@@ -159,33 +173,46 @@ class HistoryWindow(QMainWindow):
     
     def _add_file_to_table(self, file_info, file_path):
         """添加文件信息到表格
-        
+
         Args:
             file_info: 文件信息字典
             file_path: 文件路径
         """
         row_position = self.tableWidget_files.rowCount()
         self.tableWidget_files.insertRow(row_position)
-        
+
         # 添加样品名称
         item_sample = QTableWidgetItem(file_info['sample_name'])
         item_sample.setFlags(item_sample.flags() & ~Qt.ItemIsEditable)
         self.tableWidget_files.setItem(row_position, 0, item_sample)
-        
+
         # 添加测试员
         item_tester = QTableWidgetItem(file_info['tester'])
         item_tester.setFlags(item_tester.flags() & ~Qt.ItemIsEditable)
         self.tableWidget_files.setItem(row_position, 1, item_tester)
-        
+
         # 添加保存时间
         item_time = QTableWidgetItem(file_info['save_time'])
         item_time.setFlags(item_time.flags() & ~Qt.ItemIsEditable)
         self.tableWidget_files.setItem(row_position, 2, item_time)
-        
-        # 添加文件路径（隐藏列，用于内部使用）
-        item_path = QTableWidgetItem(file_path)
-        item_path.setFlags(item_path.flags() & ~Qt.ItemIsEditable)
-        self.tableWidget_files.setItem(row_position, 3, item_path)
+
+        # 添加极对数
+        item_pole = QTableWidgetItem(file_info['pole_num'])
+        item_pole.setFlags(item_pole.flags() & ~Qt.ItemIsEditable)
+        self.tableWidget_files.setItem(row_position, 3, item_pole)
+
+        # 添加气隙
+        item_airgap = QTableWidgetItem(file_info['air_gap'])
+        item_airgap.setFlags(item_airgap.flags() & ~Qt.ItemIsEditable)
+        self.tableWidget_files.setItem(row_position, 4, item_airgap)
+
+        # 添加备注
+        item_remark = QTableWidgetItem(file_info['remark'])
+        item_remark.setFlags(item_remark.flags() & ~Qt.ItemIsEditable)
+        self.tableWidget_files.setItem(row_position, 5, item_remark)
+
+        # 存储文件路径到内部字典
+        self._file_paths[row_position] = file_path
     
     def _open_button_clicked(self):
         """打开按钮点击事件"""
@@ -217,13 +244,11 @@ class HistoryWindow(QMainWindow):
             row: 选中的行号
         """
         try:
-            # 获取文件路径
-            file_path_item = self.tableWidget_files.item(row, 3)
-            if not file_path_item:
+            # 从内部字典获取文件路径
+            file_path = self._file_paths.get(row)
+            if not file_path:
                 logger.info("无法获取文件路径")
                 return
-
-            file_path = file_path_item.text()
 
             # 读取CSV文件数据
             angle_data, mag_data, analysis_results = self._read_csv_data(file_path)
@@ -328,7 +353,7 @@ class HistoryWindow(QMainWindow):
                                 analysis_results['NS_area'] = self._parse_float(value)
                             elif key == "THD失真率":
                                 analysis_results['THD_error'] = self._parse_float(value)
-                            elif key == "极对数":
+                            elif key == "极数":
                                 analysis_results['pole_num'] = self._parse_float(value)
                     elif section == 'data':
                         if len(row) >= 2:

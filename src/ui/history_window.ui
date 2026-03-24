@@ -113,7 +113,17 @@ QHeaderView::section {
          </column>
          <column>
           <property name="text">
-           <string>文件路径</string>
+           <string>极对数</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>气隙</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>备注</string>
           </property>
          </column>
         </widget>
