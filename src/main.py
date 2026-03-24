@@ -19,7 +19,7 @@ class MainApplication:
     
     def __init__(self):
         # 初始化日志
-        self.logger = init_logging()
+        self.logger = init_logging("MARS/logs")
         self.logger.info("=" * 50)
         self.logger.info("旋转体表磁测量分析系统启动")
         self.logger.info("=" * 50)

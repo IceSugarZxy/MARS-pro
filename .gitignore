@@ -45,8 +45,8 @@ data/plot_data/*
 !data/plot_data/.gitkeep
 
 # Logs
-logs/
+MARS/logs/
 *.log
 
-# Config (可保留模板)
-# configuration.txt
+# Config
+MARS/src/configuration.txt
