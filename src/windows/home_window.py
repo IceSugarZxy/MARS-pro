@@ -126,14 +126,12 @@ class HomeWindow(QMainWindow):
     def _logs_button_clicked(self, event):
         """后台日志按钮点击事件"""
         if event.button() == Qt.LeftButton:
-            # 获取logs文件夹路径
+            # 获取logs文件夹路径 - exe同级目录
             if getattr(sys, 'frozen', False):
-                # 打包后的应用程序 - 日志在 MARS/logs 相对于可执行文件
-                logs_dir = os.path.join(os.path.dirname(sys.executable), "MARS", "logs")
+                base_dir = os.path.dirname(sys.executable)
             else:
-                # 开发环境
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                logs_dir = os.path.join(project_root, "MARS", "logs")
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            logs_dir = os.path.join(base_dir, "logs")
 
             if os.path.exists(logs_dir):
                 # 使用Windows资源管理器打开文件夹

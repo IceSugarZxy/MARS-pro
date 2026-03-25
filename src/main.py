@@ -26,11 +26,12 @@ class MainApplication:
     """主应用程序类 - 负责窗口协调和数据流连接"""
 
     def __init__(self):
-        # 初始化日志 - 打包时使用exe所在目录
+        # 初始化日志 - 使用exe同级的logs目录
         if getattr(sys, 'frozen', False):
-            log_dir = os.path.join(os.path.dirname(sys.executable), "MARS", "logs")
+            base_dir = os.path.dirname(sys.executable)
         else:
-            log_dir = os.path.join(application_path, "MARS", "logs")
+            base_dir = application_path
+        log_dir = os.path.join(base_dir, "logs")
         self.logger = init_logging(log_dir)
         self.logger.info("=" * 50)
         self.logger.info("旋转体表磁测量分析系统启动")
