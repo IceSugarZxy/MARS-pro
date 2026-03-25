@@ -8,8 +8,8 @@ import os
 
 # PyInstaller 打包后的路径处理
 if getattr(sys, 'frozen', False):
-    # 打包后的应用程序
-    application_path = sys._MEIPASS
+    # 打包后的应用程序 - 使用可执行文件所在目录
+    application_path = os.path.dirname(sys.executable)
 else:
     # 开发环境
     application_path = os.path.dirname(os.path.abspath(__file__))
@@ -24,10 +24,14 @@ from core import init_logging, get_config_manager, ThreadManager
 
 class MainApplication:
     """主应用程序类 - 负责窗口协调和数据流连接"""
-    
+
     def __init__(self):
-        # 初始化日志
-        self.logger = init_logging("MARS/logs")
+        # 初始化日志 - 打包时使用exe所在目录
+        if getattr(sys, 'frozen', False):
+            log_dir = os.path.join(os.path.dirname(sys.executable), "MARS", "logs")
+        else:
+            log_dir = os.path.join(application_path, "MARS", "logs")
+        self.logger = init_logging(log_dir)
         self.logger.info("=" * 50)
         self.logger.info("旋转体表磁测量分析系统启动")
         self.logger.info("=" * 50)
