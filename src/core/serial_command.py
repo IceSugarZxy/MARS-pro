@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = get_logger('SerialCommand')
 
 # 常量定义
-MOVE_WAIT_TIME = 2  # 移动后等待时间（秒）
+MOVE_WAIT_TIME = 5  # 移动后等待时间（秒）
 
 
 class WorkState(Enum):
@@ -241,7 +241,7 @@ class SerialCommand(QObject):
         self._pending_retract_axis = None
 
         # 反向移动距离（mm）
-        RETRACT_MM = 0.6
+        RETRACT_MM = 0.3
         # Z轴换算公式：1000脉冲 = 0.62mm，即 1mm = 1000/0.62 ≈ 1612.9脉冲
         # X轴换算公式：10000脉冲 = 25mm，即 1mm = 400脉冲
         if axis == 'X':

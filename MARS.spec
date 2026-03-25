@@ -10,12 +10,17 @@ hiddenimports = [
     'PyQt5.QtCore',
     'PyQt5.QtGui',
     'PyQt5.QtWidgets',
+    'PyQt5.QtSerialPort',
+    'PyQt5.QtSerialPort.QSerialPortInfo',
     'pyqtgraph',
     'numpy',
     'scipy',
     'scipy.signal',
     'scipy.fft',
     'scipy.optimize',
+    'serial',
+    'serial.tools',
+    'serial.tools.list_ports',
 ]
 
 a = Analysis(
