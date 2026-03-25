@@ -6,8 +6,16 @@
 import sys
 import os
 
+# PyInstaller 打包后的路径处理
+if getattr(sys, 'frozen', False):
+    # 打包后的应用程序
+    application_path = sys._MEIPASS
+else:
+    # 开发环境
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
 # 添加src目录到路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, application_path)
 
 from PyQt5.QtWidgets import QApplication
 # 绝对导入
