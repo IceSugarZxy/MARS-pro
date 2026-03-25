@@ -259,6 +259,42 @@ class MeasureWindow(QMainWindow):
         if self.distance_edit:
             self.distance_edit.setText("1")
 
+        # 设置结果显示默认值（按照指定顺序）
+        # N极相关
+        self.n_max_edit.setText("0.00")
+        self.n_min_edit.setText("0.00")
+        self.n_mean_edit.setText("0.00")
+        self.n_se_edit.setText("0.00")
+
+        # S极相关
+        self.s_max_edit.setText("0.00")
+        self.s_min_edit.setText("0.00")
+        self.s_mean_edit.setText("0.00")
+        self.s_se_edit.setText("0.00")
+
+        # NS相关
+        self.ns_2_edit.setText("0.00")
+        self.single_polar_mean_edit.setText("0.00")
+        self.single_polar_error_edit.setText("0.00")
+        self.polar_error_sum_edit.setText("0.00")
+
+        # 极间隔统计
+        self.n_interval_max_edit.setText("0.00")
+        self.n_interval_min_edit.setText("0.00")
+        self.n_interval_mean_edit.setText("0.00")
+        self.n_interval_std_edit.setText("0.00")
+
+        self.s_interval_max_edit.setText("0.00")
+        self.s_interval_min_edit.setText("0.00")
+        self.s_interval_mean_edit.setText("0.00")
+        self.s_interval_std_edit.setText("0.00")
+
+        # 面积相关
+        self.n_area_edit.setText("0.00")
+        self.s_area_edit.setText("0.00")
+        self.thd_error_edit.setText("0.00")
+        self.ns_area_edit.setText("0.00")
+
     def _reset_sample_inputs(self):
         """重置样品信息输入框为默认值"""
         self.sample_code_edit.setText("样品")
@@ -726,7 +762,7 @@ class MeasureWindow(QMainWindow):
         Args:
             message: 要显示的消息
             is_error: 是否为错误信息
-            auto_recover: 是否自动恢复（2秒后清空），用于瞬时操作提示
+            auto_recover: 是否自动恢复（1秒后清空），用于瞬时操作提示
         """
         if self.status_label:
             # 设置消息文本
@@ -738,9 +774,13 @@ class MeasureWindow(QMainWindow):
             else:
                 self.status_label.setStyleSheet("color: green; font-weight: bold;")
 
+            # 停止之前的自动恢复定时器（除非明确要求自动恢复）
+            if not auto_recover:
+                if hasattr(self, '_status_auto_recover_timer') and self._status_auto_recover_timer.isActive():
+                    self._status_auto_recover_timer.stop()
+
             # 如果设置了自动恢复，启动定时器
             if auto_recover:
-                # 停止之前的定时器（如果存在）
                 if hasattr(self, '_status_auto_recover_timer') and self._status_auto_recover_timer.isActive():
                     self._status_auto_recover_timer.stop()
                 self._status_auto_recover_timer.start(1000)

@@ -179,6 +179,16 @@ class SerialCommand(QObject):
         with self.command_lock():
             self.send_data("Y~")
 
+    def auto_press_right(self) -> None:
+        """发送向右贴靠命令（X轴）"""
+        self._pending_retract_axis = 'X-'
+        self._position_query_retry_count = 0
+        logger.info("开始X轴反向自检")
+        # 清空队列，避免之前的位置数据干扰自检流程
+        self.data_process.clear_data_queue()
+        with self.command_lock():
+            self.send_data("Y-~")
+
     def _on_self_detect_finished(self, axis: str) -> None:
         """
         自检完成回调 - 检查是否有待处理的任务，有则触发位置查询
@@ -236,6 +246,8 @@ class SerialCommand(QObject):
         # X轴换算公式：10000脉冲 = 25mm，即 1mm = 400脉冲
         if axis == 'X':
             retract_pulse = int(RETRACT_MM * 400)
+        elif axis == 'X-':
+            retract_pulse = int(RETRACT_MM * 400)
         elif axis == 'Z':
             retract_pulse = int(RETRACT_MM * 1000 / 0.62)
         else:
@@ -246,6 +258,11 @@ class SerialCommand(QObject):
                 current_x = int(position_data[0])
                 target_x = current_x - retract_pulse
                 logger.info(f"执行X轴反向移动: X={current_x} -> {target_x}, 脉冲={retract_pulse}")
+                self.move_x(target_x)
+            elif axis == 'X-':
+                current_x = int(position_data[0])
+                target_x = current_x + retract_pulse
+                logger.info(f"执行X轴正向移动: X={current_x} -> {target_x}, 脉冲={retract_pulse}")
                 self.move_x(target_x)
             elif axis == 'Z':
                 current_z = int(position_data[1])

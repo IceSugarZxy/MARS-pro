@@ -43,6 +43,10 @@ def setup_logging(
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
+        try:
+            console_handler.stream.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
         logger.addHandler(console_handler)
 
     # 文件输出

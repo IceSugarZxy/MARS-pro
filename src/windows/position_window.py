@@ -71,6 +71,11 @@ class PositionWindow(QMainWindow):
         if auto_press_left_button:
             auto_press_left_button.clicked.connect(self._auto_press_left_button_clicked)
 
+        # 连接自动向右贴靠按钮
+        auto_press_right_button = self.findChild(QPushButton, "pushButton_auto_press_right")
+        if auto_press_right_button:
+            auto_press_right_button.clicked.connect(self._auto_press_right_button_clicked)
+
         # 连接保存测试位置按钮
         save_test_position_button = self.findChild(QPushButton, "pushButton_save_test_position")
         if save_test_position_button:
@@ -254,6 +259,11 @@ class PositionWindow(QMainWindow):
         """自动左压按钮点击事件"""
         logger.info("自动左压按钮被点击")
         self.serial_command.auto_press_left()
+
+    def _auto_press_right_button_clicked(self):
+        """自动右压按钮点击事件"""
+        logger.info("自动右压按钮被点击")
+        self.serial_command.auto_press_right()
 
     def _save_test_position_button_clicked(self):
         """保存测试位置按钮点击事件"""
