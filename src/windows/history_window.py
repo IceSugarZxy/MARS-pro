@@ -6,7 +6,7 @@
 
 import os
 import csv
-from PyQt5.QtWidgets import QMainWindow, QTableWidgetItem, QHeaderView
+from PyQt5.QtWidgets import QMainWindow, QTableWidgetItem, QHeaderView, QLineEdit
 from PyQt5.QtCore import Qt
 from PyQt5 import uic
 from ui.window_operations import WindowOperations
@@ -59,53 +59,110 @@ class HistoryWindow(QMainWindow):
         """连接按钮事件"""
         # 连接打开按钮
         self.pushButton_open.clicked.connect(self._open_button_clicked)
-        
+
         # 连接刷新按钮
         self.pushButton_refresh.clicked.connect(self._refresh_button_clicked)
-        
+
         # 连接关闭按钮
         self.pushButton_close.clicked.connect(self._close_button_clicked)
-        
+
         # 连接表格双击事件
         self.tableWidget_files.doubleClicked.connect(self._table_double_clicked)
+
+        # 连接搜索框文本变化事件
+        self.lineEdit_sample_name.textChanged.connect(self._on_search_text_changed)
+        self.lineEdit_tester.textChanged.connect(self._on_search_text_changed)
+        self.lineEdit_save_time.textChanged.connect(self._on_search_text_changed)
+        self.lineEdit_pole_num.textChanged.connect(self._on_search_text_changed)
+        self.lineEdit_air_gap.textChanged.connect(self._on_search_text_changed)
+        self.lineEdit_remark.textChanged.connect(self._on_search_text_changed)
     
     def _load_history_files(self):
         """加载历史数据文件列表"""
         try:
             # 清空表格
             self.tableWidget_files.setRowCount(0)
+            self._file_paths.clear()
 
             # 获取保存目录 (MARS/data/plot_data)
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             save_dir = os.path.join(project_root, "data", "plot_data")
-            
+
             # 检查目录是否存在
             if not os.path.exists(save_dir):
                 logger.info(f"保存目录不存在: {save_dir}")
                 return
-            
+
             # 获取所有CSV文件
             csv_files = [f for f in os.listdir(save_dir) if f.endswith('.csv')]
-            
+
             if not csv_files:
                 logger.info("未找到历史数据文件")
                 return
-            
+
             # 按修改时间排序（最新的在前）
             csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(save_dir, x)), reverse=True)
-            
+
+            # 获取各列搜索关键词
+            search_sample_name = self.lineEdit_sample_name.text().strip().lower()
+            search_tester = self.lineEdit_tester.text().strip().lower()
+            search_save_time = self.lineEdit_save_time.text().strip().lower()
+            search_pole_num = self.lineEdit_pole_num.text().strip().lower()
+            search_air_gap = self.lineEdit_air_gap.text().strip().lower()
+            search_remark = self.lineEdit_remark.text().strip().lower()
+
             # 读取每个文件的信息并添加到表格
             for file_name in csv_files:
                 file_path = os.path.join(save_dir, file_name)
                 file_info = self._read_csv_file_info(file_path)
-                
+
                 if file_info:
+                    # 筛选匹配的文件
+                    if not self._matches_search(file_info, search_sample_name, search_tester,
+                                                 search_save_time, search_pole_num,
+                                                 search_air_gap, search_remark):
+                        continue
                     self._add_file_to_table(file_info, file_path)
-            
-            logger.info(f"加载了 {len(csv_files)} 个历史数据文件")
-            
+
+            logger.info(f"加载了 {self.tableWidget_files.rowCount()} 个历史数据文件")
+
         except Exception as e:
             logger.info(f"加载历史数据文件时发生错误: {e}")
+
+    def _matches_search(self, file_info, search_sample_name, search_tester, search_save_time,
+                        search_pole_num, search_air_gap, search_remark):
+        """检查文件信息是否匹配所有搜索条件
+
+        Args:
+            file_info: 文件信息字典
+            search_sample_name: 样品名称搜索关键词
+            search_tester: 测试员搜索关键词
+            search_save_time: 保存时间搜索关键词
+            search_pole_num: 极对数搜索关键词
+            search_air_gap: 气隙搜索关键词
+            search_remark: 备注搜索关键词
+
+        Returns:
+            bool: 是否所有条件都匹配
+        """
+        # 如果搜索框为空，默认匹配；如果有内容，则检查是否包含
+        if search_sample_name and search_sample_name not in file_info.get('sample_name', '').lower():
+            return False
+        if search_tester and search_tester not in file_info.get('tester', '').lower():
+            return False
+        if search_save_time and search_save_time not in file_info.get('save_time', '').lower():
+            return False
+        if search_pole_num and search_pole_num not in file_info.get('pole_num', '').lower():
+            return False
+        if search_air_gap and search_air_gap not in file_info.get('air_gap', '').lower():
+            return False
+        if search_remark and search_remark not in file_info.get('remark', '').lower():
+            return False
+        return True
+
+    def _on_search_text_changed(self, _text):
+        """搜索框文本变化事件"""
+        self._load_history_files()
     
     def _read_csv_file_info(self, file_path):
         """读取CSV文件的基本信息

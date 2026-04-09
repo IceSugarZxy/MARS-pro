@@ -59,6 +59,54 @@
         </widget>
        </item>
        <item>
+        <widget class="QWidget" name="widget_search" native="true">
+         <layout class="QGridLayout" name="gridLayout_search">
+          <item row="0" column="0">
+           <widget class="QLineEdit" name="lineEdit_sample_name">
+            <property name="placeholderText">
+             <string>样品名称</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="lineEdit_tester">
+            <property name="placeholderText">
+             <string>测试员</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QLineEdit" name="lineEdit_save_time">
+            <property name="placeholderText">
+             <string>保存时间</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="3">
+           <widget class="QLineEdit" name="lineEdit_pole_num">
+            <property name="placeholderText">
+             <string>极对数</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="4">
+           <widget class="QLineEdit" name="lineEdit_air_gap">
+            <property name="placeholderText">
+             <string>气隙</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="5">
+           <widget class="QLineEdit" name="lineEdit_remark">
+            <property name="placeholderText">
+             <string>备注</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QTableWidget" name="tableWidget_files">
          <property name="styleSheet">
           <string notr="true">QTableWidget {

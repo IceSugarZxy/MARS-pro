@@ -1,7 +1,7 @@
-offset:197.8909981986646
+offset:190.5750081609483
 COM:COM3
 baudrate:921600
-test_x:19905
-test_z:40841
+test_x:9550
+test_z:32926
 suspend_x:19905
 suspend_z:40841

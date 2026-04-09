@@ -146,7 +146,7 @@ class SerialCommand(QObject):
     def claw_rotate(self) -> None:
         """发送爪盘旋转命令"""
         round = 542720
-        self.send_data(f"B{round*1.5}~")
+        self.send_data(f"B{int(round * 1.5)}~")
 
     def claw_stop(self) -> None:
         """发送爪盘停止命令"""
