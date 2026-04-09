@@ -172,7 +172,7 @@ class SerialManager(QObject):
                     data = data.encode('utf-8')
 
                 result = self.serial_port.write(data)
-                logger.info(f"SerialManager: 发送数据, 长度={result}, 内容={data}")
+                logger.debug(f"SerialManager: 发送数据, 长度={result}")
 
         except Exception as e:
             logger.error(f"处理写队列失败: {e}")
@@ -196,7 +196,7 @@ class SerialManager(QObject):
             if bytes_available > 0:
                 data = self.serial_port.read(bytes_available)
                 if data:
-                    logger.info(f"SerialManager: 收到串口数据, 长度={len(data)}, 内容={data[:30] if len(data) > 30 else data}")
+                    logger.debug(f"SerialManager: 收到串口数据, 长度={len(data)}")
                     self.data_queue.put(data)
                     self.signal_data_received.emit(data)
             else:
