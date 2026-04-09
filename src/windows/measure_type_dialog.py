@@ -6,6 +6,7 @@
 from PyQt5.QtWidgets import QDialog, QWidget, QHBoxLayout, QLabel, QPushButton, QSpacerItem, QSizePolicy
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5 import uic
+from ui.theme import get_base_stylesheet
 import os
 
 
@@ -22,6 +23,9 @@ class MeasureTypeDialog(QDialog):
         # 加载UI文件
         ui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui", "measure_type_dialog.ui")
         uic.loadUi(ui_path, self)
+
+        # 应用深色主题样式
+        self.setStyleSheet(get_base_stylesheet())
 
         # 设置窗口标志，隐藏默认标题栏
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)

@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QMainWindow, QComboBox, QLabel, QTextEdit, QPushButt
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5 import uic
 from ui.window_operations import WindowOperations
+from ui.theme import get_base_stylesheet
 from core import ThreadManager
 from core import get_config_manager
 from core.logger import get_logger
@@ -30,7 +31,10 @@ class SerialWindow(QMainWindow):
         # 从serial_window.ui文件加载界面
         ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "serial_window.ui")
         uic.loadUi(ui_file_path, self)
-        
+
+        # 应用深色主题样式
+        self.setStyleSheet(get_base_stylesheet())
+
         # 初始化窗口操作功能
         self.window_operations = WindowOperations(self)
         

@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QMainWindow, QLabel, QPushButton, QLineEdit, QWidget
 from PyQt5.QtCore import Qt, QEventLoop, QTimer
 from PyQt5 import uic
 from ui.window_operations import WindowOperations
+from ui.theme import get_base_stylesheet
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.measure_type_dialog import MeasureTypeDialog
@@ -39,7 +40,10 @@ class MeasureWindow(QMainWindow):
         # 从measure_window.ui文件加载界面
         ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "measure_window.ui")
         uic.loadUi(ui_file_path, self)
-        
+
+        # 应用深色主题样式
+        self.setStyleSheet(get_base_stylesheet())
+
         # 初始化窗口操作功能
         self.window_operations = WindowOperations(self)
         

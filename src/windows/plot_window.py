@@ -36,25 +36,33 @@ class PlotWindow(QWidget):
         """初始化绘图控件"""
         # 创建绘图控件
         self.plot_widget = pg.PlotWidget()
-        
-        # 设置背景色为白色
-        self.plot_widget.setBackground('w')
-        
-        # 显示网格
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
-        
+
+        # 设置背景色为深色（工业风）
+        self.plot_widget.setBackground('#1e1e1e')
+
+        # 显示网格（浅色网格线）
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+
         # 禁用自动范围调整
         self.plot_widget.enableAutoRange(False, False)
-        
+
         # 启用鼠标交互
         self.plot_widget.plotItem.getViewBox().setMouseEnabled(x=True, y=True)
-        
+
         # 隐藏缩放按钮
         self.plot_widget.plotItem.hideButtons()
-        
-        # 创建曲线
-        self.curve = self.plot_widget.plot(pen=mkPen('r', width=1))
-        
+
+        # 创建曲线（红色）
+        self.curve = self.plot_widget.plot(pen=mkPen('#e74c3c', width=1))
+
+        # 设置坐标轴颜色（适配深色背景）
+        self.plot_widget.plotItem.setLabel('bottom', '角度', units='°', **{'color': '#ffffff', 'font-size': '12px'})
+        self.plot_widget.plotItem.setLabel('left', '磁场', units='mT', **{'color': '#ffffff', 'font-size': '12px'})
+        axis = self.plot_widget.plotItem.getAxis('bottom')
+        axis.setPen('#b0b0b0')
+        axis = self.plot_widget.plotItem.getAxis('left')
+        axis.setPen('#b0b0b0')
+
         # 设置初始显示范围
         self.plot_widget.setXRange(0, 360)
         self.plot_widget.setYRange(-70, 70)
