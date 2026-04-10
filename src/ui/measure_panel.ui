@@ -1,0 +1,516 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MeasurePanel</class>
+ <widget class="QWidget" name="MeasurePanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1000</width>
+    <height>700</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>测量界面</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <property name="leftMargin">
+    <number>20</number>
+   </property>
+   <property name="topMargin">
+    <number>20</number>
+   </property>
+   <property name="rightMargin">
+    <number>20</number>
+   </property>
+   <property name="bottomMargin">
+    <number>20</number>
+   </property>
+   <property name="spacing">
+    <number>16</number>
+   </property>
+   <!-- 标题 -->
+   <item>
+    <widget class="QLabel" name="panel_title">
+     <property name="text">
+      <string>测量界面</string>
+     </property>
+    </widget>
+   </item>
+   <!-- 快捷操作区 -->
+   <item>
+    <widget class="QGroupBox" name="action_group">
+     <property name="title">
+      <string>快捷操作</string>
+     </property>
+     <layout class="QGridLayout" name="action_layout">
+      <item row="0" column="0">
+       <widget class="QPushButton" name="btn_start_rotation">
+        <property name="text">
+         <string>开始测量</string>
+        </property>
+        <property name="objectName">
+         <string>btnSuccess</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QPushButton" name="btn_stop_rotation">
+        <property name="text">
+         <string>停止测量</string>
+        </property>
+        <property name="objectName">
+         <string>btnDanger</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="QPushButton" name="btn_zeroing">
+        <property name="text">
+         <string>零位校准</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="3">
+       <widget class="QPushButton" name="btn_test_position">
+        <property name="text">
+         <string>测试位置</string>
+        </property>
+        <property name="objectName">
+         <string>btnWarning</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 位置控制区 -->
+   <item>
+    <widget class="QGroupBox" name="direction_group">
+     <property name="title">
+      <string>位置控制</string>
+     </property>
+     <layout class="QGridLayout" name="direction_layout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_distance">
+        <property name="text">
+         <string>距离(mm):</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="distance_edit">
+        <property name="text">
+         <string>1</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0" colspan="2">
+       <spacer name="direction_spacer_h">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item row="1" column="1">
+       <widget class="QPushButton" name="btn_up">
+        <property name="text">
+         <string>↑</string>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>40</width>
+          <height>40</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="QPushButton" name="btn_down">
+        <property name="text">
+         <string>↓</string>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>40</width>
+          <height>40</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QPushButton" name="btn_left">
+        <property name="text">
+         <string>←</string>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>40</width>
+          <height>40</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="3">
+       <widget class="QPushButton" name="btn_right">
+        <property name="text">
+         <string>→</string>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>40</width>
+          <height>40</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 波形显示区 -->
+   <item>
+    <widget class="QGroupBox" name="plot_group">
+     <property name="title">
+      <string>波形显示</string>
+     </property>
+     <layout class="QVBoxLayout" name="plot_layout">
+      <item>
+       <widget class="QLabel" name="plot_placeholder">
+        <property name="text">
+         <string>波形显示区
+(PlotWindow 将嵌入此处)</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>250</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Raised</enum>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 同心度校准 -->
+   <item>
+    <widget class="QRadioButton" name="radio_concentricity">
+     <property name="text">
+      <string>启用同心度校准</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <!-- 数据分析结果 -->
+   <item>
+    <widget class="QGroupBox" name="data_group">
+     <property name="title">
+      <string>数据分析结果</string>
+     </property>
+     <layout class="QGridLayout" name="data_layout">
+      <!-- N极 -->
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_n_max">
+        <property name="text">
+         <string>N极最大值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="n_max_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_n_min">
+        <property name="text">
+         <string>N极最小值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="3">
+       <widget class="QLineEdit" name="n_min_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="4">
+       <widget class="QLabel" name="label_n_mean">
+        <property name="text">
+         <string>N极均值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="5">
+       <widget class="QLineEdit" name="n_mean_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <!-- S极 -->
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_s_max">
+        <property name="text">
+         <string>S极最大值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="s_max_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="QLabel" name="label_s_min">
+        <property name="text">
+         <string>S极最小值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="3">
+       <widget class="QLineEdit" name="s_min_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="4">
+       <widget class="QLabel" name="label_s_mean">
+        <property name="text">
+         <string>S极均值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="5">
+       <widget class="QLineEdit" name="s_mean_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <!-- NS关系 -->
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_ns2">
+        <property name="text">
+         <string>NS2:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="ns_2_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="2">
+       <widget class="QLabel" name="label_polar_mean">
+        <property name="text">
+         <string>单极均值:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="3">
+       <widget class="QLineEdit" name="single_polar_mean_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="4">
+       <widget class="QLabel" name="label_polar_error">
+        <property name="text">
+         <string>单极误差:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="5">
+       <widget class="QLineEdit" name="single_polar_error_edit">
+        <property name="text">
+         <string>0.00</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 样品信息 -->
+   <item>
+    <widget class="QGroupBox" name="info_group">
+     <property name="title">
+      <string>样品信息</string>
+     </property>
+     <layout class="QGridLayout" name="info_layout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_sample_name">
+        <property name="text">
+         <string>样品名称:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="sample_name_edit">
+        <property name="text">
+         <string>测试样品</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_polar_num">
+        <property name="text">
+         <string>极数:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="3">
+       <widget class="QLineEdit" name="polar_num_edit">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="4">
+       <widget class="QLabel" name="label_airgap">
+        <property name="text">
+         <string>气隙:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="5">
+       <widget class="QLineEdit" name="airgap_edit">
+        <property name="text">
+         <string>--</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_remark">
+        <property name="text">
+         <string>备注:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1" colspan="5">
+       <widget class="QLineEdit" name="remark_edit">
+        <property name="text">
+         <string>测试备注</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 状态栏 -->
+   <item>
+    <widget class="QLabel" name="status_label">
+     <property name="text">
+      <string></string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+   </item>
+   <!-- 按钮行 -->
+   <item>
+    <layout class="QHBoxLayout" name="btn_row">
+     <item>
+      <widget class="QPushButton" name="btn_serial">
+       <property name="text">
+        <string>串口设置</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_history">
+       <property name="text">
+        <string>历史数据</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_compare">
+       <property name="text">
+        <string>数据比对</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="btn_spacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_save">
+       <property name="text">
+        <string>保存数据</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

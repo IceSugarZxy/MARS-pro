@@ -1,57 +1,55 @@
 # -*- coding: utf-8 -*-
 """
-历史数据面板
+历史数据面板 - 从 history_panel.ui 加载
 """
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QGroupBox, QGridLayout, QPushButton, QTableWidget, QLineEdit, QHeaderView, QHBoxLayout
+
+import os
+from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
+                              QLineEdit, QHeaderView, QHBoxLayout)
 from PyQt5.QtCore import Qt
+from PyQt5 import uic
 from core.logger import get_logger
 
 logger = get_logger('HistoryPanel')
 
 
 class HistoryPanel(QWidget):
-    """历史数据面板"""
+    """历史数据面板 - 从 history_panel.ui 加载"""
 
     def __init__(self):
         super().__init__()
-        self._setup_ui()
 
-    def _setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(16)
+        # 加载 UI
+        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "history_panel.ui")
+        uic.loadUi(ui_file_path, self)
 
-        title = QLabel("历史数据")
-        title.setObjectName("panel_title")
-        main_layout.addWidget(title)
+        # 连接按钮事件
+        self._connect_buttons()
 
-        # 搜索区
-        search_group = QGroupBox("搜索条件")
-        search_layout = QGridLayout(search_group)
-        search_layout.addWidget(QLabel("样品名称:"), 0, 0)
-        search_layout.addWidget(QLineEdit(), 0, 1)
-        search_layout.addWidget(QLabel("测试人员:"), 0, 2)
-        search_layout.addWidget(QLineEdit(), 0, 3)
-        search_layout.addWidget(QLabel("极数:"), 1, 0)
-        search_layout.addWidget(QLineEdit(), 1, 1)
-        search_layout.addWidget(QLabel("气隙:"), 1, 2)
-        search_layout.addWidget(QLineEdit(), 1, 3)
-        main_layout.addWidget(search_group)
-
-        # 数据列表
-        self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["样品名称", "测试时间", "极数", "气隙", "备注", "文件路径"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        main_layout.addWidget(self.table, 1)
-
-        # 按钮行
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(QPushButton("刷新列表"))
-        btn_row.addWidget(QPushButton("打开并分析"))
-        btn_row.addStretch()
-        main_layout.addLayout(btn_row)
+        # 设置表格
+        self._setup_table()
 
         logger.info("HistoryPanel 初始化完成")
+
+    def _connect_buttons(self):
+        """连接按钮事件"""
+        self.findChild(QPushButton, "btn_refresh").clicked.connect(self._on_refresh)
+        self.findChild(QPushButton, "btn_open").clicked.connect(self._on_open)
+
+    def _setup_table(self):
+        """设置表格"""
+        table = self.findChild(QTableWidget, "data_table")
+        if table:
+            header = table.horizontalHeader()
+            if header:
+                header.setSectionResizeMode(QHeaderView.Stretch)
+            table.setSelectionBehavior(QTableWidget.SelectRows)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+    def _on_refresh(self):
+        """刷新列表"""
+        logger.info("刷新列表")
+
+    def _on_open(self):
+        """打开并分析"""
+        logger.info("打开并分析")

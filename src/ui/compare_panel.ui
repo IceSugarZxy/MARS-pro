@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ComparePanel</class>
+ <widget class="QWidget" name="ComparePanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>数据比对</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <property name="leftMargin">
+    <number>20</number>
+   </property>
+   <property name="topMargin">
+    <number>20</number>
+   </property>
+   <property name="rightMargin">
+    <number>20</number>
+   </property>
+   <property name="bottomMargin">
+    <number>20</number>
+   </property>
+   <property name="spacing">
+    <number>16</number>
+   </property>
+   <!-- 标题 -->
+   <item>
+    <widget class="QLabel" name="panel_title">
+     <property name="text">
+      <string>数据比对</string>
+     </property>
+    </widget>
+   </item>
+   <!-- 文件选择 -->
+   <item>
+    <widget class="QGroupBox" name="file_group">
+     <property name="title">
+      <string>选择文件</string>
+     </property>
+     <layout class="QGridLayout" name="file_layout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_file1">
+        <property name="text">
+         <string>文件1 (红色):</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="file1_edit"/>
+      </item>
+      <item row="0" column="2">
+       <widget class="QPushButton" name="file1_btn">
+        <property name="text">
+         <string>浏览...</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_file2">
+        <property name="text">
+         <string>文件2 (蓝色):</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="file2_edit"/>
+      </item>
+      <item row="1" column="2">
+       <widget class="QPushButton" name="file2_btn">
+        <property name="text">
+         <string>浏览...</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0" colspan="3">
+       <widget class="QPushButton" name="compare_btn">
+        <property name="text">
+         <string>开始比对</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 波形显示区 -->
+   <item>
+    <widget class="QGroupBox" name="plot_group">
+     <property name="title">
+      <string>波形对比</string>
+     </property>
+     <layout class="QVBoxLayout" name="plot_layout">
+      <item>
+       <widget class="QLabel" name="plot_placeholder">
+        <property name="text">
+         <string>波形对比显示区
+(两条曲线叠加显示)</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>250</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Raised</enum>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 结果显示 -->
+   <item>
+    <widget class="QSplitter" name="result_splitter">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <widget class="QTextEdit" name="result1_text">
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
+      <property name="placeholderText">
+       <string>文件1 分析结果</string>
+      </property>
+     </widget>
+     <widget class="QTextEdit" name="result2_text">
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
+      <property name="placeholderText">
+       <string>文件2 分析结果</string>
+      </property>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

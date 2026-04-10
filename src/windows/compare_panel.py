@@ -1,68 +1,62 @@
 # -*- coding: utf-8 -*-
 """
-数据比对面板
+数据比对面板 - 从 compare_panel.ui 加载
 """
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QGroupBox, QGridLayout, QPushButton, QLineEdit, QTextEdit, QSplitter, QFileDialog
+
+import os
+from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
+                              QTextEdit, QSplitter, QGroupBox, QGridLayout,
+                              QFileDialog)
 from PyQt5.QtCore import Qt
+from PyQt5 import uic
 from core.logger import get_logger
 
 logger = get_logger('ComparePanel')
 
 
 class ComparePanel(QWidget):
-    """数据比对面板"""
+    """数据比对面板 - 从 compare_panel.ui 加载"""
 
     def __init__(self):
         super().__init__()
-        self._setup_ui()
 
-    def _setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(16)
+        # 加载 UI
+        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "compare_panel.ui")
+        uic.loadUi(ui_file_path, self)
 
-        title = QLabel("数据比对")
-        title.setObjectName("panel_title")
-        main_layout.addWidget(title)
-
-        # 文件选择区
-        file_group = QGroupBox("选择文件")
-        file_layout = QGridLayout(file_group)
-
-        file_layout.addWidget(QLabel("文件1 (红色):"), 0, 0)
-        self.file1_edit = QLineEdit()
-        self.file1_btn = QPushButton("浏览...")
-        file_layout.addWidget(self.file1_edit, 0, 1)
-        file_layout.addWidget(self.file1_btn, 0, 2)
-
-        file_layout.addWidget(QLabel("文件2 (蓝色):"), 1, 0)
-        self.file2_edit = QLineEdit()
-        self.file2_btn = QPushButton("浏览...")
-        file_layout.addWidget(self.file2_edit, 1, 1)
-        file_layout.addWidget(self.file2_btn, 1, 2)
-
-        compare_btn = QPushButton("开始比对")
-        file_layout.addWidget(compare_btn, 2, 0, 1, 3)
-
-        main_layout.addWidget(file_group)
-
-        # 波形显示区
-        plot_placeholder = QLabel("波形对比显示区\n(两条曲线叠加显示)")
-        plot_placeholder.setObjectName("plot_placeholder")
-        plot_placeholder.setAlignment(Qt.AlignCenter)
-        plot_placeholder.setMinimumHeight(250)
-        main_layout.addWidget(plot_placeholder, 1)
-
-        # 结果显示
-        splitter = QSplitter(Qt.Horizontal)
-        self.result1_text = QTextEdit()
-        self.result1_text.setReadOnly(True)
-        self.result1_text.setPlaceholderText("文件1 分析结果")
-        self.result2_text = QTextEdit()
-        self.result2_text.setReadOnly(True)
-        self.result2_text.setPlaceholderText("文件2 分析结果")
-        splitter.addWidget(self.result1_text)
-        splitter.addWidget(self.result2_text)
-        main_layout.addWidget(splitter, 1)
+        # 连接按钮事件
+        self._connect_buttons()
 
         logger.info("ComparePanel 初始化完成")
+
+    def _connect_buttons(self):
+        """连接按钮事件"""
+        self.findChild(QPushButton, "file1_btn").clicked.connect(lambda: self._on_browse(1))
+        self.findChild(QPushButton, "file2_btn").clicked.connect(lambda: self._on_browse(2))
+        self.findChild(QPushButton, "compare_btn").clicked.connect(self._on_compare)
+
+    def _on_browse(self, file_num):
+        """浏览文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"选择文件{file_num}",
+            "",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            if file_num == 1:
+                self.findChild(QLineEdit, "file1_edit").setText(file_path)
+            else:
+                self.findChild(QLineEdit, "file2_edit").setText(file_path)
+        logger.info(f"选择文件{file_num}: {file_path}")
+
+    def _on_compare(self):
+        """开始比对"""
+        file1 = self.findChild(QLineEdit, "file1_edit").text().strip()
+        file2 = self.findChild(QLineEdit, "file2_edit").text().strip()
+
+        if not file1 or not file2:
+            logger.warning("请选择两个文件进行比对")
+            return
+
+        logger.info(f"开始比对: {file1} vs {file2}")

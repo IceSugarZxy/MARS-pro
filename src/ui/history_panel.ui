@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>HistoryPanel</class>
+ <widget class="QWidget" name="HistoryPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>历史数据</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_layout">
+   <property name="leftMargin">
+    <number>20</number>
+   </property>
+   <property name="topMargin">
+    <number>20</number>
+   </property>
+   <property name="rightMargin">
+    <number>20</number>
+   </property>
+   <property name="bottomMargin">
+    <number>20</number>
+   </property>
+   <property name="spacing">
+    <number>16</number>
+   </property>
+   <!-- 标题 -->
+   <item>
+    <widget class="QLabel" name="panel_title">
+     <property name="text">
+      <string>历史数据</string>
+     </property>
+    </widget>
+   </item>
+   <!-- 搜索条件 -->
+   <item>
+    <widget class="QGroupBox" name="search_group">
+     <property name="title">
+      <string>搜索条件</string>
+     </property>
+     <layout class="QGridLayout" name="search_layout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_sample_name">
+        <property name="text">
+         <string>样品名称:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="sample_name_edit"/>
+      </item>
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_tester">
+        <property name="text">
+         <string>测试人员:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="3">
+       <widget class="QLineEdit" name="tester_edit"/>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_polar_num">
+        <property name="text">
+         <string>极数:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="polar_num_edit"/>
+      </item>
+      <item row="1" column="2">
+       <widget class="QLabel" name="label_airgap">
+        <property name="text">
+         <string>气隙:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="3">
+       <widget class="QLineEdit" name="airgap_edit"/>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- 数据列表 -->
+   <item>
+    <widget class="QTableWidget" name="data_table">
+     <property name="columnCount">
+      <number>6</number>
+     </property>
+     <column>
+      <property name="text">
+       <string>样品名称</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>测试时间</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>极数</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>气隙</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>备注</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>文件路径</string>
+      </property>
+     </column>
+     <attribute name="selectionBehavior">
+      <enum>QAbstractItemView::SelectRows</enum>
+     </attribute>
+     <attribute name="editTriggers">
+      <set>QAbstractItemView::NoEditTriggers</set>
+     </attribute>
+    </widget>
+   </item>
+   <!-- 按钮行 -->
+   <item>
+    <layout class="QHBoxLayout" name="btn_row">
+     <item>
+      <widget class="QPushButton" name="btn_refresh">
+       <property name="text">
+        <string>刷新列表</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_open">
+       <property name="text">
+        <string>打开并分析</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="btn_spacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
