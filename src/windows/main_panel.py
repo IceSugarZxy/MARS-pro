@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 MARS 主面板 - 单窗口 + 侧边栏导航架构
+UI 布局完全在 main_window.ui 中定义
 """
 
 import os
-from PyQt5.QtWidgets import QMainWindow, QWidget, QStackedWidget, QHBoxLayout, QVBoxLayout, QLabel, QFrame
+from PyQt5.QtWidgets import QMainWindow, QWidget, QLabel, QStackedWidget
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5 import uic
 from core.logger import get_logger
-from ui.theme import get_base_stylesheet, COLOR_BORDER
+from ui.theme import get_base_stylesheet
 
 logger = get_logger('MainPanel')
 
@@ -22,170 +23,51 @@ class MainPanel(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # 加载UI
+        # 加载 UI（布局完全在 main_window.ui 中定义）
         ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "main_window.ui")
         uic.loadUi(ui_file_path, self)
 
         # 应用浅色主题样式
         self.setStyleSheet(get_base_stylesheet())
 
-        # 创建子面板（延迟导入避免循环引用）
+        # 面板存储
         self._panels = {}
         self._active_panel = None
 
-        # 构建布局
-        self._setup_ui()
-
-        # 移动到屏幕中央
+        # 初始化界面
+        self._init_nav_buttons()
+        self._setup_statusbar()
+        self._load_panels()
         self._center_on_screen()
 
         # 默认显示测量面板
         self._switch_panel("measure")
 
-    def _setup_ui(self):
-        """构建界面"""
-        central_widget = self.findChild(QWidget, "centralwidget")
+    def _init_nav_buttons(self):
+        """初始化导航按钮（从 UI 文件加载）"""
+        # 导航按钮映射：按钮 objectName -> 面板 ID
+        self._nav_button_map = {
+            "nav_button_measure": "measure",
+            "nav_button_serial": "serial",
+            "nav_button_position": "position",
+            "nav_button_history": "history",
+            "nav_button_compare": "compare",
+        }
 
-        # 创建一个新的水平布局并应用到 centralwidget
-        from PyQt5.QtWidgets import QHBoxLayout
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        # 连接按钮点击事件
+        for btn_name, panel_id in self._nav_button_map.items():
+            btn = self.findChild(QWidget, btn_name)
+            if btn:
+                btn.mousePressEvent = lambda e, pid=panel_id: self._on_nav_clicked(pid)
+                logger.debug(f"连接导航按钮: {btn_name} -> {panel_id}")
+            else:
+                logger.warning(f"未找到导航按钮: {btn_name}")
 
-        # 侧边栏
-        self.sidebar = self._create_sidebar()
-        sidebar_container = QWidget()
-        sidebar_container.setObjectName("nav_panel")
-        sidebar_container.setFixedWidth(200)
-        sidebar_container.setLayout(self.sidebar)
-
-        # 内容区
-        self.stacked_widget = QStackedWidget()
-        self.stacked_widget.setObjectName("content_panel")
-
-        # 添加入主布局，stacked_widget 拉伸填充剩余空间
-        main_layout.addWidget(sidebar_container)
-        main_layout.addWidget(self.stacked_widget, 1)
-
-        # 状态栏
-        self._setup_statusbar()
-
-        # 加载所有面板
-        self._load_panels()
-
-    def _center_on_screen(self):
-        """移动窗口到屏幕中央"""
-        from PyQt5.QtWidgets import QDesktopWidget
-        screen = QDesktopWidget().screenGeometry()
-        window_geometry = self.geometry()
-        x = (screen.width() - window_geometry.width()) // 2
-        y = (screen.height() - window_geometry.height()) // 2
-        self.move(x, y)
-        logger.debug(f"窗口移动到 ({x}, {y})")
-
-    def _create_sidebar(self):
-        """创建侧边栏"""
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        # 标题区
-        title_widget = QWidget()
-        title_widget.setObjectName("nav_header")
-        title_layout = QVBoxLayout(title_widget)
-        title_layout.setContentsMargins(16, 20, 16, 16)
-        title_layout.setSpacing(4)
-
-        title_label = QLabel("MARS")
-        title_label.setObjectName("nav_title")
-        title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-        subtitle_label = QLabel("旋转体表磁测量分析系统")
-        subtitle_label.setObjectName("nav_subtitle")
-        subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-        title_layout.addWidget(title_label)
-        title_layout.addWidget(subtitle_label)
-        title_layout.addStretch()
-
-        # 分隔线
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
-        sep.setStyleSheet(f"background-color: {COLOR_BORDER}; border: none; height: 1px;")
-
-        layout.addWidget(title_widget)
-        layout.addWidget(sep)
-
-        # 导航按钮
-        self.nav_buttons = {}
-        nav_items = [
-            ("measure", "测量界面", "▶", "nav_icon"),
-            ("serial", "串口设置", "⚙", "nav_icon_serial"),
-            ("position", "位置控制", "◎", "nav_icon_position"),
-            ("history", "历史数据", "☰", "nav_icon_history"),
-            ("compare", "数据比对", "⚡", "nav_icon_compare"),
-        ]
-        for item_id, item_text, item_icon, icon_obj_name in nav_items:
-            btn = self._create_nav_button(item_id, item_text, item_icon, icon_obj_name)
-            self.nav_buttons[item_id] = btn
-            layout.addWidget(btn)
-
-        layout.addStretch()
-
-        # 底部状态区
-        footer_widget = self._create_footer()
-        layout.addWidget(footer_widget)
-
-        return layout
-
-    def _create_nav_button(self, panel_id, text, icon, icon_obj_name):
-        """创建导航按钮"""
-        btn = QWidget()
-        btn.setObjectName("nav_button")
-        btn.setCursor(Qt.PointingHandCursor)
-
-        layout = QHBoxLayout(btn)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(12)
-
-        icon_label = QLabel(icon)
-        icon_label.setObjectName(icon_obj_name)
-        icon_label.setFixedWidth(20)
-
-        text_label = QLabel(text)
-        text_label.setObjectName("nav_label")
-
-        layout.addWidget(icon_label)
-        layout.addWidget(text_label, 1)
-
-        btn.mousePressEvent = lambda e, pid=panel_id: self._on_nav_clicked(pid)
-
-        return btn
-
-    def _create_footer(self):
-        """创建底部状态区"""
-        footer = QWidget()
-        footer.setObjectName("nav_footer")
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 10, 16, 10)
-        footer_layout.setSpacing(8)
-
-        # 串口状态指示灯
-        serial_indicator = QLabel("●")
-        serial_indicator.setObjectName("serial_status_indicator")
-        serial_indicator.setStyleSheet("color: #e74c3c;")
-
-        serial_label = QLabel("未连接")
-        serial_label.setObjectName("serial_status_label")
-
-        footer_layout.addWidget(serial_indicator)
-        footer_layout.addWidget(serial_label, 1)
-
-        self._footer_serial_indicator = serial_indicator
-        self._footer_serial_label = serial_label
-
-        return footer
+        # 存储按钮引用
+        self.nav_buttons = {
+            panel_id: self.findChild(QWidget, btn_name)
+            for btn_name, panel_id in self._nav_button_map.items()
+        }
 
     def _on_nav_clicked(self, panel_id):
         """导航按钮点击"""
@@ -194,22 +76,26 @@ class MainPanel(QMainWindow):
     def _switch_panel(self, panel_id):
         """切换到指定面板"""
         if panel_id not in self._panels:
+            logger.warning(f"面板不存在: {panel_id}")
             return
 
         # 更新按钮状态
         for pid, btn in self.nav_buttons.items():
-            if pid == panel_id:
-                btn.setProperty("selected", True)
-            else:
-                btn.setProperty("selected", False)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            if btn:
+                if pid == panel_id:
+                    btn.setProperty("selected", True)
+                else:
+                    btn.setProperty("selected", False)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
 
         # 切换面板
-        panel = self._panels[panel_id]
-        self.stacked_widget.setCurrentWidget(panel)
-        self._active_panel = panel_id
+        content_stacked = self.findChild(QStackedWidget, "content_stacked")
+        if content_stacked:
+            panel = self._panels[panel_id]
+            content_stacked.setCurrentWidget(panel)
 
+        self._active_panel = panel_id
         logger.debug(f"切换到面板: {panel_id}")
 
     def _load_panels(self):
@@ -220,7 +106,10 @@ class MainPanel(QMainWindow):
         from windows.history_panel import HistoryPanel
         from windows.compare_panel import ComparePanel
 
-        # 创建面板实例
+        # 内容区 StackedWidget
+        content_stacked = self.findChild(QStackedWidget, "content_stacked")
+
+        # 创建面板实例并添加到 StackedWidget
         panels = [
             ("measure", MeasurePanel()),
             ("serial", SerialPanel()),
@@ -231,7 +120,7 @@ class MainPanel(QMainWindow):
 
         for panel_id, panel in panels:
             self._panels[panel_id] = panel
-            self.stacked_widget.addWidget(panel)
+            content_stacked.addWidget(panel)
 
         logger.info(f"已加载 {len(panels)} 个面板")
 
@@ -239,13 +128,25 @@ class MainPanel(QMainWindow):
         """设置状态栏"""
         statusbar = self.statusBar()
 
-        # 当前位置
+        # 串口状态 - 从 UI 文件获取引用
+        self._footer_serial_indicator = self.findChild(QLabel, "serial_status_indicator")
+        self._footer_serial_label = self.findChild(QLabel, "serial_status_label")
+
+        # 当前位置标签
         pos_label = QLabel("位置: X=-- Z=--")
         pos_label.setObjectName("status_position_label")
-
         statusbar.addPermanentWidget(pos_label)
-
         self._status_position_label = pos_label
+
+    def _center_on_screen(self):
+        """移动窗口到屏幕中央"""
+        from PyQt5.QtWidgets import QDesktopWidget
+        screen = QDesktopWidget().screenGeometry()
+        window_geometry = self.geometry()
+        x = (screen.width() - window_geometry.width()) // 2
+        y = (screen.height() - window_geometry.height()) // 2
+        self.move(x, y)
+        logger.debug(f"窗口移动到 ({x}, {y})")
 
     def update_serial_status(self, connected, port=""):
         """更新串口状态"""

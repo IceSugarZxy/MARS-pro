@@ -20,21 +20,265 @@
    <string>MARS - 旋转体表磁测量分析系统</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <!-- 预定义的侧边栏区域 -->
-   <widget class="QWidget" name="nav_panel_placeholder">
-    <property name="minimumSize">
-     <size>
-      <width>200</width>
-      <height>0</height>
-     </size>
-    </property>
-    <property name="maximumSize">
-     <size>
-      <width>200</width>
-      <height>16777215</height>
-     </size>
-    </property>
-   </widget>
+   <layout class="QHBoxLayout" name="main_layout">
+    <!-- 侧边栏 -->
+    <item>
+     <widget class="QWidget" name="nav_panel">
+      <property name="minimumSize">
+       <size>
+        <width>200</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>200</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <layout class="QVBoxLayout" name="nav_layout">
+       <!-- 标题区 -->
+       <item>
+        <widget class="QWidget" name="nav_header">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>80</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="header_layout">
+          <item>
+           <widget class="QLabel" name="nav_title">
+            <property name="text">
+             <string>MARS</string>
+            </property>
+            <property name="font">
+             <font>
+              <family>Arial</family>
+              <pointsize>20</pointsize>
+              <weight>75</weight>
+             </font>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="nav_subtitle">
+            <property name="text">
+             <string>旋转体表磁测量分析系统</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <!-- 分隔线 -->
+       <item>
+        <widget class="QFrame" name="nav_separator">
+         <property name="frameShape">
+          <enum>QFrame::HLine</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Plain</enum>
+         </property>
+         <property name="lineWidth">
+          <number>1</number>
+         </property>
+        </widget>
+       </item>
+       <!-- 导航按钮 -->
+       <item>
+        <widget class="QWidget" name="nav_buttons_container">
+         <layout class="QVBoxLayout" name="nav_buttons_layout">
+          <item>
+           <widget class="QWidget" name="nav_button_measure" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_measure_layout">
+             <item>
+              <widget class="QLabel" name="nav_icon_measure">
+               <property name="text">
+                <string>▶</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="nav_text_measure">
+               <property name="text">
+                <string>测量界面</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="nav_button_serial" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_serial_layout">
+             <item>
+              <widget class="QLabel" name="nav_icon_serial">
+               <property name="text">
+                <string>⚙</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="nav_text_serial">
+               <property name="text">
+                <string>串口设置</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="nav_button_position" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_position_layout">
+             <item>
+              <widget class="QLabel" name="nav_icon_position">
+               <property name="text">
+                <string>◎</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="nav_text_position">
+               <property name="text">
+                <string>位置控制</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="nav_button_history" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_history_layout">
+             <item>
+              <widget class="QLabel" name="nav_icon_history">
+               <property name="text">
+                <string>☰</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="nav_text_history">
+               <property name="text">
+                <string>历史数据</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="nav_button_compare" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_compare_layout">
+             <item>
+              <widget class="QLabel" name="nav_icon_compare">
+               <property name="text">
+                <string>⚡</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="nav_text_compare">
+               <property name="text">
+                <string>数据比对</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <!-- 弹簧 -->
+       <item>
+        <spacer name="nav_spacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+       <!-- 底部状态 -->
+       <item>
+        <widget class="QWidget" name="nav_footer">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>50</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="footer_layout">
+          <item>
+           <widget class="QWidget" name="status_container" native="true">
+            <layout class="QHBoxLayout" name="status_layout">
+             <item>
+              <widget class="QLabel" name="serial_status_indicator">
+               <property name="minimumSize">
+                <size>
+                 <width>10</width>
+                 <height>10</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="serial_status_label">
+               <property name="text">
+                <string>未连接</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <!-- 内容区 -->
+    <item>
+     <widget class="QStackedWidget" name="content_stacked">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <!-- 各面板会在运行时动态添加 -->
+     </widget>
+    </item>
+   </layout>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
  </widget>
