@@ -11,17 +11,13 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>旋转体表磁测量分析系统</string>
+   <string>MARS - 旋转体表磁测量分析系统</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="central_layout">
-    <item>
-     <layout class="QHBoxLayout" name="main_layout">
-     </layout>
-    </item>
+   <layout class="QHBoxLayout" name="main_layout">
    </layout>
   </widget>
-  <widget class="QWidget" name="statusbar"/>
+  <widget class="QStatusBar" name="statusbar"/>
  </widget>
  <resources/>
  <connections/>

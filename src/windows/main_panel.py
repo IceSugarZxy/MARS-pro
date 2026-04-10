@@ -36,6 +36,9 @@ class MainPanel(QMainWindow):
         # 构建布局
         self._setup_ui()
 
+        # 移动到屏幕中央
+        self._center_on_screen()
+
         # 默认显示测量面板
         self._switch_panel("measure")
 
@@ -66,6 +69,16 @@ class MainPanel(QMainWindow):
 
         # 加载所有面板
         self._load_panels()
+
+    def _center_on_screen(self):
+        """移动窗口到屏幕中央"""
+        from PyQt5.QtWidgets import QDesktopWidget
+        screen = QDesktopWidget().screenGeometry()
+        window_geometry = self.geometry()
+        x = (screen.width() - window_geometry.width()) // 2
+        y = (screen.height() - window_geometry.height()) // 2
+        self.move(x, y)
+        logger.debug(f"窗口移动到 ({x}, {y})")
 
     def _create_sidebar(self):
         """创建侧边栏"""
