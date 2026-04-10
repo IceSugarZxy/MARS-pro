@@ -45,7 +45,12 @@ class MainPanel(QMainWindow):
     def _setup_ui(self):
         """构建界面"""
         central_widget = self.findChild(QWidget, "centralwidget")
-        main_layout = central_widget.layout()
+
+        # 创建一个新的水平布局并应用到 centralwidget
+        from PyQt5.QtWidgets import QHBoxLayout
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # 侧边栏
         self.sidebar = self._create_sidebar()
@@ -58,11 +63,9 @@ class MainPanel(QMainWindow):
         self.stacked_widget = QStackedWidget()
         self.stacked_widget.setObjectName("content_panel")
 
-        # 添加入主布局
+        # 添加入主布局，stacked_widget 拉伸填充剩余空间
         main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.stacked_widget, 1)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
 
         # 状态栏
         self._setup_statusbar()
