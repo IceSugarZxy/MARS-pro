@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainPanel</class>
+ <widget class="QMainWindow" name="MainPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1400</width>
+    <height>800</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>旋转体表磁测量分析系统</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="central_layout">
+    <item>
+     <layout class="QHBoxLayout" name="main_layout">
+     </layout>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QWidget" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

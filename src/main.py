@@ -43,27 +43,28 @@ class MainApplication:
 
         # 初始化组件
         self.thread_manager = None
-        self.home_window = None
+        self.main_panel = None
 
     def initialize(self) -> bool:
         """初始化应用程序组件"""
         try:
             # 延迟导入，避免循环依赖
-            from windows import HomeWindow
+            from windows import MainPanel
 
-            # 创建主窗口
-            self.home_window = HomeWindow()
-            self.logger.info("主窗口创建成功")
+            # 创建主面板（单窗口架构）
+            self.main_panel = MainPanel()
+            self.logger.info("主面板创建成功")
 
             # 创建线程管理器
             self.thread_manager = ThreadManager()
             self.logger.info("线程管理器创建成功")
 
-            # 连接信号
-            self.thread_manager.connect_thread_signal(
-                self.home_window.serial_window,
-                self.home_window.position_window,
-                self.home_window.measure_window
+            # 连接信号到各面板
+            self.thread_manager.serial_manager.signal_connection_status_changed.connect(
+                self.main_panel.update_serial_status
+            )
+            self.thread_manager.data_process.signal_position_data_process_finished.connect(
+                lambda pos: self.main_panel.update_position(pos[0], pos[1])
             )
             self.logger.info("信号连接完成")
 
@@ -72,7 +73,7 @@ class MainApplication:
             self.logger.info("线程启动完成")
 
             # 自动连接串口
-            self.home_window.serial_window.auto_connect_from_config()
+            self.main_panel.get_panel("serial").auto_connect_from_config()
             self.logger.info("自动连接串口完成")
 
             return True
@@ -87,9 +88,9 @@ class MainApplication:
             self.logger.error("初始化失败，程序退出")
             return 1
 
-        # 显示主窗口
-        self.home_window.show()
-        self.logger.info("主窗口已显示")
+        # 显示主面板
+        self.main_panel.show()
+        self.logger.info("主面板已显示")
 
         # 启动事件循环
         return self._run_event_loop()

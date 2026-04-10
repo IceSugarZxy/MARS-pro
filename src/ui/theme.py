@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-MARS 工业风深色主题样式系统
-提供统一的深灰+蓝色调视觉风格
+MARS 浅色工业风主题样式系统
+提供统一的浅灰+蓝色调视觉风格
 """
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPalette
 
 # ============================================================================
-# 颜色系统
+# 颜色系统 - 浅色主题
 # ============================================================================
 
 # 主色系
-COLOR_BG_DARKEST = "#1a1a1a"      # 最深背景（窗口背景）
-COLOR_BG_DARK = "#1e1e1e"         # 深色背景
-COLOR_BG_PANEL = "#252525"        # 面板背景（卡片）
-COLOR_BG_PANEL_LIGHT = "#2d2d2d"  # 浅面板背景
-COLOR_BORDER = "#3d3d3d"          # 边框色
-COLOR_BORDER_LIGHT = "#4a4a4a"    # 浅边框
+COLOR_BG_DARKEST = "#f5f5f5"     # 最深背景（页面背景）
+COLOR_BG_DARK = "#ffffff"         # 白色背景（卡片/面板）
+COLOR_BG_PANEL = "#fafafa"        # 面板背景
+COLOR_BG_PANEL_LIGHT = "#ffffff"   # 浅面板背景
+COLOR_BORDER = "#e0e0e0"          # 边框色
+COLOR_BORDER_LIGHT = "#ebebeb"    # 浅边框
 
 # 强调色
 COLOR_PRIMARY = "#3498db"         # 主蓝色
@@ -38,10 +38,10 @@ COLOR_GRAY_LIGHT = "#95a5a6"      # 浅灰
 COLOR_GRAY_DARK = "#5d6d7e"       # 深灰
 
 # 文字色
-COLOR_TEXT_PRIMARY = "#ffffff"    # 主要文字（深色区）
-COLOR_TEXT_SECONDARY = "#b0b0b0"  # 次要文字
-COLOR_TEXT_MUTED = "#808080"       # 弱化文字
-COLOR_TEXT_DARK = "#2c3e50"       # 深色文字（浅色区）
+COLOR_TEXT_PRIMARY = "#2c3e50"    # 主要文字
+COLOR_TEXT_SECONDARY = "#7f8c8d"  # 次要文字
+COLOR_TEXT_MUTED = "#b0b0b0"      # 弱化文字
+COLOR_TEXT_DARK = "#2c3e50"       # 深色文字
 
 # ============================================================================
 # 字体
@@ -408,80 +408,80 @@ def get_base_stylesheet() -> str:
         background-color: {COLOR_BG_PANEL_LIGHT};
     }}
 
-    /* ===== HomeWindow 特定样式 ===== */
+    /* ===== MainPanel 侧边栏导航样式（浅色主题） ===== */
     QWidget#nav_panel {{
-        background-color: #1a1a1a;
-        border-right: 1px solid #3d3d3d;
+        background-color: {COLOR_BG_DARK};
+        border-right: 1px solid {COLOR_BORDER};
     }}
 
     QWidget#nav_header {{
-        background-color: #1a1a1a;
-        border-bottom: 1px solid #3d3d3d;
+        background-color: {COLOR_BG_DARK};
+        border-bottom: 1px solid {COLOR_BORDER};
     }}
 
     QLabel#nav_title {{
         font-size: 20px;
         font-weight: bold;
-        color: #3498db;
+        color: {COLOR_PRIMARY};
         background: transparent;
         border: none;
     }}
 
     QLabel#nav_subtitle {{
         font-size: 10px;
-        color: #7f8c8d;
+        color: {COLOR_TEXT_SECONDARY};
         background: transparent;
         border: none;
     }}
 
     /* 导航按钮 - native QWidget */
-    QWidget#test_button, QWidget#serial_button, QWidget#position_button,
-    QWidget#history_button, QWidget#compare_button {{
+    QWidget#nav_button {{
         background-color: transparent;
         border: none;
+        border-radius: {BORDER_RADIUS};
     }}
-    QWidget#test_button:hover, QWidget#serial_button:hover,
-    QWidget#position_button:hover, QWidget#history_button:hover,
-    QWidget#compare_button:hover {{
-        background-color: #2d2d2d;
+    QWidget#nav_button:hover {{
+        background-color: {COLOR_BG_PANEL};
+    }}
+    QWidget#nav_button:selected {{
+        background-color: {COLOR_PRIMARY_LIGHT};
     }}
 
     /* 导航图标 */
-    QLabel#test_icon {{
-        color: #3498db;
+    QLabel#nav_icon {{
+        color: {COLOR_PRIMARY};
         background: transparent;
         border: none;
         font-size: 14px;
     }}
-    QLabel#serial_icon {{
-        color: #f39c12;
+    QLabel#nav_icon_serial {{
+        color: {COLOR_WARNING};
         background: transparent;
         border: none;
         font-size: 14px;
     }}
-    QLabel#position_icon {{
-        color: #9b59b6;
+    QLabel#nav_icon_position {{
+        color: {COLOR_PURPLE};
         background: transparent;
         border: none;
         font-size: 14px;
     }}
-    QLabel#history_icon {{
-        color: #27ae60;
+    QLabel#nav_icon_history {{
+        color: {COLOR_SUCCESS};
         background: transparent;
         border: none;
         font-size: 14px;
     }}
-    QLabel#compare_icon {{
-        color: #e74c3c;
+    QLabel#nav_icon_compare {{
+        color: {COLOR_DANGER};
         background: transparent;
         border: none;
         font-size: 14px;
     }}
 
     /* 导航标签 */
-    QLabel#test_label, QLabel#serial_label, QLabel#position_label,
-    QLabel#history_label, QLabel#compare_label {{
-        color: #ffffff;
+    QLabel#nav_label {{
+        color: {COLOR_TEXT_PRIMARY};
         background: transparent;
         border: none;
         font-size: 13px;
@@ -489,12 +489,12 @@ def get_base_stylesheet() -> str:
 
     /* 导航底部 */
     QWidget#nav_footer {{
-        background-color: #1a1a1a;
-        border-top: 1px solid #3d3d3d;
+        background-color: {COLOR_BG_DARK};
+        border-top: 1px solid {COLOR_BORDER};
     }}
 
     QLabel#serial_status_indicator {{
-        background-color: #e74c3c;
+        background-color: {COLOR_DANGER};
         border-radius: 5px;
         border: none;
         min-width: 10px;
@@ -504,46 +504,30 @@ def get_base_stylesheet() -> str:
     }}
 
     QLabel#serial_status_label {{
-        color: #7f8c8d;
+        color: {COLOR_TEXT_SECONDARY};
         background: transparent;
         border: none;
         font-size: 10px;
     }}
 
-    QWidget#exit_button {{
-        background-color: transparent;
-        border: 1px solid #3d3d3d;
-        border-radius: 4px;
-    }}
-    QWidget#exit_button:hover {{
-        background-color: #2d2d2d;
-        border: 1px solid #e74c3c;
-    }}
-
-    QLabel#exit_icon, QLabel#exit_label {{
-        color: #7f8c8d;
-        background: transparent;
-        border: none;
-    }}
-
     /* 内容区 */
     QWidget#content_panel {{
-        background-color: #1e1e1e;
+        background-color: {COLOR_BG_DARKEST};
     }}
 
-    QLabel#welcome_title {{
-        font-size: 28px;
+    QLabel#panel_title {{
+        font-size: 20px;
         font-weight: bold;
-        color: #ffffff;
+        color: {COLOR_TEXT_PRIMARY};
         background: transparent;
         border: none;
     }}
 
-    QLabel#welcome_subtitle {{
-        font-size: 13px;
-        color: #7f8c8d;
-        background: transparent;
-        border: none;
+    /* 通用卡片/面板 */
+    QFrame#card {{
+        background-color: {COLOR_BG_DARK};
+        border: 1px solid {COLOR_BORDER};
+        border-radius: {BORDER_RADIUS_L};
     }}
     """
 
