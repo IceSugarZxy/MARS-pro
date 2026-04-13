@@ -2,11 +2,13 @@
 
 基于 PyQt5 的旋转体表磁测量分析系统，支持串口通信、数据采集、波形分析和图形界面。
 
+**2026-04-13**: 修复偏置校准竞争条件 - 添加 `_offset_calibrating` 标志防止位置查询干扰校准、使用 `QTimer.singleShot` 替代 `time.sleep` 避免阻塞Qt事件循环、修复字节缓冲区处理逻辑
+
+**2026-04-13**: 新增偏置校准进度条对话框、新增测试配置面板（整合位置控制与偏置校准功能）
+
 **2026-03-25**: 新增自动右压功能、优化日志编码与状态显示、修复结果显示初始化、支持PyInstaller打包
 
 **2026-03-25**: 日志目录改为exe同级目录、修复打包后模块导入问题
-
-**2026-03-21**: 优化自检流程与位置数据处理 - check_self_detect位置数据识别增强、自检前清空队列、位置查询1.5s等待、无效位置重试机制、串口端口正确释放
 
 ## 功能特性
 
@@ -57,9 +59,10 @@ MARS/
 │   │   ├── __init__.py
 │   │   ├── home_window.py  # 主窗口
 │   │   ├── serial_window.py # 串口设置
-│   │   ├── position_window.py # 位置控制
+│   │   ├── test_config_panel.py # 测试配置（位置控制+偏置校准）
 │   │   ├── measure_window.py # 测量界面
 │   │   ├── measure_type_dialog.py # 测量类型选择
+│   │   ├── offset_calibration_dialog.py # 偏置校准进度对话框
 │   │   ├── plot_window.py  # 绘图窗口
 │   │   ├── compare_window.py # 数据比对
 │   │   ├── history_window.py # 历史记录
@@ -93,9 +96,10 @@ MARS/
 |------|------|
 | home_window | 主界面，窗口导航 |
 | serial_window | 串口参数设置 |
-| position_window | 位置控制 |
+| test_config_panel | 测试配置（位置控制+偏置校准） |
 | measure_window | 测量界面，方向控制 |
 | measure_type_dialog | 测量类型选择（旋转/垂直） |
+| offset_calibration_dialog | 偏置校准进度对话框 |
 | plot_window | 实时绘图 |
 | compare_window | 数据比对 |
 | history_window | 历史数据查看 |
