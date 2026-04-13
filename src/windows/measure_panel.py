@@ -78,9 +78,6 @@ class MeasurePanel(QWidget):
 
         # 底部按钮
         self.findChild(QPushButton, "btn_save").clicked.connect(self._save_data_button_clicked)
-        self.findChild(QPushButton, "btn_serial").clicked.connect(self._on_serial_clicked)
-        self.findChild(QPushButton, "btn_history").clicked.connect(self._on_history_clicked)
-        self.findChild(QPushButton, "btn_compare").clicked.connect(self._on_compare_clicked)
 
     def _clear_status_message(self):
         """清空状态消息"""
@@ -238,6 +235,11 @@ class MeasurePanel(QWidget):
     def _reset_sample_inputs(self):
         """重置样品信息"""
         self.findChild(QLineEdit, "sample_name_edit").setText("测试样品")
+        self.findChild(QLineEdit, "sample_code_edit").setText("")
+        self.findChild(QLineEdit, "coil_code_edit").setText("")
+        self.findChild(QLineEdit, "mag_condition_edit").setText("")
+        self.findChild(QLineEdit, "probe_edit").setText("")
+        self.findChild(QLineEdit, "tester_edit").setText("")
         self.findChild(QLineEdit, "airgap_edit").setText("--")
         self.findChild(QLineEdit, "remark_edit").setText("测试备注")
         self._update_display_defaults()
@@ -318,7 +320,12 @@ class MeasurePanel(QWidget):
         """收集样品信息"""
         return {
             'sample_name': self.findChild(QLineEdit, "sample_name_edit").text().strip(),
-            'coil_code': self.findChild(QLineEdit, "airgap_edit").text().strip(),
+            'sample_code': self.findChild(QLineEdit, "sample_code_edit").text().strip(),
+            'coil_code': self.findChild(QLineEdit, "coil_code_edit").text().strip(),
+            'mag_condition': self.findChild(QLineEdit, "mag_condition_edit").text().strip(),
+            'probe': self.findChild(QLineEdit, "probe_edit").text().strip(),
+            'tester': self.findChild(QLineEdit, "tester_edit").text().strip(),
+            'airgap': self.findChild(QLineEdit, "airgap_edit").text().strip(),
             'remark': self.findChild(QLineEdit, "remark_edit").text().strip(),
             'polar_num': self.findChild(QLineEdit, "polar_num_edit").text().strip(),
         }
@@ -380,8 +387,8 @@ class MeasurePanel(QWidget):
             self.data_process = tm.data_process
             self.serial_command = tm.serial_command
 
-            if hasattr(self.data_process, 'signal_measure_data_processed'):
-                self.data_process.signal_measure_data_processed.connect(self._on_measure_data_processed)
+            if hasattr(self.data_process, 'signal_measure_data_process_finished'):
+                self.data_process.signal_measure_data_process_finished.connect(self._on_measure_data_processed)
 
     def _on_measure_data_processed(self, angle_data, mag_data):
         """测量数据处理完成"""
@@ -412,16 +419,45 @@ class MeasurePanel(QWidget):
         if not results:
             return
         try:
+            # N极/S极 基础值
             self.findChild(QLineEdit, "n_max_edit").setText(f"{results.get('N_max', 0):.2f}")
             self.findChild(QLineEdit, "n_min_edit").setText(f"{results.get('N_min', 0):.2f}")
             self.findChild(QLineEdit, "n_mean_edit").setText(f"{results.get('N_mean', 0):.2f}")
             self.findChild(QLineEdit, "s_max_edit").setText(f"{results.get('S_max', 0):.2f}")
             self.findChild(QLineEdit, "s_min_edit").setText(f"{results.get('S_min', 0):.2f}")
             self.findChild(QLineEdit, "s_mean_edit").setText(f"{results.get('S_mean', 0):.2f}")
+
+            # N极/S极 误差
+            self.findChild(QLineEdit, "n_error_edit").setText(f"{results.get('N_se', 0):.2f}")
+            self.findChild(QLineEdit, "s_error_edit").setText(f"{results.get('S_se', 0):.2f}")
+
+            # NS关系
             self.findChild(QLineEdit, "ns_2_edit").setText(f"{results.get('NS_2', 0):.2f}")
+
+            # N极零交叉点间隔
+            self.findChild(QLineEdit, "n_interval_max_edit").setText(f"{results.get('N_interval_max', 0):.2f}")
+            self.findChild(QLineEdit, "n_interval_min_edit").setText(f"{results.get('N_interval_min', 0):.2f}")
+            self.findChild(QLineEdit, "n_interval_mean_edit").setText(f"{results.get('N_interval_mean', 0):.2f}")
+
+            # S极零交叉点间隔
+            self.findChild(QLineEdit, "s_interval_max_edit").setText(f"{results.get('S_interval_max', 0):.2f}")
+            self.findChild(QLineEdit, "s_interval_min_edit").setText(f"{results.get('S_interval_min', 0):.2f}")
+            self.findChild(QLineEdit, "s_interval_mean_edit").setText(f"{results.get('S_interval_mean', 0):.2f}")
+
+            # 面积
+            self.findChild(QLineEdit, "n_area_edit").setText(f"{results.get('N_area', 0):.2f}")
+            self.findChild(QLineEdit, "s_area_edit").setText(f"{results.get('S_area', 0):.2f}")
+            self.findChild(QLineEdit, "ns_area_edit").setText(f"{results.get('NS_area', 0):.2f}")
+
+            # 单极相关
             self.findChild(QLineEdit, "single_polar_mean_edit").setText(f"{results.get('SinglePolarMean', 0):.2f}")
             self.findChild(QLineEdit, "single_polar_error_edit").setText(f"{results.get('SinglePolarError', 0):.2f}")
+            self.findChild(QLineEdit, "polar_error_sum_edit").setText(f"{results.get('PolarErrorSum', 0):.2f}")
 
+            # THD失真率
+            self.findChild(QLineEdit, "thd_error_edit").setText(f"{results.get('THD_error', 0):.2f}")
+
+            # 极数
             pole_num = results.get('pole_num')
             if pole_num is not None:
                 try:

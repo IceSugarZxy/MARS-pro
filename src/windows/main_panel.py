@@ -49,7 +49,7 @@ class MainPanel(QMainWindow):
         self._nav_button_map = {
             "nav_button_measure": "measure",
             "nav_button_serial": "serial",
-            "nav_button_position": "position",
+            "nav_button_position": "test_config",
             "nav_button_history": "history",
             "nav_button_compare": "compare",
         }
@@ -102,7 +102,7 @@ class MainPanel(QMainWindow):
         """加载所有面板"""
         from windows.measure_panel import MeasurePanel
         from windows.serial_panel import SerialPanel
-        from windows.position_panel import PositionPanel
+        from windows.test_config_panel import TestConfigPanel
         from windows.history_panel import HistoryPanel
         from windows.compare_panel import ComparePanel
 
@@ -113,7 +113,7 @@ class MainPanel(QMainWindow):
         panels = [
             ("measure", MeasurePanel()),
             ("serial", SerialPanel()),
-            ("position", PositionPanel()),
+            ("test_config", TestConfigPanel()),
             ("history", HistoryPanel()),
             ("compare", ComparePanel()),
         ]
@@ -151,10 +151,10 @@ class MainPanel(QMainWindow):
     def update_serial_status(self, connected, port=""):
         """更新串口状态"""
         if connected:
-            self._footer_serial_indicator.setStyleSheet("color: #27ae60;")
+            self._footer_serial_indicator.setStyleSheet("background-color: #27ae60; border-radius: 5px;")
             self._footer_serial_label.setText(f"已连接 {port}")
         else:
-            self._footer_serial_indicator.setStyleSheet("color: #e74c3c;")
+            self._footer_serial_indicator.setStyleSheet("background-color: #e74c3c; border-radius: 5px;")
             self._footer_serial_label.setText("未连接")
 
     def update_position(self, x, z):

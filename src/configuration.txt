@@ -1,7 +1,7 @@
-offset:190.5750081609483
-COM:COM3
-baudrate:921600
-test_x:9550
-test_z:32926
-suspend_x:19905
-suspend_z:40841
+offset:197.92969178295874
+COM:COM4
+baudrate:115200
+test_x:12268
+test_z:31968
+suspend_x:6877
+suspend_z:23905

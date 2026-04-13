@@ -18,6 +18,7 @@ else:
 sys.path.insert(0, application_path)
 
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
 # 绝对导入
 from core import init_logging, get_config_manager, ThreadManager
 
@@ -59,14 +60,44 @@ class MainApplication:
             self.thread_manager = ThreadManager()
             self.logger.info("线程管理器创建成功")
 
-            # 连接信号到各面板
+            # 连接信号到各面板（使用 QueuedConnection 确保跨线程安全）
             self.thread_manager.serial_manager.signal_connection_status_changed.connect(
-                self.main_panel.update_serial_status
+                self.main_panel.update_serial_status, Qt.QueuedConnection
             )
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
                 lambda pos: self.main_panel.update_position(pos[0], pos[1])
             )
+            # 连接位置数据处理信号
+            self.thread_manager.data_process.signal_position_data_process.connect(
+                self.thread_manager.data_process.process_position_data
+            )
+            # 连接位置数据处理完成信号 - 更新serial_command当前位置
+            self.thread_manager.data_process.signal_position_data_process_finished.connect(
+                self.thread_manager.serial_command._on_position_data_processed
+            )
+            # 连接偏置数据处理信号
+            self.thread_manager.data_process.signal_offset_data_process.connect(
+                self.thread_manager.data_process.process_offset_data
+            )
+            # 连接偏置校准完成信号 - 清除偏置校准标志
+            self.thread_manager.data_process.signal_offset_data_process_finished.connect(
+                self.thread_manager.serial_command._on_offset_calibration_finished
+            )
+            # 连接断开信号
+            self.thread_manager.signal_disconnect.connect(
+                self.thread_manager.serial_manager.disconnect_serial
+            )
+            # 连接串口连接信号
+            self.thread_manager.signal_connect.connect(
+                self.thread_manager.serial_manager.connect_serial
+            )
             self.logger.info("信号连接完成")
+
+            # 将线程管理器传递给各面板
+            self.main_panel.get_panel("serial").set_thread_manager(self.thread_manager)
+            self.main_panel.get_panel("measure").set_thread_manager(self.thread_manager)
+            self.main_panel.get_panel("test_config").set_thread_manager(self.thread_manager)
+            self.logger.info("面板线程管理器设置完成")
 
             # 启动线程
             self.thread_manager.start_threads()
@@ -120,7 +151,7 @@ def main() -> int:
 
     # 设置应用程序信息
     app.setApplicationName("旋转体表磁测量分析系统")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("2.0.0")
 
     # 设置应用程序样式
     app.setStyle('Fusion')

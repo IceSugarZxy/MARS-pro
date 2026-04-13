@@ -96,9 +96,17 @@ class ConfigManager:
     def com_port(self) -> str:
         return self.get('COM', 'COM12')
 
+    @com_port.setter
+    def com_port(self, value: str) -> None:
+        self.set('COM', value)
+
     @property
     def baudrate(self) -> int:
         return int(self.get('baudrate', '921600'))
+
+    @baudrate.setter
+    def baudrate(self, value: int) -> None:
+        self.set('baudrate', str(value))
 
     @property
     def offset(self) -> float:

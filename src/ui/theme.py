@@ -124,39 +124,6 @@ def get_base_stylesheet() -> str:
         color: {COLOR_TEXT_SECONDARY};
     }}
 
-    /* 组合框 */
-    QComboBox {{
-        background-color: {COLOR_BG_PANEL};
-        color: {COLOR_TEXT_PRIMARY};
-        border: 1px solid {COLOR_BORDER};
-        border-radius: {BORDER_RADIUS};
-        padding: {PADDING_S} {PADDING_M};
-        font-size: {FONT_SIZE_M};
-    }}
-
-    QComboBox:hover {{
-        border: 1px solid {COLOR_PRIMARY};
-    }}
-
-    QComboBox::drop-down {{
-        border: none;
-        width: 20px;
-    }}
-
-    QComboBox::down-arrow {{
-        image: none;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 6px solid {COLOR_TEXT_SECONDARY};
-    }}
-
-    QComboBox QAbstractItemView {{
-        background-color: {COLOR_BG_PANEL};
-        color: {COLOR_TEXT_PRIMARY};
-        border: 1px solid {COLOR_BORDER};
-        selection-background-color: {COLOR_PRIMARY};
-    }}
-
     /* 按钮 */
     QPushButton {{
         background-color: {COLOR_BG_PANEL_LIGHT};

@@ -94,6 +94,9 @@ class DataProcess(QObject):
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
 
+        # 偏置校准标志：用于阻止位置数据处理干扰偏置校准
+        self._offset_calibrating: bool = False
+
         # 样品信息：用于保存测量数据时写入文件
         self._sample_info: dict = {}
 
@@ -219,39 +222,48 @@ class DataProcess(QObject):
         - "X Axis Self Detect Finished" - X轴自检完成
         - "Z Axis Self Detect Finished" - Z轴自检完成
 
+        使用非阻塞方式持续读取队列，直到找到自检完成消息或队列为空。
+
         Returns:
             是否检测到自检完成消息
         """
-        logger.debug("check_self_detect: 开始检查自检完成消息")
+        import time
+        start_time = time.time()
+        item_count = 0
         try:
-            # 从队列中读取数据
-            data = self.data_queue.get(timeout=0.5)
-            text = data.decode('utf-8', errors='ignore')
-            logger.debug(f"check_self_detect: 自检流程回信: {text.strip()}")
+            while True:
+                # 非阻塞读取队列数据
+                try:
+                    data = self.data_queue.get_nowait()
+                    item_count += 1
+                except queue.Empty:
+                    # 队列为空，说明已处理完所有待处理数据
+                    if item_count > 0:
+                        logger.debug(f"check_self_detect: [{time.time():.3f}] 扫描了{item_count}个数据包，队列已空，耗时={time.time()-start_time:.3f}s")
+                    break
 
-            # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
-            if text.strip().startswith('X:') and 'Z:' in text:
-                logger.debug("check_self_detect: 收到位置数据，放回队列供process_position_data处理")
-                self.data_queue.put(data)
-                return False
+                text = data.decode('utf-8', errors='ignore')
+                logger.info(f"check_self_detect: [{time.time():.3f}] 收到数据, 内容='{text.strip()[:50]}'")
 
-            # 检测Z轴自检完成
-            if 'Z Axis Self Detect Finished' in text:
-                logger.info("check_self_detect: 检测到 Z 轴自检完成")
-                self.signal_self_detect_finished.emit('Z')
-                return True
-            # 检测X轴自检完成
-            elif 'X Axis Self Detect Finished' in text:
-                logger.info("check_self_detect: 检测到 X 轴自检完成")
-                self.signal_self_detect_finished.emit('X')
-                return True
-            else:
-                logger.debug(f"check_self_detect: 不是自检完成消息，内容: {text.strip()}")
+                # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
+                if text.strip().startswith('X:') and 'Z:' in text:
+                    logger.debug("check_self_detect: 收到位置数据，放回队列")
+                    self.data_queue.put(data)
+                    continue
 
-        except queue.Empty:
-            logger.debug("check_self_detect: 队列为空")
-            # 队列为空，说明没有自检完成消息，忽略
-            pass
+                # 检测Z轴自检完成
+                if 'Z Axis Self Detect Finished' in text:
+                    logger.info(f"check_self_detect: ★ 检测到 Z 轴自检完成！耗时={time.time()-start_time:.3f}s")
+                    self.signal_self_detect_finished.emit('Z')
+                    return True
+                # 检测X轴自检完成
+                elif 'X Axis Self Detect Finished' in text:
+                    logger.info(f"check_self_detect: ★ 检测到 X 轴自检完成！耗时={time.time()-start_time:.3f}s")
+                    self.signal_self_detect_finished.emit('X')
+                    return True
+                else:
+                    logger.debug(f"check_self_detect: 忽略其他消息: '{text.strip()[:30]}'")
+
         except Exception as e:
             logger.error(f"检测自检完成消息失败: {e}")
 
@@ -274,6 +286,11 @@ class DataProcess(QObject):
         3. 解析X和Z的位置值
         4. 发出完成信号
         """
+        # 如果正在偏置校准，跳过位置数据处理，避免干扰
+        if self._offset_calibrating:
+            self.signal_position_data_process_finished.emit((None, None))
+            return
+
         x_position: Optional[str] = None
         z_position: Optional[str] = None
 
@@ -281,14 +298,14 @@ class DataProcess(QObject):
         DataProcess._position_buffer.clear()
 
         # 总超时1.5秒，持续等待位置数据
-        total_timeout = 1.5
-        start_time = time.time()
+        import time as time_module
+        start_time = time_module.time()
 
-        while time.time() - start_time < total_timeout:
+        while time_module.time() - start_time < 1.5:
+            # 使用非阻塞get_nowait() +短暂sleep，让Qt事件循环处理其他信号
             try:
-                data = self.data_queue.get(timeout=0.1)
+                data = self.data_queue.get_nowait()
                 DataProcess._position_buffer.extend(data)
-                logger.debug(f"process_position_data: 收到数据，长度={len(data)}")
 
                 # 尝试解码
                 try:
@@ -301,17 +318,16 @@ class DataProcess(QObject):
                         last_match = matches[-1]
                         x_position = last_match[0]
                         z_position = last_match[1]
-                        logger.debug(f"位置数据解析完成: X={x_position}, Z={z_position}")
                         break  # 解析成功，退出循环
                 except UnicodeDecodeError:
                     pass
 
             except queue.Empty:
-                continue
+                # 队列为空，短暂等待后重试（让出CPU给Qt事件循环处理其他信号）
+                time_module.sleep(0.05)
 
         # 保存位置数据（即使解析失败也发送信号）
-        position_data = (x_position, z_position)
-        self.signal_position_data_process_finished.emit(position_data)
+        self.signal_position_data_process_finished.emit((x_position, z_position))
 
     # ========================================================================
     # 测量数据处理
@@ -322,103 +338,95 @@ class DataProcess(QObject):
         处理测量数据
 
         从队列中读取串口返回的磁场测量数据，进行解析和处理。
+        持续从队列获取数据直到队列为空，处理完后再等待一段时间，
+        如果仍没有新数据则结束处理。
 
         数据格式：
         - 原始数据为2字节无符号整数（HEX格式）
         - 每两个字节组成一个测量值
 
         处理流程：
-        1. 清空队列（确保只处理本次数据）
-        2. 循环读取数据，直到20次（每次0.1秒）无新数据
-        3. 将HEX值转换为物理单位
-        4. 根据测量类型进行后续处理
-        5. 保存原始数据到CSV文件
+        1. 持续从队列获取数据直到队列为空
+        2. 处理缓冲区中的所有数据
+        3. 等待一小段时间看是否有新数据
+        4. 重复直到真的没有新数据
+        5. 将HEX值转换为物理单位
+        6. 根据测量类型进行后续处理
+        7. 保存原始数据到CSV文件
 
         Note:
             - 旋转测量：调用算法处理，提取360度数据
             - 垂直测量：直接返回原始数据
         """
-        logger.debug("========== 开始处理测量数据 ==========")
-        logger.debug(f"测量类型: {self.measure_type}")
-        logger.debug(f"当前偏置值: {self.mag_offset}")
+        logger.info("========== 开始处理测量数据 ==========")
+        logger.info(f"测量类型: {self.measure_type}")
+        logger.info(f"当前偏置值: {self.mag_offset}")
 
         try:
             temp_buffer = bytearray()      # 临时缓冲区
             measure_list: List[float] = []  # 测量值列表
-            no_data_count = 0              # 连续无数据计数
+            iteration = 0
 
-            logger.debug("进入数据接收循环...")
-            MAX_EMPTY_COUNT = 4  # 最大空队列计数（2秒）
             while True:
-                # ============================================================
-                # 处理缓冲区中的已有数据
-                # ============================================================
-                if len(temp_buffer) >= 2:
-                    # 计算可以处理的数据组数（每2字节为一组）
-                    group_count = len(temp_buffer) // 2
-                    # 每批处理最多100组，避免一次处理过多
-                    batch_size = min(group_count, 100)
+                iteration += 1
 
-                    for i in range(batch_size):
-                        # 读取两个字节组成一个测量值
-                        byte1 = temp_buffer[i * 2]
-                        byte2 = temp_buffer[i * 2 + 1]
-                        # 合并为16位无符号整数
-                        hex_value = (byte1 << 8) | byte2
-                        # 转换为磁场强度（mT）并减去偏置
-                        mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
-                        measure_list.append(mag_value)
+                # 1. 把队列中的数据都取出来放到缓冲区
+                try:
+                    while True:
+                        data = self.data_queue.get_nowait()
+                        temp_buffer.extend(data)
+                except queue.Empty:
+                    pass
 
-                    # 已处理的数据从缓冲区删除
-                    del temp_buffer[0:batch_size * 2]
-                    # 发出进度信号，用于更新UI (当前数据量, 期望总数据量)
-                    self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
-                    logger.debug(f"缓冲区处理完成，本批处理 {batch_size} 组，当前总数据点: {len(measure_list)}，缓冲区剩余: {len(temp_buffer)} 字节")
+                # 2. 处理缓冲区中的所有数据
+                while len(temp_buffer) >= 2:
+                    byte1 = temp_buffer[0]
+                    byte2 = temp_buffer[1]
+                    hex_value = (byte1 << 8) | byte2
+                    mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
+                    measure_list.append(mag_value)
+                    del temp_buffer[0:2]
 
-                # ============================================================
-                # 获取新数据
-                # ============================================================
+                    # 每处理100个点发出进度信号
+                    if len(measure_list) % 100 == 0:
+                        self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
+
+                # 3. 如果缓冲区已空或不足2字节，等待一小段时间看是否有新数据
                 if len(temp_buffer) < 2:
+                    time.sleep(0.2)
+
+                    # 尝试获取新数据
                     try:
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
-                        no_data_count = 0  # 重置空计数
-                        logger.debug(f"从队列获取新数据: {len(data)} 字节，缓冲区当前: {len(temp_buffer)} 字节")
                         continue
                     except queue.Empty:
-                        # 连续无数据，增加计数
-                        no_data_count += 1
-                        queue_size = self.data_queue.qsize()
-                        logger.debug(f"队列为空，无数据计数: {no_data_count}/{MAX_EMPTY_COUNT}，队列大小: {queue_size}")
-                        time.sleep(0.5)
-                        # MAX_EMPTY_COUNT次无数据则认为测量完成
-                        if no_data_count >= MAX_EMPTY_COUNT:
-                            logger.warning(f"超时停止，已连续 {no_data_count} 次队列为空")
-                            if len(measure_list) > 0:
-                                logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
-                                # 保存原始数据到CSV
-                                self.save_raw_measure_data(measure_list)
+                        break
 
-                                # 根据测量类型处理数据
-                                if self.measure_type == "vertical":
-                                    # 垂直测量：直接返回原始数据，不做预处理和分析
-                                    # 生成等间距的角度数据（作为横坐标）
-                                    angle_data = list(range(len(measure_list)))
-                                    mag_data = measure_list
-                                    logger.debug("垂直测量模式，直接返回原始数据")
-                                else:
-                                    # 旋转测量：调用算法处理
-                                    logger.debug("旋转测量模式，开始调用算法处理...")
-                                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
+            # 处理完成
+            logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
 
-                                # 发出完成信号
-                                logger.debug(f"发送测量完成信号，数据点: {len(angle_data)}")
-                                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
-                                logger.debug("========== 测量数据处理完成 ==========")
-                                break
-                            else:
-                                logger.warning("未读取到有效测量数据")
-                                break
+            if len(measure_list) > 0:
+                # 保存原始数据到CSV
+                self.save_raw_measure_data(measure_list)
+
+                # 根据测量类型处理数据
+                if self.measure_type == "vertical":
+                    # 垂直测量：直接返回原始数据
+                    angle_data = list(range(len(measure_list)))
+                    mag_data = measure_list
+                    logger.info("垂直测量模式，直接返回原始数据")
+                else:
+                    # 旋转测量：调用算法处理
+                    logger.info("旋转测量模式，开始调用算法处理...")
+                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
+
+                # 发出完成信号
+                logger.info(f"发送测量完成信号，数据点: {len(angle_data)}")
+                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                logger.info("========== 测量数据处理完成 ==========")
+            else:
+                logger.warning("未读取到有效测量数据")
 
         except Exception as e:
             logger.error(f"处理测量数据时发生错误: {e}", exc_info=True)
@@ -435,62 +443,84 @@ class DataProcess(QObject):
         计算平均值作为偏置，后续测量时需要减去此偏置值。
 
         处理流程：
-        1. 清空队列
-        2. 读取测量数据（与process_measure_data类似）
-        3. 对数据进行低通滤波
-        4. 取中间90%数据的平均值作为偏置
-        5. 保存到配置文件
+        1. 持续从队列获取数据直到队列为空
+        2. 处理缓冲区中的所有数据
+        3. 等待一小段时间看是否有新数据
+        4. 重复直到真的没有新数据
+        5. 对数据进行低通滤波
+        6. 取中间90%数据的平均值作为偏置
+        7. 保存到配置文件
 
         Note:
             保存的偏置值会在每次程序启动时加载，用于校正测量数据
         """
-        logger.info("=== DataProcess: 开始处理偏置数据 ===")
-        logger.info(f"process_offset_data: 初始队列大小: {self.data_queue.qsize()}")
+        import time
+        start_time = time.time()
 
         try:
             temp_buffer = bytearray()
             offset_list: List[float] = []
-            no_data_count = 0
+            iteration = 0
 
-            # 偏置校准命令 N{duration}~ 的 duration 单位是秒
-            # 等待时间设为 duration + 2 秒保险
-            max_wait_count = 4  # 超时计数，4次 * 0.5秒 = 2秒
-            while no_data_count < max_wait_count:
-                # 处理已有数据
-                if len(temp_buffer) >= 2:
-                    group_count = len(temp_buffer) // 2
-                    batch_size = min(group_count, 100)
+            while True:
+                iteration += 1
 
-                    for i in range(batch_size):
-                        byte1 = temp_buffer[i * 2]
-                        byte2 = temp_buffer[i * 2 + 1]
-                        hex_value = (byte1 << 8) | byte2
-                        # 转换为磁场强度（mT），注意：偏置数据不使用偏置校正
-                        mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR, 4)
-                        offset_list.append(mag_value)
+                # 1. 把队列中的数据都取出来放到缓冲区
+                try:
+                    while True:
+                        data = self.data_queue.get_nowait()
+                        temp_buffer.extend(data)
+                except queue.Empty:
+                    pass
 
-                    del temp_buffer[0:batch_size * 2]
-                    no_data_count = 0  # 重置空计数，因为刚处理了数据
+                # 2. 处理缓冲区中的所有数据
+                while len(temp_buffer) >= 2:
+                    byte1 = temp_buffer[0]
+                    byte2 = temp_buffer[1]
+                    hex_value = (byte1 << 8) | byte2
+                    # 转换为磁场强度（mT），注意：偏置数据不使用偏置校正
+                    mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR, 4)
+                    offset_list.append(mag_value)
+                    del temp_buffer[0:2]
 
-                # 获取新数据
+                # 3. 如果缓冲区已空或不足2字节，等待一小段时间看是否有新数据
                 if len(temp_buffer) < 2:
+                    # 首次等待时，给数据更多时间到达（K3~命令需要约0.5秒才开始返回数据）
+                    if iteration == 1 and len(offset_list) == 0:
+                        time.sleep(1.0)
+                    else:
+                        time.sleep(0.2)
+
+                    # 尝试获取新数据
                     try:
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
                         continue
                     except queue.Empty:
-                        no_data_count += 1
-                        time.sleep(0.5)
+                        # 如果已经有处理到的数据，说明测量已完成，结束
+                        if len(offset_list) > 0:
+                            break
+                        # 没有数据且没有处理过数据，再等待一次
+                        if len(offset_list) == 0:
+                            time.sleep(0.5)
+                            try:
+                                data = self.data_queue.get_nowait()
+                                temp_buffer.extend(data)
+                                continue
+                            except queue.Empty:
+                                pass
+                        # 真的没有新数据了，结束
+                        break
 
-            # 超时或完成
+            # 处理完成，计算偏置值
             if len(offset_list) > 0:
                 # 进行低通滤波
                 filtered_offset_list = self._lowpass_filter(offset_list)
                 total_len = len(filtered_offset_list)
 
                 # 取中间90%的数据（去掉首尾各5%）
-                start_index = int(total_len * 0.1)
-                end_index = int(total_len * 0.9)
+                start_index = int(total_len * 0.05)
+                end_index = int(total_len * 0.95)
 
                 if start_index < end_index:
                     middle_data = filtered_offset_list[start_index:end_index]
@@ -500,7 +530,7 @@ class DataProcess(QObject):
 
                 # 保存偏置值到配置文件
                 self.config.offset = self.mag_offset
-                logger.info(f"偏置校准完成，当前偏置: {self.mag_offset}, 数据点数: {len(offset_list)}")
+                logger.info(f"偏置校准完成: {self.mag_offset:.4f} mT, 数据点: {len(middle_data)}")
                 self.signal_offset_data_process_finished.emit(True)
             else:
                 logger.warning("未读取到有效偏置数据")

@@ -21,6 +21,7 @@ class ThreadManager(QObject):
 
     # 信号定义
     signal_connect = pyqtSignal(str, str, str, str, str)
+    signal_disconnect = pyqtSignal()
     signal_connection_status_changed = pyqtSignal(bool)
     signal_data_received = pyqtSignal(bytes)
 
@@ -69,6 +70,7 @@ class ThreadManager(QObject):
         """连接所有组件间的信号流"""
         # 连接串口管理器信号
         self.signal_connect.connect(self.serial_manager.connect_serial)
+        self.signal_disconnect.connect(self.serial_manager.disconnect_serial)
 
         # 串口设置界面实时显示信号
         self.serial_manager.signal_data_received.connect(serial_window._on_data_received)

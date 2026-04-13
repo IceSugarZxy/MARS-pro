@@ -104,8 +104,11 @@ class SerialCommand(QObject):
 
     def send_data(self, data: str) -> bool:
         """发送数据到串口"""
+        import time
+        import traceback
         # 检查命令锁 - 如果被锁定且未临时允许，跳过位置查询命令
         if self._command_lock and data.startswith("?XZ") and not self._allow_position_query:
+            logger.debug(f"[{time.time():.3f}] send_data: 命令被锁拦截 ?XZ~")
             return False
 
         if not self.serial_manager:
@@ -118,6 +121,9 @@ class SerialCommand(QObject):
 
         try:
             self.thread_manager.write_queue.put(data)
+            if data.startswith("?XZ"):
+                logger.info(f"[{time.time():.3f}] ★ send_data: 写入队列 '{data}', 队列当前大小={self.thread_manager.write_queue.qsize()}")
+                logger.info(f"[{time.time():.3f}] ★ ?XZ~ 调用堆栈:\n{traceback.format_stack()}")
             return True
         except Exception as e:
             logger.error(f"发送数据失败: {e}")
@@ -143,16 +149,21 @@ class SerialCommand(QObject):
 
     def _position_query_from_timer(self) -> None:
         """定时器触发的位置查询"""
+        import time
+        t = time.time()
         # 检查是否正在偏置校准中
         if self._offset_calibrating:
+            logger.debug(f"[{t:.3f}] _position_query_from_timer: 偏置校准中(_offset_calibrating=True)，跳过")
             return
 
         # 如果有待处理的反向移动任务，检查自检完成信号
         if self._pending_retract_axis:
+            logger.info(f"[{t:.3f}] _position_query_from_timer: 触发自检检测, 队列大小={self.data_process.data_queue.qsize()}")
             self.data_process.signal_self_detect_process.emit()
             return
 
         # 正常的位置查询
+        logger.debug(f"[{t:.3f}] _position_query_from_timer: 发送位置查询, _offset_calibrating={self._offset_calibrating}, 队列大小={self.data_process.data_queue.qsize()}")
         self.position_query()
 
     def _wait_position_reached(self, axis: str, target: int, timeout: float = 10.0) -> bool:
@@ -169,35 +180,52 @@ class SerialCommand(QObject):
         """
         from PyQt5.QtCore import QCoreApplication
         logger.info(f"等待{axis}轴到位: 目标={target}, 超时={timeout}s")
-        start_time = time.time()
 
-        while time.time() - start_time < timeout:
-            # 直接发送位置查询命令（绕过send_data的命令锁检查）
-            # 因为此时move命令已发送到硬件，只需查询位置
-            try:
-                self.thread_manager.write_queue.put("?XZ~")
+        # 设置临时标志，表示正在等待位置到达
+        previous_lock_state = self._command_lock
+        previous_allow_query = self._allow_position_query
+        self._command_lock = True
+        self._allow_position_query = True
+
+        try:
+            start_time = time.time()
+
+            while time.time() - start_time < timeout:
+                # 直接写入队列，不走 send_data（避免命令锁检查）
+                try:
+                    self.thread_manager.write_queue.put("?XZ~")
+                except Exception as e:
+                    logger.warning(f"发送位置查询失败: {e}")
+
                 # 触发数据处理
                 self.data_process.signal_position_data_process.emit()
-            except Exception as e:
-                logger.warning(f"发送位置查询失败: {e}")
 
-            # 处理Qt事件，让数据处理信号有机会被处理
-            QCoreApplication.processEvents()
-            time.sleep(WAIT_POLL_INTERVAL)
+                # 等待数据处理完成
+                time.sleep(0.15)
 
-            # 检查位置
-            current = self._current_x if axis == 'X' else self._current_z
-            if current is not None:
-                diff = abs(current - target)
-                if diff <= POSITION_TOLERANCE:
-                    logger.info(f"{axis}轴到位: 当前值={current}, 目标={target}, 差值={diff}")
-                    return True
-                logger.debug(f"等待{axis}轴到位: 当前={current}, 目标={target}, 差值={diff}")
+                # 处理 Qt 事件
+                for _ in range(5):
+                    QCoreApplication.processEvents()
+                    time.sleep(0.01)
+
+                # 检查位置
+                current = self._current_x if axis == 'X' else self._current_z
+                if current is not None:
+                    diff = abs(current - target)
+                    if diff <= POSITION_TOLERANCE:
+                        logger.info(f"{axis}轴到位: 当前值={current}, 目标={target}, 差值={diff}")
+                        return True
+
+                # 轮询间隔
+                time.sleep(0.05)
+
+        finally:
+            # 恢复之前的锁状态
+            self._command_lock = previous_lock_state
+            self._allow_position_query = previous_allow_query
 
         logger.warning(f"{axis}轴移动到{target}超时! 最后位置={self._current_x if axis == 'X' else self._current_z}")
         return False
-
-    # 串口命令
     def claw_rotate(self) -> None:
         """发送爪盘旋转命令"""
         round = 542720
@@ -221,8 +249,11 @@ class SerialCommand(QObject):
         logger.info("开始Z轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
         self.data_process.clear_data_queue()
-        with self.command_lock():
+        # 使用command_lock阻止位置查询干扰，allow_position_query允许信号触发check_self_detect
+        with self.command_lock(allow_position_query=True):
             self.send_data("P~")
+            # 轮询等待自检完成（期间位置查询被阻止）
+            self._wait_self_detect_finished('Z')
 
     def auto_press_left(self) -> None:
         """发送向左贴靠命令（X轴）"""
@@ -231,8 +262,9 @@ class SerialCommand(QObject):
         logger.info("开始X轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
         self.data_process.clear_data_queue()
-        with self.command_lock():
+        with self.command_lock(allow_position_query=True):
             self.send_data("Y~")
+            self._wait_self_detect_finished('X')
 
     def auto_press_right(self) -> None:
         """发送向右贴靠命令（X轴）"""
@@ -241,8 +273,27 @@ class SerialCommand(QObject):
         logger.info("开始X轴反向自检")
         # 清空队列，避免之前的位置数据干扰自检流程
         self.data_process.clear_data_queue()
-        with self.command_lock():
+        with self.command_lock(allow_position_query=True):
             self.send_data("Y-~")
+            self._wait_self_detect_finished('X')
+
+    def _wait_self_detect_finished(self, axis: str, timeout: float = 10.0) -> bool:
+        """轮询等待自检完成"""
+        import time
+        poll_count = 0
+        logger.info(f"开始轮询等待 {axis} 轴自检完成, 超时={timeout}s")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            poll_count += 1
+            logger.info(f"[{time.time():.3f}] _wait_self_detect_finished: 第{poll_count}次轮询, 队列大小={self.data_process.data_queue.qsize()}")
+            if self.data_process.check_self_detect():
+                elapsed = time.time() - start_time
+                logger.info(f"[{time.time():.3f}] {axis} 轴自检完成, 耗时={elapsed:.3f}s, 轮询次数={poll_count}")
+                return True
+            time.sleep(0.1)
+        elapsed = time.time() - start_time
+        logger.warning(f"[{time.time():.3f}] {axis} 轴自检完成超时! 耗时={elapsed:.3f}s, 轮询次数={poll_count}, 最后队列大小={self.data_process.data_queue.qsize()}")
+        return False
 
     def _on_self_detect_finished(self, axis: str) -> None:
         """
@@ -251,7 +302,7 @@ class SerialCommand(QObject):
         Args:
             axis: 轴类型，'X' 或 'Z'
         """
-        logger.info(f"_on_self_detect_finished: 收到 {axis} 轴自检完成信号, _command_lock={self._command_lock}, _pending_retract_axis={self._pending_retract_axis}")
+        logger.info(f"_on_self_detect_finished: 收到 {axis} 轴自检完成信号!")
         # 检查是否有待处理的反向移动任务
         if self._pending_retract_axis:
             logger.info(f"检测到 {axis} 轴自检完成，触发位置查询")
@@ -267,8 +318,6 @@ class SerialCommand(QObject):
         Args:
             position_data: 位置数据 (x, z)
         """
-        logger.debug(f"位置数据: X={position_data[0]}, Z={position_data[1]}")
-
         # 更新当前实时位置（用于到位检测）
         if position_data[0] is not None:
             self._current_x = int(position_data[0])
@@ -381,19 +430,35 @@ class SerialCommand(QObject):
 
     def position_query(self) -> None:
         """发送位置查询命令"""
+        import time
+        t = time.time()
         if self._offset_calibrating:
+            logger.debug(f"[{t:.3f}] position_query: 偏置校准中(_offset_calibrating=True)，跳过")
             return
+        logger.info(f"[{t:.3f}] position_query: 发送位置查询")
         if self.send_data("?XZ~"):
             self.data_process.signal_position_data_process.emit()
 
     def counter_measurer(self) -> None:
         """发送计数器测量命令"""
+        logger.info("=" * 60)
+        logger.info(f"counter_measurer: [{time.time():.3f}] 开始执行")
         # 清空队列，确保之前的数据不会干扰
         self.data_process.clear_data_queue()
+        logger.info(f"counter_measurer: [{time.time():.3f}] 队列已清空")
         command = "K3~" # 3秒测量
-        self.send_data(command)
-        time.sleep(0.1)  # 确保命令发送后再处理数据
+        result = self.send_data(command)
+        logger.info(f"counter_measurer: [{time.time():.3f}] 发送命令 {command}, 结果={result}")
+        # 等待0.2秒让任何正在等待的process_position_data完成超时退出
+        # 使用QTimer.singleShot避免阻塞Qt事件循环
+        logger.info(f"counter_measurer: [{time.time():.3f}] 延迟0.2秒后触发数据处理信号")
+        QTimer.singleShot(200, self._emit_offset_process_signal)
+
+    def _emit_offset_process_signal(self) -> None:
+        """延迟发射偏置处理信号"""
+        logger.info(f"counter_measurer: [{time.time():.3f}] 触发数据处理信号，当前队列大小={self.data_process.data_queue.qsize()}")
         self.data_process.signal_offset_data_process.emit()
+        logger.info(f"counter_measurer: [{time.time():.3f}] 完成，等待处理完成信号...")
 
     def slider_reset(self) -> None:
         """发送滑台复位命令"""
@@ -444,8 +509,9 @@ class SerialCommand(QObject):
     def offset_calibration(self, position_window_ref=None) -> None:
         """偏置校准"""
         logger.info("=== 开始执行偏置校准 ===")
-        # 设置偏置校准标志
+        # 设置偏置校准标志（both serial_command and data_process）
         self._offset_calibrating = True
+        self.data_process._offset_calibrating = True
         self.counter_measurer()
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
@@ -456,3 +522,4 @@ class SerialCommand(QObject):
             success: 校准是否成功
         """
         self._offset_calibrating = False
+        self.data_process._offset_calibrating = False

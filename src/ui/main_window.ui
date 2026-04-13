@@ -7,13 +7,13 @@
     <x>0</x>
     <y>0</y>
     <width>1400</width>
-    <height>800</height>
+    <height>873</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
     <width>1200</width>
-    <height>600</height>
+    <height>800</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -21,57 +21,48 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QHBoxLayout" name="main_layout">
-    <!-- 侧边栏 -->
     <item>
-     <widget class="QWidget" name="nav_panel">
-      <property name="minimumSize">
-       <size>
-        <width>200</width>
-        <height>0</height>
-       </size>
-      </property>
-      <property name="maximumSize">
-       <size>
-        <width>200</width>
-        <height>16777215</height>
-       </size>
-      </property>
+     <widget class="QWidget" name="nav_panel" native="true">
       <layout class="QVBoxLayout" name="nav_layout">
-       <!-- 标题区 -->
        <item>
-        <widget class="QWidget" name="nav_header">
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>80</height>
-          </size>
-         </property>
+        <widget class="QWidget" name="nav_header" native="true">
          <layout class="QVBoxLayout" name="header_layout">
           <item>
            <widget class="QLabel" name="nav_title">
-            <property name="text">
-             <string>MARS</string>
-            </property>
             <property name="font">
              <font>
               <family>Arial</family>
-              <pointsize>20</pointsize>
+              <pointsize>26</pointsize>
               <weight>75</weight>
+              <bold>true</bold>
              </font>
+            </property>
+            <property name="text">
+             <string>MARS</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QLabel" name="nav_subtitle">
+            <property name="font">
+             <font>
+              <pointsize>12</pointsize>
+             </font>
+            </property>
             <property name="text">
              <string>旋转体表磁测量分析系统</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
             </property>
            </widget>
           </item>
          </layout>
         </widget>
        </item>
-       <!-- 分隔线 -->
        <item>
         <widget class="QFrame" name="nav_separator">
          <property name="frameShape">
@@ -85,9 +76,13 @@
          </property>
         </widget>
        </item>
-       <!-- 导航按钮 -->
        <item>
-        <widget class="QWidget" name="nav_buttons_container">
+        <widget class="QWidget" name="nav_buttons_container" native="true">
+         <property name="font">
+          <font>
+           <pointsize>15</pointsize>
+          </font>
+         </property>
          <layout class="QVBoxLayout" name="nav_buttons_layout">
           <item>
            <widget class="QWidget" name="nav_button_measure" native="true">
@@ -102,6 +97,9 @@
               <widget class="QLabel" name="nav_icon_measure">
                <property name="text">
                 <string>▶</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -129,6 +127,9 @@
                <property name="text">
                 <string>⚙</string>
                </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
               </widget>
              </item>
              <item>
@@ -154,6 +155,9 @@
               <widget class="QLabel" name="nav_icon_position">
                <property name="text">
                 <string>◎</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -181,6 +185,9 @@
                <property name="text">
                 <string>☰</string>
                </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
               </widget>
              </item>
              <item>
@@ -207,6 +214,9 @@
                <property name="text">
                 <string>⚡</string>
                </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
               </widget>
              </item>
              <item>
@@ -222,23 +232,21 @@
          </layout>
         </widget>
        </item>
-       <!-- 弹簧 -->
        <item>
         <spacer name="nav_spacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
          </property>
-        </spacer>
-       </item>
-       <!-- 底部状态 -->
-       <item>
-        <widget class="QWidget" name="nav_footer">
-         <property name="minimumSize">
+         <property name="sizeHint" stdset="0">
           <size>
            <width>0</width>
-           <height>50</height>
+           <height>0</height>
           </size>
          </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QWidget" name="nav_footer" native="true">
          <layout class="QVBoxLayout" name="footer_layout">
           <item>
            <widget class="QWidget" name="status_container" native="true">
@@ -269,13 +277,17 @@
       </layout>
      </widget>
     </item>
-    <!-- 内容区 -->
     <item>
-     <widget class="QStackedWidget" name="content_stacked">
-      <property name="currentIndex">
-       <number>0</number>
-      </property>
-      <!-- 各面板会在运行时动态添加 -->
+     <widget class="QWidget" name="content_container" native="true">
+      <layout class="QVBoxLayout" name="content_layout">
+       <item>
+        <widget class="QStackedWidget" name="content_stacked">
+         <property name="currentIndex">
+          <number>-1</number>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </widget>
     </item>
    </layout>
