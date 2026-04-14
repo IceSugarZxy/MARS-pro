@@ -54,8 +54,8 @@ class SerialPanel(QWidget):
 
     def _connect_buttons(self):
         """连接按钮事件"""
-        self.findChild(QPushButton, "connect_btn").clicked.connect(self._on_connect_clicked)
-        self.findChild(QPushButton, "disconnect_btn").clicked.connect(self._on_disconnect_clicked)
+        self.findChild(QPushButton, "btnSuccess").clicked.connect(self._on_connect_clicked)
+        self.findChild(QPushButton, "btnDanger").clicked.connect(self._on_disconnect_clicked)
         self.findChild(QPushButton, "send_btn").clicked.connect(self._on_send_clicked)
 
     def _refresh_ports(self):
@@ -120,10 +120,10 @@ class SerialPanel(QWidget):
         parity_text = parity_combo.currentText() if parity_combo else "无"
         parity = parity_text  # 直接传递 UI 显示的文本
 
-        status_label = self.findChild(QLabel, "status_label")
+        status_label = self.findChild(QLabel, "serial_status_label")
         if status_label:
             status_label.setText("正在连接...")
-            status_label.setStyleSheet("color: #3498db; font-weight: bold;")
+            status_label.setStyleSheet("color: #3498db; font-weight: bold; font-size: 18px;")
 
         self._connection_timeout_timer.start(2000)
 
@@ -143,10 +143,10 @@ class SerialPanel(QWidget):
 
     def _on_connection_timeout(self):
         """连接超时"""
-        status_label = self.findChild(QLabel, "status_label")
+        status_label = self.findChild(QLabel, "serial_status_label")
         if status_label:
             status_label.setText("连接超时")
-            status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+            status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 18px;")
         logger.warning("串口连接超时")
 
     def _on_send_clicked(self):
@@ -201,9 +201,9 @@ class SerialPanel(QWidget):
         """串口状态变化"""
         self._connection_timeout_timer.stop()
 
-        status_label = self.findChild(QLabel, "status_label")
-        connect_btn = self.findChild(QPushButton, "connect_btn")
-        disconnect_btn = self.findChild(QPushButton, "disconnect_btn")
+        status_label = self.findChild(QLabel, "serial_status_label")
+        connect_btn = self.findChild(QPushButton, "btnSuccess")
+        disconnect_btn = self.findChild(QPushButton, "btnDanger")
 
         if connected:
             port = ""
@@ -213,7 +213,7 @@ class SerialPanel(QWidget):
                 baudrate = self.serial_manager.serial_port.baudRate()
             if status_label:
                 status_label.setText(f"已连接 {port}")
-                status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 18px;")
             if connect_btn:
                 connect_btn.setEnabled(False)
             if disconnect_btn:
@@ -230,7 +230,7 @@ class SerialPanel(QWidget):
         else:
             if status_label:
                 status_label.setText("未连接")
-                status_label.setStyleSheet("")
+                status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 18px;")
             if connect_btn:
                 connect_btn.setEnabled(True)
             if disconnect_btn:
@@ -283,10 +283,10 @@ class SerialPanel(QWidget):
                             logger.info("串口已连接，跳过自动连接")
                             return True
 
-                        status_label = self.findChild(QLabel, "status_label")
+                        status_label = self.findChild(QLabel, "serial_status_label")
                         if status_label:
                             status_label.setText("自动连接中...")
-                            status_label.setStyleSheet("color: #3498db; font-weight: bold;")
+                            status_label.setStyleSheet("color: #3498db; font-weight: bold; font-size: 18px;")
 
                         self._connection_timeout_timer.start(2000)
                         logger.info(f"正在自动连接串口 {com_port}...")

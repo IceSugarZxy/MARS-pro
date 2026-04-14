@@ -32,7 +32,7 @@
             <property name="font">
              <font>
               <family>Arial</family>
-              <pointsize>26</pointsize>
+              <pointsize>32</pointsize>
               <weight>75</weight>
               <bold>true</bold>
              </font>
@@ -49,7 +49,7 @@
            <widget class="QLabel" name="nav_subtitle">
             <property name="font">
              <font>
-              <pointsize>12</pointsize>
+              <pointsize>16</pointsize>
              </font>
             </property>
             <property name="text">
@@ -80,8 +80,11 @@
         <widget class="QWidget" name="nav_buttons_container" native="true">
          <property name="font">
           <font>
-           <pointsize>15</pointsize>
+           <pointsize>18</pointsize>
           </font>
+         </property>
+         <property name="layoutDirection">
+          <enum>Qt::LeftToRight</enum>
          </property>
          <layout class="QVBoxLayout" name="nav_buttons_layout">
           <item>
@@ -94,19 +97,12 @@
             </property>
             <layout class="QHBoxLayout" name="nav_btn_measure_layout">
              <item>
-              <widget class="QLabel" name="nav_icon_measure">
-               <property name="text">
-                <string>▶</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-             <item>
               <widget class="QLabel" name="nav_text_measure">
                <property name="text">
                 <string>测量界面</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -123,19 +119,12 @@
             </property>
             <layout class="QHBoxLayout" name="nav_btn_serial_layout">
              <item>
-              <widget class="QLabel" name="nav_icon_serial">
-               <property name="text">
-                <string>⚙</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-             <item>
               <widget class="QLabel" name="nav_text_serial">
                <property name="text">
                 <string>串口设置</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -152,19 +141,12 @@
             </property>
             <layout class="QHBoxLayout" name="nav_btn_position_layout">
              <item>
-              <widget class="QLabel" name="nav_icon_position">
+              <widget class="QLabel" name="nav_text_position">
                <property name="text">
-                <string>◎</string>
+                <string>测试配置</string>
                </property>
                <property name="alignment">
                 <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="nav_text_position">
-               <property name="text">
-                <string>位置控制</string>
                </property>
               </widget>
              </item>
@@ -181,19 +163,12 @@
             </property>
             <layout class="QHBoxLayout" name="nav_btn_history_layout">
              <item>
-              <widget class="QLabel" name="nav_icon_history">
-               <property name="text">
-                <string>☰</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-             <item>
               <widget class="QLabel" name="nav_text_history">
                <property name="text">
                 <string>历史数据</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -210,19 +185,12 @@
             </property>
             <layout class="QHBoxLayout" name="nav_btn_compare_layout">
              <item>
-              <widget class="QLabel" name="nav_icon_compare">
-               <property name="text">
-                <string>⚡</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-             <item>
               <widget class="QLabel" name="nav_text_compare">
                <property name="text">
                 <string>数据比对</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
                </property>
               </widget>
              </item>
@@ -269,6 +237,19 @@
               </widget>
              </item>
             </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btn_exit">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>35</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>退出程序</string>
+            </property>
            </widget>
           </item>
          </layout>

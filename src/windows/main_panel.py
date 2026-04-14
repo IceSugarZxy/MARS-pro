@@ -5,7 +5,7 @@ UI 布局完全在 main_window.ui 中定义
 """
 
 import os
-from PyQt5.QtWidgets import QMainWindow, QWidget, QLabel, QStackedWidget
+from PyQt5.QtWidgets import QMainWindow, QWidget, QLabel, QStackedWidget, QPushButton
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5 import uic
 from core.logger import get_logger
@@ -68,6 +68,12 @@ class MainPanel(QMainWindow):
             panel_id: self.findChild(QWidget, btn_name)
             for btn_name, panel_id in self._nav_button_map.items()
         }
+
+        # 连接退出按钮
+        exit_btn = self.findChild(QPushButton, "btn_exit")
+        if exit_btn:
+            exit_btn.clicked.connect(self.close)
+            logger.debug("连接退出按钮")
 
     def _on_nav_clicked(self, panel_id):
         """导航按钮点击"""

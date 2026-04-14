@@ -79,6 +79,10 @@ class MainApplication:
             self.thread_manager.data_process.signal_offset_data_process.connect(
                 self.thread_manager.data_process.process_offset_data
             )
+            # 连接测量数据处理信号
+            self.thread_manager.data_process.signal_measure_data_process.connect(
+                self.thread_manager.data_process.process_measure_data
+            )
             # 连接偏置校准完成信号 - 清除偏置校准标志
             self.thread_manager.data_process.signal_offset_data_process_finished.connect(
                 self.thread_manager.serial_command._on_offset_calibration_finished
@@ -119,8 +123,11 @@ class MainApplication:
             self.logger.error("初始化失败，程序退出")
             return 1
 
-        # 显示主面板
-        self.main_panel.show()
+        # 设置无标题栏窗口
+        self.main_panel.setWindowFlags(Qt.FramelessWindowHint)
+
+        # 显示主面板（最大化）
+        self.main_panel.showMaximized()
         self.logger.info("主面板已显示")
 
         # 启动事件循环

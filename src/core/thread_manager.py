@@ -6,7 +6,7 @@
 import queue
 from typing import Optional
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, Qt
 
 from .logger import get_logger
 from .serial_manager import SerialManager
@@ -112,13 +112,13 @@ class ThreadManager(QObject):
 
         # 连接测量数据处理信号
         self.data_process.signal_measure_data_process.connect(
-            self.data_process.process_measure_data
+            self.data_process.process_measure_data, Qt.QueuedConnection
         )
         self.data_process.signal_measure_data_process_finished.connect(
-            measure_window._on_measure_data_processed
+            measure_window._on_measure_data_processed, Qt.QueuedConnection
         )
         self.data_process.signal_measure_data_progress.connect(
-            measure_window._on_measure_data_progress
+            measure_window._on_measure_data_progress, Qt.QueuedConnection
         )
 
         # 连接自检消息处理信号

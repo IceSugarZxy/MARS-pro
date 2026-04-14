@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>OffsetCalibrationDialog</class>
- <widget class="QDialog" name="OffsetCalibrationDialog">
+ <class>TestProgressDialog</class>
+ <widget class="QDialog" name="TestProgressDialog">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>偏置校准</string>
+   <string>旋转测量</string>
   </property>
   <property name="styleSheet">
    <string>QDialog { border: 1px solid #555555; }</string>
@@ -23,7 +23,7 @@
    <item>
     <widget class="QLabel" name="label_title">
      <property name="text">
-      <string>偏置校准进行中...</string>
+      <string>正在测量...</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>
@@ -43,7 +43,7 @@
    <item>
     <widget class="QLabel" name="label_status">
      <property name="text">
-      <string>正在测量偏置数据，请等待...</string>
+      <string>正在采集数据，请等待...</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>

@@ -106,8 +106,8 @@ def get_base_stylesheet() -> str:
 
     /* 输入框 */
     QLineEdit, QTextEdit, QPlainTextEdit {{
-        background-color: {COLOR_BG_PANEL};
-        color: {COLOR_TEXT_PRIMARY};
+        background-color: #ffffff;
+        color: #000000;
         border: 1px solid {COLOR_BORDER};
         border-radius: {BORDER_RADIUS};
         padding: {PADDING_S} {PADDING_M};
@@ -120,8 +120,8 @@ def get_base_stylesheet() -> str:
     }}
 
     QLineEdit:read-only {{
-        background-color: {COLOR_BG_DARKEST};
-        color: {COLOR_TEXT_SECONDARY};
+        background-color: #ffffff;
+        color: #000000;
     }}
 
     /* 按钮 */
@@ -387,7 +387,7 @@ def get_base_stylesheet() -> str:
     }}
 
     QLabel#nav_title {{
-        font-size: 20px;
+        font-size: 32px;
         font-weight: bold;
         color: {COLOR_PRIMARY};
         background: transparent;
@@ -395,7 +395,7 @@ def get_base_stylesheet() -> str:
     }}
 
     QLabel#nav_subtitle {{
-        font-size: 10px;
+        font-size: 16px;
         color: {COLOR_TEXT_SECONDARY};
         background: transparent;
         border: none;
@@ -412,6 +412,32 @@ def get_base_stylesheet() -> str:
     }}
     QWidget#nav_button:selected {{
         background-color: {COLOR_PRIMARY_LIGHT};
+    }}
+
+    /* 导航按钮 - 具体按钮 */
+    QWidget#nav_button_measure, QWidget#nav_button_serial, QWidget#nav_button_position,
+    QWidget#nav_button_history, QWidget#nav_button_compare {{
+        background-color: transparent;
+        border: none;
+    }}
+    QWidget#nav_button_measure:hover, QWidget#nav_button_serial:hover,
+    QWidget#nav_button_position:hover, QWidget#nav_button_history:hover,
+    QWidget#nav_button_compare:hover {{
+        background-color: {COLOR_BG_PANEL};
+    }}
+    QWidget#nav_button_measure:selected, QWidget#nav_button_serial:selected,
+    QWidget#nav_button_position:selected, QWidget#nav_button_history:selected,
+    QWidget#nav_button_compare:selected {{
+        background-color: {COLOR_PRIMARY_LIGHT};
+    }}
+
+    /* 导航按钮文字 */
+    QLabel#nav_text_measure, QLabel#nav_text_serial, QLabel#nav_text_position,
+    QLabel#nav_text_history, QLabel#nav_text_compare {{
+        color: {COLOR_TEXT_PRIMARY};
+        background: transparent;
+        border: none;
+        font-size: 18px;
     }}
 
     /* 导航图标 */

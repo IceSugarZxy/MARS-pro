@@ -97,6 +97,9 @@ class DataProcess(QObject):
         # 偏置校准标志：用于阻止位置数据处理干扰偏置校准
         self._offset_calibrating: bool = False
 
+        # 测量停止标志：用于中途停止测量时立即处理已采集的数据
+        self._stop_measure_processing: bool = False
+
         # 样品信息：用于保存测量数据时写入文件
         self._sample_info: dict = {}
 
@@ -122,6 +125,11 @@ class DataProcess(QObject):
         """
         self._sample_info = sample_info.copy()
         logger.debug(f"样品信息已设置: {self._sample_info}")
+
+    def stop_measure_processing(self) -> None:
+        """停止测量数据处理，中途停止时调用"""
+        self._stop_measure_processing = True
+        logger.debug("测量处理停止标志已设置")
 
     def update_sample_info(self, key: str, value) -> None:
         """
@@ -243,13 +251,13 @@ class DataProcess(QObject):
                     break
 
                 text = data.decode('utf-8', errors='ignore')
-                logger.info(f"check_self_detect: [{time.time():.3f}] 收到数据, 内容='{text.strip()[:50]}'")
+                logger.debug(f"check_self_detect: [{time.time():.3f}] 收到数据, 内容='{text.strip()[:50]}'")
 
                 # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
                 if text.strip().startswith('X:') and 'Z:' in text:
-                    logger.debug("check_self_detect: 收到位置数据，放回队列")
+                    logger.debug("check_self_detect: 收到位置数据，放回队列，退出")
                     self.data_queue.put(data)
-                    continue
+                    break
 
                 # 检测Z轴自检完成
                 if 'Z Axis Self Detect Finished' in text:
@@ -338,21 +346,16 @@ class DataProcess(QObject):
         处理测量数据
 
         从队列中读取串口返回的磁场测量数据，进行解析和处理。
-        持续从队列获取数据直到队列为空，处理完后再等待一段时间，
-        如果仍没有新数据则结束处理。
 
         数据格式：
         - 原始数据为2字节无符号整数（HEX格式）
         - 每两个字节组成一个测量值
 
         处理流程：
-        1. 持续从队列获取数据直到队列为空
-        2. 处理缓冲区中的所有数据
-        3. 等待一小段时间看是否有新数据
-        4. 重复直到真的没有新数据
-        5. 将HEX值转换为物理单位
-        6. 根据测量类型进行后续处理
-        7. 保存原始数据到CSV文件
+        1. 循环读取数据，直到连续4次（每次0.5秒）无新数据
+        2. 将HEX值转换为物理单位
+        3. 根据测量类型进行后续处理
+        4. 保存原始数据到CSV文件
 
         Note:
             - 旋转测量：调用算法处理，提取360度数据
@@ -362,71 +365,117 @@ class DataProcess(QObject):
         logger.info(f"测量类型: {self.measure_type}")
         logger.info(f"当前偏置值: {self.mag_offset}")
 
+        # 重置停止标志
+        self._stop_measure_processing = False
+
         try:
             temp_buffer = bytearray()      # 临时缓冲区
             measure_list: List[float] = []  # 测量值列表
-            iteration = 0
+            no_data_count = 0              # 连续无数据计数
 
+            logger.debug("进入数据接收循环...")
+            MAX_EMPTY_COUNT = 4  # 最大空队列计数（2秒）
             while True:
-                iteration += 1
+                # 检查停止标志
+                if self._stop_measure_processing:
+                    logger.info("检测到停止标志，中途结束处理")
+                    if len(measure_list) > 0:
+                        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+                        # 保存原始数据到CSV
+                        self.save_raw_measure_data(measure_list)
+                        # 根据测量类型处理数据
+                        if self.measure_type == "vertical":
+                            angle_data = list(range(len(measure_list)))
+                            mag_data = measure_list
+                        else:
+                            angle_data, mag_data = self._process_measure_algorithm(measure_list)
+                        # 发出完成信号
+                        self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                    break
 
-                # 1. 把队列中的数据都取出来放到缓冲区
-                try:
-                    while True:
-                        data = self.data_queue.get_nowait()
-                        temp_buffer.extend(data)
-                except queue.Empty:
-                    pass
+                # ============================================================
+                # 处理缓冲区中的已有数据
+                # ============================================================
+                if len(temp_buffer) >= 2:
+                    # 计算可以处理的数据组数（每2字节为一组）
+                    group_count = len(temp_buffer) // 2
+                    # 每批处理最多100组，避免一次处理过多
+                    batch_size = min(group_count, 100)
 
-                # 2. 处理缓冲区中的所有数据
-                while len(temp_buffer) >= 2:
-                    byte1 = temp_buffer[0]
-                    byte2 = temp_buffer[1]
-                    hex_value = (byte1 << 8) | byte2
-                    mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
-                    measure_list.append(mag_value)
-                    del temp_buffer[0:2]
+                    for i in range(batch_size):
+                        # 读取两个字节组成一个测量值
+                        byte1 = temp_buffer[i * 2]
+                        byte2 = temp_buffer[i * 2 + 1]
+                        # 合并为16位无符号整数
+                        hex_value = (byte1 << 8) | byte2
+                        # 转换为磁场强度（mT）并减去偏置
+                        mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
+                        measure_list.append(mag_value)
 
-                    # 每处理100个点发出进度信号
-                    if len(measure_list) % 100 == 0:
-                        self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
+                    # 已处理的数据从缓冲区删除
+                    del temp_buffer[0:batch_size * 2]
+                    # 发出进度信号，用于更新UI (当前数据量, 期望总数据量)
+                    self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
+                    logger.debug(f"缓冲区处理完成，本批处理 {batch_size} 组，当前总数据点: {len(measure_list)}，缓冲区剩余: {len(temp_buffer)} 字节")
 
-                # 3. 如果缓冲区已空或不足2字节，等待一小段时间看是否有新数据
+                # ============================================================
+                # 获取新数据
+                # ============================================================
                 if len(temp_buffer) < 2:
-                    time.sleep(0.2)
-
-                    # 尝试获取新数据
                     try:
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
+                        no_data_count = 0  # 重置空计数
+                        logger.debug(f"从队列获取新数据: {len(data)} 字节，缓冲区当前: {len(temp_buffer)} 字节")
                         continue
                     except queue.Empty:
-                        break
+                        # 连续无数据，增加计数
+                        no_data_count += 1
+                        queue_size = self.data_queue.qsize()
+                        logger.debug(f"队列为空，无数据计数: {no_data_count}/{MAX_EMPTY_COUNT}，队列大小: {queue_size}")
+                        time.sleep(0.5)
 
-            # 处理完成
-            logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+                        # 检查停止标志
+                        if self._stop_measure_processing:
+                            logger.info("停止标志触发，中途结束处理")
+                            if len(measure_list) > 0:
+                                logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+                                self.save_raw_measure_data(measure_list)
+                                if self.measure_type == "vertical":
+                                    angle_data = list(range(len(measure_list)))
+                                    mag_data = measure_list
+                                else:
+                                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
+                                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                            break
 
-            if len(measure_list) > 0:
-                # 保存原始数据到CSV
-                self.save_raw_measure_data(measure_list)
+                        # MAX_EMPTY_COUNT次无数据则认为测量完成
+                        if no_data_count >= MAX_EMPTY_COUNT:
+                            logger.warning(f"超时停止，已连续 {no_data_count} 次队列为空")
+                            if len(measure_list) > 0:
+                                logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+                                # 保存原始数据到CSV
+                                self.save_raw_measure_data(measure_list)
 
-                # 根据测量类型处理数据
-                if self.measure_type == "vertical":
-                    # 垂直测量：直接返回原始数据
-                    angle_data = list(range(len(measure_list)))
-                    mag_data = measure_list
-                    logger.info("垂直测量模式，直接返回原始数据")
-                else:
-                    # 旋转测量：调用算法处理
-                    logger.info("旋转测量模式，开始调用算法处理...")
-                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
+                                # 根据测量类型处理数据
+                                if self.measure_type == "vertical":
+                                    # 垂直测量：直接返回原始数据
+                                    angle_data = list(range(len(measure_list)))
+                                    mag_data = measure_list
+                                    logger.debug("垂直测量模式，直接返回原始数据")
+                                else:
+                                    # 旋转测量：调用算法处理
+                                    logger.debug("旋转测量模式，开始调用算法处理...")
+                                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
 
-                # 发出完成信号
-                logger.info(f"发送测量完成信号，数据点: {len(angle_data)}")
-                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
-                logger.info("========== 测量数据处理完成 ==========")
-            else:
-                logger.warning("未读取到有效测量数据")
+                                # 发出完成信号
+                                logger.debug(f"发送测量完成信号，数据点: {len(angle_data)}")
+                                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                                logger.debug("========== 测量数据处理完成 ==========")
+                                break
+                            else:
+                                logger.warning("未读取到有效测量数据")
+                                break
 
         except Exception as e:
             logger.error(f"处理测量数据时发生错误: {e}", exc_info=True)

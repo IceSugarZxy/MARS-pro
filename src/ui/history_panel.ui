@@ -141,6 +141,11 @@
         </column>
         <column>
          <property name="text">
+          <string>测试人员</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
           <string>极数</string>
          </property>
         </column>
@@ -152,11 +157,6 @@
         <column>
          <property name="text">
           <string>备注</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>文件路径</string>
          </property>
         </column>
         <attribute name="selectionBehavior">

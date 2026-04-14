@@ -54,12 +54,18 @@ class SerialCommand(QObject):
         # 待执行的反向移动任务（自检完成后需要反向移动）
         self._pending_retract_axis: Optional[str] = None
 
+        # 自检完成标志（只有收到finish消息后才为True）
+        self._self_detect_completed: bool = False
+
         # 待执行的方向键移动任务 (axis, direction, distance)
         # axis: 'X' 或 'Z', direction: +1 或 -1, distance: 脉冲值
         self._pending_move_task: Optional[tuple] = None
 
         # 偏置校准标志
         self._offset_calibrating = False
+
+        # 测量状态标志
+        self._is_measuring = False
 
         # 当前实时位置（用于到位检测）
         self._current_x: Optional[int] = None
@@ -105,7 +111,6 @@ class SerialCommand(QObject):
     def send_data(self, data: str) -> bool:
         """发送数据到串口"""
         import time
-        import traceback
         # 检查命令锁 - 如果被锁定且未临时允许，跳过位置查询命令
         if self._command_lock and data.startswith("?XZ") and not self._allow_position_query:
             logger.debug(f"[{time.time():.3f}] send_data: 命令被锁拦截 ?XZ~")
@@ -121,9 +126,6 @@ class SerialCommand(QObject):
 
         try:
             self.thread_manager.write_queue.put(data)
-            if data.startswith("?XZ"):
-                logger.info(f"[{time.time():.3f}] ★ send_data: 写入队列 '{data}', 队列当前大小={self.thread_manager.write_queue.qsize()}")
-                logger.info(f"[{time.time():.3f}] ★ ?XZ~ 调用堆栈:\n{traceback.format_stack()}")
             return True
         except Exception as e:
             logger.error(f"发送数据失败: {e}")
@@ -187,6 +189,11 @@ class SerialCommand(QObject):
         self._command_lock = True
         self._allow_position_query = True
 
+        # 位置变化检测
+        last_position = None
+        last_position_change_time = None
+        POSITION_CHANGE_TIMEOUT = 2.0  # 位置不变超过2秒认为异常
+
         try:
             start_time = time.time()
 
@@ -215,6 +222,21 @@ class SerialCommand(QObject):
                     if diff <= POSITION_TOLERANCE:
                         logger.info(f"{axis}轴到位: 当前值={current}, 目标={target}, 差值={diff}")
                         return True
+
+                    # 检测位置是否变化
+                    if last_position is not None and current != last_position:
+                        last_position_change_time = time.time()
+                        last_position = current
+                    elif last_position is None:
+                        last_position = current
+                        last_position_change_time = time.time()
+
+                    # 检查位置是否长时间未变化
+                    if last_position_change_time is not None:
+                        time_since_change = time.time() - last_position_change_time
+                        if time_since_change > POSITION_CHANGE_TIMEOUT:
+                            logger.warning(f"{axis}轴位置未变化已{time_since_change:.1f}秒: 当前值={current}, 目标={target}, 差值={diff}")
+                            return False
 
                 # 轮询间隔
                 time.sleep(0.05)
@@ -245,6 +267,7 @@ class SerialCommand(QObject):
     def auto_press(self) -> None:
         """发送自动下压命令（Z轴）"""
         self._pending_retract_axis = 'Z'
+        self._self_detect_completed = False
         self._position_query_retry_count = 0
         logger.info("开始Z轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
@@ -258,6 +281,7 @@ class SerialCommand(QObject):
     def auto_press_left(self) -> None:
         """发送向左贴靠命令（X轴）"""
         self._pending_retract_axis = 'X'
+        self._self_detect_completed = False
         self._position_query_retry_count = 0
         logger.info("开始X轴自检")
         # 清空队列，避免之前的位置数据干扰自检流程
@@ -269,6 +293,7 @@ class SerialCommand(QObject):
     def auto_press_right(self) -> None:
         """发送向右贴靠命令（X轴）"""
         self._pending_retract_axis = 'X-'
+        self._self_detect_completed = False
         self._position_query_retry_count = 0
         logger.info("开始X轴反向自检")
         # 清空队列，避免之前的位置数据干扰自检流程
@@ -279,20 +304,27 @@ class SerialCommand(QObject):
 
     def _wait_self_detect_finished(self, axis: str, timeout: float = 10.0) -> bool:
         """轮询等待自检完成"""
+        from PyQt5.QtCore import QCoreApplication
         import time
         poll_count = 0
         logger.info(f"开始轮询等待 {axis} 轴自检完成, 超时={timeout}s")
         start_time = time.time()
         while time.time() - start_time < timeout:
             poll_count += 1
-            logger.info(f"[{time.time():.3f}] _wait_self_detect_finished: 第{poll_count}次轮询, 队列大小={self.data_process.data_queue.qsize()}")
+            # 处理Qt事件，让readyRead信号可以触发
+            QCoreApplication.processEvents()
+            time.sleep(0.05)
+            QCoreApplication.processEvents()
+            logger.debug(f"[{time.time():.3f}] _wait_self_detect_finished: 第{poll_count}次轮询, 队列大小={self.data_process.data_queue.qsize()}")
             if self.data_process.check_self_detect():
                 elapsed = time.time() - start_time
                 logger.info(f"[{time.time():.3f}] {axis} 轴自检完成, 耗时={elapsed:.3f}s, 轮询次数={poll_count}")
+                self._self_detect_completed = True
                 return True
-            time.sleep(0.1)
         elapsed = time.time() - start_time
         logger.warning(f"[{time.time():.3f}] {axis} 轴自检完成超时! 耗时={elapsed:.3f}s, 轮询次数={poll_count}, 最后队列大小={self.data_process.data_queue.qsize()}")
+        # 超时后清除待执行任务标志，避免残留触发反向运动
+        self._pending_retract_axis = None
         return False
 
     def _on_self_detect_finished(self, axis: str) -> None:
@@ -325,6 +357,10 @@ class SerialCommand(QObject):
             self._current_z = int(position_data[1])
         # 1. 优先处理自检反向移动任务
         if self._pending_retract_axis:
+            # 必须等自检完成消息才能执行反向运动
+            if not self._self_detect_completed:
+                logger.debug(f"_on_position_data_processed: 自检未完成，忽略位置数据")
+                return
             # 检查位置数据有效性
             if position_data[0] is None or position_data[1] is None:
                 self._position_query_retry_count += 1
@@ -479,15 +515,27 @@ class SerialCommand(QObject):
         with self.command_lock():
             target_x = self.config.suspend_x
             target_z = self.config.suspend_z
-            logger.info(f"移动到挂起位置: X={target_x}, Z={target_z}")
+            scheme = self.config.suspend_movement_scheme
+            logger.info(f"移动到挂起位置: X={target_x}, Z={target_z}, 方案={scheme}")
 
-            self.move_z(target_z)
-            if not self._wait_position_reached('Z', target_z):
-                logger.warning(f"Z轴移动到{target_z}超时，跳过后续操作")
-                return
-            self.move_x(target_x)
-            if not self._wait_position_reached('X', target_x):
-                logger.warning(f"X轴移动到{target_x}超时")
+            if scheme == 'z_first':
+                # 先Z后X
+                self.move_z(target_z)
+                if not self._wait_position_reached('Z', target_z):
+                    logger.warning(f"Z轴移动到{target_z}超时，跳过后续操作")
+                    return
+                self.move_x(target_x)
+                if not self._wait_position_reached('X', target_x):
+                    logger.warning(f"X轴移动到{target_x}超时")
+            else:
+                # 先X后Z（默认）
+                self.move_x(target_x)
+                if not self._wait_position_reached('X', target_x):
+                    logger.warning(f"X轴移动到{target_x}超时，跳过后续操作")
+                    return
+                self.move_z(target_z)
+                if not self._wait_position_reached('Z', target_z):
+                    logger.warning(f"Z轴移动到{target_z}超时")
 
     def test_position(self) -> None:
         """测试位置 - 移动到保存的测试位置坐标"""
@@ -496,15 +544,27 @@ class SerialCommand(QObject):
         with self.command_lock():
             target_x = self.config.test_x
             target_z = self.config.test_z
-            logger.info(f"移动到测试位置: X={target_x}, Z={target_z}")
+            scheme = self.config.test_movement_scheme
+            logger.info(f"移动到测试位置: X={target_x}, Z={target_z}, 方案={scheme}")
 
-            self.move_x(target_x)
-            if not self._wait_position_reached('X', target_x):
-                logger.warning(f"X轴移动到{target_x}超时，跳过后续操作")
-                return
-            self.move_z(target_z)
-            if not self._wait_position_reached('Z', target_z):
-                logger.warning(f"Z轴移动到{target_z}超时")
+            if scheme == 'z_first':
+                # 先Z后X
+                self.move_z(target_z)
+                if not self._wait_position_reached('Z', target_z):
+                    logger.warning(f"Z轴移动到{target_z}超时，跳过后续操作")
+                    return
+                self.move_x(target_x)
+                if not self._wait_position_reached('X', target_x):
+                    logger.warning(f"X轴移动到{target_x}超时")
+            else:
+                # 先X后Z（默认）
+                self.move_x(target_x)
+                if not self._wait_position_reached('X', target_x):
+                    logger.warning(f"X轴移动到{target_x}超时，跳过后续操作")
+                    return
+                self.move_z(target_z)
+                if not self._wait_position_reached('Z', target_z):
+                    logger.warning(f"Z轴移动到{target_z}超时")
 
     def offset_calibration(self, position_window_ref=None) -> None:
         """偏置校准"""

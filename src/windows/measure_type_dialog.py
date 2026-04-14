@@ -3,7 +3,7 @@
 测量类型选择弹窗
 在开始测量前让用户选择测量类型：旋转测量或垂直测量
 """
-from PyQt5.QtWidgets import QDialog
+from PyQt5.QtWidgets import QDialog, QPushButton
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5 import uic
 import os
@@ -27,7 +27,7 @@ class MeasureTypeDialog(QDialog):
 
         self.pushButton_rotation.clicked.connect(self._on_rotation_clicked)
         self.pushButton_vertical.clicked.connect(self._on_vertical_clicked)
-        self.findChild(__import__('PyQt5.QtWidgets', fromlist=['QPushButton']), 'btn_close').clicked.connect(self.reject)
+        self.findChild(QPushButton, 'btn_close').clicked.connect(self.reject)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.pos().y() <= 35:

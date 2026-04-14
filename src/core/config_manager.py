@@ -23,6 +23,12 @@ class ConfigManager:
         # 挂起位置
         'suspend_x': '0',
         'suspend_z': '0',
+        # 测试类型: rotation=旋转测试, vertical=垂直测试
+        'test_type': 'rotation',
+        # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X
+        'test_movement_scheme': 'x_first',
+        # 挂起位置移动方案: x_first=先X后Z, z_first=先Z后X
+        'suspend_movement_scheme': 'z_first',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -147,6 +153,30 @@ class ConfigManager:
     @suspend_z.setter
     def suspend_z(self, value: int) -> None:
         self.set('suspend_z', value)
+
+    @property
+    def test_type(self) -> str:
+        return self.get('test_type', 'rotation')
+
+    @test_type.setter
+    def test_type(self, value: str) -> None:
+        self.set('test_type', value)
+
+    @property
+    def test_movement_scheme(self) -> str:
+        return self.get('test_movement_scheme', 'x_first')
+
+    @test_movement_scheme.setter
+    def test_movement_scheme(self, value: str) -> None:
+        self.set('test_movement_scheme', value)
+
+    @property
+    def suspend_movement_scheme(self) -> str:
+        return self.get('suspend_movement_scheme', 'z_first')
+
+    @suspend_movement_scheme.setter
+    def suspend_movement_scheme(self, value: str) -> None:
+        self.set('suspend_movement_scheme', value)
 
 
 # 全局配置实例

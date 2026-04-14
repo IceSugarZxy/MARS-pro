@@ -67,8 +67,7 @@ class OffsetCalibrationDialog(QDialog):
         if progress > 98:
             progress = 98  # 保留最后2%给完成阶段
         self.progress_bar.setValue(progress)
-        remaining = max(0, self.CALIBRATION_DURATION - self._progress_start_time)
-        self.label_status.setText(f"正在测量偏置数据... 剩余 {remaining:.1f} 秒")
+        self.label_status.setText("正在测量偏置数据...")
 
     def stop_progress(self):
         """停止进度更新"""

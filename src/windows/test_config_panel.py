@@ -5,7 +5,7 @@
 
 import os
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
-                              QGroupBox, QGridLayout)
+                              QGroupBox, QGridLayout, QComboBox, QRadioButton)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5 import uic
 from core.logger import get_logger
@@ -57,6 +57,71 @@ class TestConfigPanel(QWidget):
 
         # 加载保存的配置值
         self._load_saved_positions()
+        # 初始化测试模式和移动方案
+        self._init_test_mode_and_scheme()
+
+    def _init_test_mode_and_scheme(self):
+        """初始化测试模式和移动方案"""
+        config = get_config_manager()
+
+        # 测试类型
+        radio_rotation = self.findChild(QRadioButton, "radio_rotation")
+        radio_vertical = self.findChild(QRadioButton, "radio_vertical")
+        if radio_rotation and radio_vertical:
+            if config.test_type == 'vertical':
+                radio_vertical.setChecked(True)
+            else:
+                radio_rotation.setChecked(True)
+            radio_rotation.toggled.connect(self._on_test_type_changed)
+            radio_vertical.toggled.connect(self._on_test_type_changed)
+
+        # 测试移动方案
+        combo_test_scheme = self.findChild(QComboBox, "combo_test_scheme")
+        if combo_test_scheme:
+            if config.test_movement_scheme == 'z_first':
+                combo_test_scheme.setCurrentIndex(1)
+            else:
+                combo_test_scheme.setCurrentIndex(0)
+            combo_test_scheme.currentIndexChanged.connect(self._on_test_scheme_changed)
+
+        # 挂起移动方案
+        combo_suspend_scheme = self.findChild(QComboBox, "combo_suspend_scheme")
+        if combo_suspend_scheme:
+            if config.suspend_movement_scheme == 'z_first':
+                combo_suspend_scheme.setCurrentIndex(1)
+            else:
+                combo_suspend_scheme.setCurrentIndex(0)
+            combo_suspend_scheme.currentIndexChanged.connect(self._on_suspend_scheme_changed)
+
+    def _on_test_type_changed(self, checked):
+        """测试类型改变"""
+        if not checked:
+            return
+        config = get_config_manager()
+        radio_rotation = self.findChild(QRadioButton, "radio_rotation")
+        if radio_rotation and radio_rotation.isChecked():
+            config.test_type = 'rotation'
+        else:
+            config.test_type = 'vertical'
+        logger.info(f"测试类型已更改: {config.test_type}")
+
+    def _on_test_scheme_changed(self, index):
+        """测试移动方案改变"""
+        config = get_config_manager()
+        if index == 1:
+            config.test_movement_scheme = 'z_first'
+        else:
+            config.test_movement_scheme = 'x_first'
+        logger.info(f"测试移动方案已更改: {config.test_movement_scheme}")
+
+    def _on_suspend_scheme_changed(self, index):
+        """挂起移动方案改变"""
+        config = get_config_manager()
+        if index == 1:
+            config.suspend_movement_scheme = 'z_first'
+        else:
+            config.suspend_movement_scheme = 'x_first'
+        logger.info(f"挂起移动方案已更改: {config.suspend_movement_scheme}")
 
     def _load_saved_positions(self):
         """从配置文件加载保存的位置"""
@@ -102,13 +167,13 @@ class TestConfigPanel(QWidget):
         if self.serial_command and self.thread_manager:
             if self.thread_manager.serial_manager.get_connection_status():
                 # 只在命令锁未锁定且不在偏置校准时发送查询
-                if not self.serial_command._command_lock and not self.serial_command._offset_calibrating:
+                if not self.serial_command._command_lock and not self.serial_command._offset_calibrating and not self.serial_command._is_measuring:
                     logger.debug(f"[{t:.3f}] _on_position_query_timer: 发送位置查询")
                     self.serial_command.send_data("?XZ~")
                     # 触发数据处理信号
                     self.thread_manager.data_process.signal_position_data_process.emit()
                 else:
-                    logger.debug(f"[{t:.3f}] _on_position_query_timer: 跳过 (_command_lock={self.serial_command._command_lock}, _offset_calibrating={self.serial_command._offset_calibrating})")
+                    logger.debug(f"[{t:.3f}] _on_position_query_timer: 跳过 (_command_lock={self.serial_command._command_lock}, _offset_calibrating={self.serial_command._offset_calibrating}, _is_measuring={self.serial_command._is_measuring})")
             else:
                 # 未连接时显示 --
                 self.update_position("--", "--")
