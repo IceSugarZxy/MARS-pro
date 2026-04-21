@@ -5,12 +5,14 @@
 
 import os
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
-                              QGroupBox, QGridLayout, QComboBox, QRadioButton)
+                              QGroupBox, QGridLayout, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
+from core.config_manager import action_to_text
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
+from windows.scheme_edit_dialog import SchemeEditDialog
 
 logger = get_logger('TestConfigPanel')
 
@@ -64,64 +66,69 @@ class TestConfigPanel(QWidget):
         """初始化测试模式和移动方案"""
         config = get_config_manager()
 
-        # 测试类型
-        radio_rotation = self.findChild(QRadioButton, "radio_rotation")
-        radio_vertical = self.findChild(QRadioButton, "radio_vertical")
-        if radio_rotation and radio_vertical:
-            if config.test_type == 'vertical':
-                radio_vertical.setChecked(True)
-            else:
-                radio_rotation.setChecked(True)
-            radio_rotation.toggled.connect(self._on_test_type_changed)
-            radio_vertical.toggled.connect(self._on_test_type_changed)
+        # 测试类型 - 连接信号实现双向同步
+        combo_test_type = self.findChild(QComboBox, "combo_test_type")
+        if combo_test_type:
+            combo_test_type.setCurrentIndex(config.test_type)
+            combo_test_type.currentIndexChanged.connect(self._on_test_type_changed)
+            # 连接配置管理器的信号
+            config.signal_test_type_changed.connect(self._on_config_test_type_changed)
 
-        # 测试移动方案
-        combo_test_scheme = self.findChild(QComboBox, "combo_test_scheme")
-        if combo_test_scheme:
-            if config.test_movement_scheme == 'z_first':
-                combo_test_scheme.setCurrentIndex(1)
-            else:
-                combo_test_scheme.setCurrentIndex(0)
-            combo_test_scheme.currentIndexChanged.connect(self._on_test_scheme_changed)
+        # 更新方案显示
+        self._update_scheme_display(config.test_type)
 
-        # 挂起移动方案
-        combo_suspend_scheme = self.findChild(QComboBox, "combo_suspend_scheme")
-        if combo_suspend_scheme:
-            if config.suspend_movement_scheme == 'z_first':
-                combo_suspend_scheme.setCurrentIndex(1)
-            else:
-                combo_suspend_scheme.setCurrentIndex(0)
-            combo_suspend_scheme.currentIndexChanged.connect(self._on_suspend_scheme_changed)
+    def _update_scheme_display(self, test_type):
+        """根据测试类型更新方案显示"""
+        config = get_config_manager()
 
-    def _on_test_type_changed(self, checked):
+        # 获取当前活动的方案
+        test_scheme = config.get_active_test_scheme(test_type)
+        suspend_scheme = config.get_active_suspend_scheme(test_type)
+
+        # 转换为显示文本
+        test_steps_text = " → ".join([action_to_text(s) for s in test_scheme['steps']])
+        suspend_steps_text = " → ".join([action_to_text(s) for s in suspend_scheme['steps']])
+
+        test_scheme_edit = self.findChild(QLineEdit, "test_scheme_edit")
+        if test_scheme_edit:
+            test_scheme_edit.setText(test_steps_text)
+
+        suspend_scheme_edit = self.findChild(QLineEdit, "suspend_scheme_edit")
+        if suspend_scheme_edit:
+            suspend_scheme_edit.setText(suspend_steps_text)
+
+    def _on_edit_test_scheme(self):
+        """编辑测试方案"""
+        config = get_config_manager()
+        test_type = config.test_type
+        schemes = config.get_test_schemes(test_type)
+        if schemes:
+            scheme = schemes[0].copy()
+            dialog = SchemeEditDialog(scheme, self)
+            if dialog.exec_():
+                result = dialog.get_result()
+                config.update_scheme(test_type, True, 0, result)
+                self._update_scheme_display(test_type)
+                logger.info(f"测试方案已更新: {result}")
+
+    def _on_test_type_changed(self, index):
         """测试类型改变"""
-        if not checked:
-            return
         config = get_config_manager()
-        radio_rotation = self.findChild(QRadioButton, "radio_rotation")
-        if radio_rotation and radio_rotation.isChecked():
-            config.test_type = 'rotation'
-        else:
-            config.test_type = 'vertical'
-        logger.info(f"测试类型已更改: {config.test_type}")
+        config.test_type = index
+        logger.info(f"测试类型已更改: {index}")
 
-    def _on_test_scheme_changed(self, index):
-        """测试移动方案改变"""
-        config = get_config_manager()
-        if index == 1:
-            config.test_movement_scheme = 'z_first'
-        else:
-            config.test_movement_scheme = 'x_first'
-        logger.info(f"测试移动方案已更改: {config.test_movement_scheme}")
+        # 更新方案显示
+        self._update_scheme_display(index)
 
-    def _on_suspend_scheme_changed(self, index):
-        """挂起移动方案改变"""
-        config = get_config_manager()
-        if index == 1:
-            config.suspend_movement_scheme = 'z_first'
-        else:
-            config.suspend_movement_scheme = 'x_first'
-        logger.info(f"挂起移动方案已更改: {config.suspend_movement_scheme}")
+    def _on_config_test_type_changed(self, index):
+        """配置管理器测试类型改变，同步更新下拉框"""
+        combo_test_type = self.findChild(QComboBox, "combo_test_type")
+        if combo_test_type and combo_test_type.currentIndex() != index:
+            combo_test_type.blockSignals(True)
+            combo_test_type.setCurrentIndex(index)
+            combo_test_type.blockSignals(False)
+        # 更新方案显示
+        self._update_scheme_display(index)
 
     def _load_saved_positions(self):
         """从配置文件加载保存的位置"""

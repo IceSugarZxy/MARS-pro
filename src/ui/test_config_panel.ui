@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
+    <width>847</width>
     <height>661</height>
    </rect>
   </property>
@@ -51,6 +51,12 @@
        <layout class="QGridLayout" name="pos_layout">
         <item row="0" column="0">
          <widget class="QLabel" name="label_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>当前位置 X：</string>
           </property>
@@ -58,6 +64,12 @@
         </item>
         <item row="0" column="1">
          <widget class="QLineEdit" name="position_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -68,6 +80,12 @@
         </item>
         <item row="0" column="2">
          <widget class="QLabel" name="label_z">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>Z：</string>
           </property>
@@ -75,6 +93,12 @@
         </item>
         <item row="0" column="3">
          <widget class="QLineEdit" name="position_z">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -85,6 +109,12 @@
         </item>
         <item row="1" column="0">
          <widget class="QLabel" name="label_test_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>测试位置 X：</string>
           </property>
@@ -92,6 +122,12 @@
         </item>
         <item row="1" column="1">
          <widget class="QLineEdit" name="test_x_value">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -102,6 +138,12 @@
         </item>
         <item row="1" column="2">
          <widget class="QLabel" name="label_test_z">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>Z：</string>
           </property>
@@ -109,6 +151,12 @@
         </item>
         <item row="1" column="3">
          <widget class="QLineEdit" name="test_z_value">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -119,6 +167,12 @@
         </item>
         <item row="2" column="0">
          <widget class="QLabel" name="label_suspend_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>挂起位置 X：</string>
           </property>
@@ -126,6 +180,12 @@
         </item>
         <item row="2" column="1">
          <widget class="QLineEdit" name="suspend_x_value">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -136,6 +196,12 @@
         </item>
         <item row="2" column="2">
          <widget class="QLabel" name="label_suspend_z">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>Z：</string>
           </property>
@@ -143,6 +209,12 @@
         </item>
         <item row="2" column="3">
          <widget class="QLineEdit" name="suspend_z_value">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
           <property name="text">
            <string>--</string>
           </property>
@@ -176,66 +248,147 @@
         <string>快捷操作</string>
        </property>
        <layout class="QGridLayout" name="action_layout">
-        <item row="1" column="1">
-         <widget class="QPushButton" name="btn_left_x">
-          <property name="text">
-           <string>左贴靠(X轴)</string>
-          </property>
-         </widget>
-        </item>
         <item row="0" column="1">
          <widget class="QPushButton" name="btn_offset">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>偏置校准</string>
           </property>
-         </widget>
-        </item>
-        <item row="1" column="2">
-         <widget class="QPushButton" name="btn_right_x">
-          <property name="text">
-           <string>右贴靠(X轴)</string>
+          <property name="styleSheet">
+           <string>background-color: #f39c12; color: white; border: none;</string>
           </property>
          </widget>
         </item>
         <item row="3" column="1">
          <widget class="QPushButton" name="btn_suspend">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>挂起位置</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #16a085; color: white; border: none;</string>
           </property>
          </widget>
         </item>
         <item row="0" column="0">
          <widget class="QPushButton" name="btn_zeroing">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>滑台复位/零位校准</string>
           </property>
-         </widget>
-        </item>
-        <item row="1" column="0">
-         <widget class="QPushButton" name="btn_press_z">
-          <property name="text">
-           <string>下压贴靠(Z轴)</string>
+          <property name="styleSheet">
+           <string>background-color: #9b59b6; color: white; border: none;</string>
           </property>
          </widget>
         </item>
         <item row="3" column="0">
          <widget class="QPushButton" name="btn_test_pos">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>测试位置</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #3498db; color: white; border: none;</string>
           </property>
          </widget>
         </item>
         <item row="2" column="0">
          <widget class="QPushButton" name="btn_test_pos_save">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>保存测试位置</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #1e8449; color: white; border: none;</string>
           </property>
          </widget>
         </item>
         <item row="2" column="1">
          <widget class="QPushButton" name="btn_suspend_save">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
           <property name="text">
            <string>保存挂起位置</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #2ecc71; color: white; border: none;</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QPushButton" name="btn_right_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>右贴靠(X轴)</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #e74c3c; color: white; border: none;</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="2">
+         <widget class="QPushButton" name="btn_left_x">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>左贴靠(X轴)</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #c0392b; color: white; border: none;</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <widget class="QPushButton" name="btn_press_z">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>下贴靠(Z轴)</string>
+          </property>
+          <property name="styleSheet">
+           <string>background-color: #d68910; color: white; border: none;</string>
           </property>
          </widget>
         </item>
@@ -243,6 +396,13 @@
       </widget>
      </item>
     </layout>
+   </item>
+   <item row="0" column="0">
+    <widget class="QLabel" name="panel_title">
+     <property name="text">
+      <string>测试配置</string>
+     </property>
+    </widget>
    </item>
    <item row="4" column="0">
     <spacer name="verticalSpacer">
@@ -256,13 +416,6 @@
       </size>
      </property>
     </spacer>
-   </item>
-   <item row="0" column="0">
-    <widget class="QLabel" name="panel_title">
-     <property name="text">
-      <string>测试配置</string>
-     </property>
-    </widget>
    </item>
    <item row="3" column="0">
     <layout class="QVBoxLayout" name="action_section_layout_2">
@@ -284,75 +437,331 @@
         <string>测试模式</string>
        </property>
        <layout class="QGridLayout" name="action_layout_2">
-        <item row="0" column="0">
-         <widget class="QRadioButton" name="radio_rotation">
-          <property name="text">
-           <string>旋转测试</string>
+        <item row="2" column="15">
+         <widget class="QToolButton" name="btn_test_edit_scheme">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
           </property>
-          <property name="checked">
+          <property name="text">
+           <string>编辑</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="0">
+         <widget class="QLabel" name="label_x_offset">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>X偏移量(mm)：</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="15">
+         <widget class="QToolButton" name="btn_suspend_edit_scheme">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>编辑</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="15">
+         <spacer name="horizontalSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item row="4" column="2">
+         <widget class="QDoubleSpinBox" name="spin_x_offset">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>80</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="value">
+           <double>5.000000000000000</double>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QLineEdit" name="suspend_scheme_edit">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>500</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>500</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>Z→X</string>
+          </property>
+          <property name="readOnly">
            <bool>true</bool>
           </property>
          </widget>
         </item>
-        <item row="0" column="1">
-         <widget class="QRadioButton" name="radio_vertical">
+        <item row="2" column="0">
+         <widget class="QLabel" name="label_scheme_test">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>16777215</height>
+           </size>
+          </property>
           <property name="text">
-           <string>垂直测试</string>
+           <string>测试位置步骤：</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="label_scheme_suspend">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>挂起位置步骤：</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
           </property>
          </widget>
         </item>
         <item row="1" column="0">
-         <widget class="QLabel" name="label_scheme_test">
+         <widget class="QLabel" name="label_test_type">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>16777215</height>
+           </size>
+          </property>
           <property name="text">
-           <string>测试位置移动方案:</string>
+           <string>测试类型：</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
           </property>
          </widget>
         </item>
-        <item row="1" column="1">
-         <widget class="QComboBox" name="combo_test_scheme">
+        <item row="1" column="2">
+         <widget class="QComboBox" name="combo_test_type">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
           <property name="minimumSize">
            <size>
-            <width>120</width>
-            <height>0</height>
+            <width>500</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>500</width>
+            <height>16777215</height>
            </size>
           </property>
           <item>
            <property name="text">
-            <string>先X后Z</string>
+            <string>平面旋转测试</string>
            </property>
           </item>
           <item>
            <property name="text">
-            <string>先Z后X</string>
+            <string>外侧面旋转测试</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>内侧面旋转测试</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>外侧面垂直测试</string>
            </property>
           </item>
          </widget>
         </item>
-        <item row="2" column="0">
-         <widget class="QLabel" name="label_scheme_suspend">
-          <property name="text">
-           <string>挂起位置移动方案:</string>
+        <item row="2" column="2">
+         <widget class="QLineEdit" name="test_scheme_edit">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
           </property>
-         </widget>
-        </item>
-        <item row="2" column="1">
-         <widget class="QComboBox" name="combo_suspend_scheme">
           <property name="minimumSize">
            <size>
-            <width>120</width>
-            <height>0</height>
+            <width>500</width>
+            <height>30</height>
            </size>
           </property>
-          <item>
-           <property name="text">
-            <string>先X后Z</string>
-           </property>
-          </item>
-          <item>
-           <property name="text">
-            <string>先Z后X</string>
-           </property>
-          </item>
+          <property name="maximumSize">
+           <size>
+            <width>500</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>X→Z</string>
+          </property>
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="0">
+         <widget class="QLabel" name="label_z_offset">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>Z偏移量(mm)：</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="2">
+         <widget class="QDoubleSpinBox" name="spin_z_offset">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>80</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="value">
+           <double>1.000000000000000</double>
+          </property>
          </widget>
         </item>
        </layout>

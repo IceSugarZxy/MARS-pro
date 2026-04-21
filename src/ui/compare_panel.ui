@@ -51,6 +51,11 @@
       <property name="placeholderText">
        <string>文件1 分析结果</string>
       </property>
+      <property name="font">
+       <font>
+        <pointsize>26</pointsize>
+       </font>
+      </property>
      </widget>
      <widget class="QTextEdit" name="result2_text">
       <property name="readOnly">
@@ -58,6 +63,11 @@
       </property>
       <property name="placeholderText">
        <string>文件2 分析结果</string>
+      </property>
+      <property name="font">
+       <font>
+        <pointsize>26</pointsize>
+       </font>
       </property>
      </widget>
     </widget>

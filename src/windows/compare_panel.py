@@ -14,7 +14,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5 import uic
 import pyqtgraph as pg
 from pyqtgraph import mkPen
-from PyQt5.QtGui import QPen, QFont
+from PyQt5.QtGui import QPen
 from core.logger import get_logger
 from windows.wave_analysis import WaveAnalysis
 

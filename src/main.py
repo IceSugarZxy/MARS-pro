@@ -153,6 +153,10 @@ class MainApplication:
 
 def main() -> int:
     """主函数"""
+    # 屏蔽 matplotlib 字体警告
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+
     # 创建应用程序实例
     app = QApplication(sys.argv)
 

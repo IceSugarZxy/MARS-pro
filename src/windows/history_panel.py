@@ -11,99 +11,26 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
                               QTableWidgetItem, QLineEdit, QRadioButton,
                               QHeaderView, QHBoxLayout, QMessageBox)
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5 import uic
 from core.logger import get_logger
 
 logger = get_logger('HistoryPanel')
 
 
-class HistoryPanel(QWidget):
-    """历史数据面板 - 从 history_panel.ui 加载"""
+class LoadHistoryThread(QThread):
+    """后台加载历史数据的线程"""
+    finished = pyqtSignal(list)  # 加载完成信号，携带记录列表
 
-    # 信号：请求切换到测量面板并加载历史数据
-    signal_load_history = pyqtSignal(str)  # 文件路径
+    def __init__(self, plot_data_dir, parent=None):
+        super().__init__(parent)
+        self.plot_data_dir = plot_data_dir
 
-    def __init__(self):
-        super().__init__()
+    def run(self):
+        """后台加载历史数据"""
+        records = []
 
-        # 加载 UI
-        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "history_panel.ui")
-        uic.loadUi(ui_file_path, self)
-
-        # 存储所有历史记录数据
-        self._all_records = []
-
-        # 连接按钮事件
-        self._connect_buttons()
-
-        # 设置表格
-        self._setup_table()
-
-        # 加载历史数据
-        self._load_history_data()
-
-        logger.info("HistoryPanel 初始化完成")
-
-    def _connect_buttons(self):
-        """连接按钮事件"""
-        self.findChild(QPushButton, "btn_refresh").clicked.connect(self._on_refresh)
-        self.findChild(QPushButton, "btn_open").clicked.connect(self._on_open)
-
-        # 连接搜索输入框的文本变化事件
-        sample_name_edit = self.findChild(QLineEdit, "sample_name_edit")
-        if sample_name_edit:
-            sample_name_edit.textChanged.connect(self._on_search_changed)
-
-        tester_edit = self.findChild(QLineEdit, "tester_edit")
-        if tester_edit:
-            tester_edit.textChanged.connect(self._on_search_changed)
-
-        polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
-        if polar_num_edit:
-            polar_num_edit.textChanged.connect(self._on_search_changed)
-
-        airgap_edit = self.findChild(QLineEdit, "airgap_edit")
-        if airgap_edit:
-            airgap_edit.textChanged.connect(self._on_search_changed)
-
-    def _setup_table(self):
-        """设置表格"""
-        table = self.findChild(QTableWidget, "data_table")
-        if table:
-            header = table.horizontalHeader()
-            if header:
-                header.setSectionResizeMode(QHeaderView.Stretch)
-            table.setSelectionBehavior(QTableWidget.SelectRows)
-            table.setEditTriggers(QTableWidget.NoEditTriggers)
-            # 连接双击事件
-            table.itemDoubleClicked.connect(self._on_table_double_clicked)
-
-    def _get_plot_data_dir(self):
-        """获取plot_data目录路径"""
-        # 从 windows/history_panel.py 向上3级得到 MARS 目录
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, "data", "plot_data")
-
-    def _load_history_data(self):
-        """加载历史数据列表"""
-        table = self.findChild(QTableWidget, "data_table")
-        if not table:
-            return
-
-        plot_data_dir = self._get_plot_data_dir()
-        logger.info(f"加载历史数据目录: {plot_data_dir}")
-
-        # 清空表格
-        table.setRowCount(0)
-        self._all_records.clear()
-
-        # 查找所有CSV文件
-        if not os.path.exists(plot_data_dir):
-            os.makedirs(plot_data_dir, exist_ok=True)
-            logger.info(f"创建目录: {plot_data_dir}")
-
-        csv_files = glob.glob(os.path.join(plot_data_dir, "*.csv"))
+        csv_files = glob.glob(os.path.join(self.plot_data_dir, "*.csv"))
         csv_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
         for file_path in csv_files:
@@ -147,7 +74,6 @@ class HistoryPanel(QWidget):
                 except Exception as e:
                     logger.warning(f"读取CSV头信息失败: {e}")
 
-                # 存储记录
                 record = {
                     'sample_name': sample_name,
                     'time_str': time_str,
@@ -157,20 +83,125 @@ class HistoryPanel(QWidget):
                     'tester': tester,
                     'file_path': file_path
                 }
-                self._all_records.append(record)
+                records.append(record)
 
-                row = table.rowCount()
-                table.insertRow(row)
-                item_sample = QTableWidgetItem(sample_name)
-                item_sample.setData(Qt.UserRole, file_path)  # 存储文件路径
-                table.setItem(row, 0, item_sample)
-                table.setItem(row, 1, QTableWidgetItem(time_str))
-                table.setItem(row, 2, QTableWidgetItem(tester))
-                table.setItem(row, 3, QTableWidgetItem(polar_num))
-                table.setItem(row, 4, QTableWidgetItem(airgap))
-                table.setItem(row, 5, QTableWidgetItem(remark))
+        self.finished.emit(records)
 
-        logger.info(f"加载了 {len(self._all_records)} 条历史记录")
+
+class HistoryPanel(QWidget):
+    """历史数据面板 - 从 history_panel.ui 加载"""
+
+    # 信号：请求切换到测量面板并加载历史数据
+    signal_load_history = pyqtSignal(str)  # 文件路径
+
+    def __init__(self):
+        super().__init__()
+
+        # 加载 UI
+        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "history_panel.ui")
+        uic.loadUi(ui_file_path, self)
+
+        # 存储所有历史记录数据
+        self._all_records = []
+
+        # 后台加载线程
+        self._load_thread = None
+
+        # 连接按钮事件
+        self._connect_buttons()
+
+        # 设置表格
+        self._setup_table()
+
+        # 后台加载历史数据
+        self._start_load_history()
+
+        logger.info("HistoryPanel 初始化完成")
+
+    def _connect_buttons(self):
+        """连接按钮事件"""
+        self.findChild(QPushButton, "btn_refresh").clicked.connect(self._on_refresh)
+        self.findChild(QPushButton, "btn_open").clicked.connect(self._on_open)
+
+        # 连接搜索输入框的文本变化事件
+        sample_name_edit = self.findChild(QLineEdit, "sample_name_edit")
+        if sample_name_edit:
+            sample_name_edit.textChanged.connect(self._on_search_changed)
+
+        tester_edit = self.findChild(QLineEdit, "tester_edit")
+        if tester_edit:
+            tester_edit.textChanged.connect(self._on_search_changed)
+
+        polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
+        if polar_num_edit:
+            polar_num_edit.textChanged.connect(self._on_search_changed)
+
+        airgap_edit = self.findChild(QLineEdit, "airgap_edit")
+        if airgap_edit:
+            airgap_edit.textChanged.connect(self._on_search_changed)
+
+    def _setup_table(self):
+        """设置表格"""
+        table = self.findChild(QTableWidget, "data_table")
+        if table:
+            header = table.horizontalHeader()
+            if header:
+                header.setSectionResizeMode(QHeaderView.Stretch)
+            table.setSelectionBehavior(QTableWidget.SelectRows)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+            # 连接双击事件
+            table.itemDoubleClicked.connect(self._on_table_double_clicked)
+
+    def _get_plot_data_dir(self):
+        """获取plot_data目录路径"""
+        # 从 windows/history_panel.py 向上3级得到 MARS 目录
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(project_root, "data", "plot_data")
+
+    def _start_load_history(self):
+        """启动后台加载历史数据"""
+        plot_data_dir = self._get_plot_data_dir()
+        logger.info(f"后台加载历史数据目录: {plot_data_dir}")
+
+        if not os.path.exists(plot_data_dir):
+            os.makedirs(plot_data_dir, exist_ok=True)
+            logger.info(f"创建目录: {plot_data_dir}")
+
+        # 先清空表格
+        table = self.findChild(QTableWidget, "data_table")
+        if table:
+            table.setRowCount(0)
+        self._all_records.clear()
+
+        # 启动后台线程
+        self._load_thread = LoadHistoryThread(plot_data_dir, self)
+        self._load_thread.finished.connect(self._on_load_history_finished)
+        self._load_thread.start()
+
+    def _on_load_history_finished(self, records):
+        """后台加载完成，填充表格"""
+        logger.info(f"后台加载完成，共 {len(records)} 条记录")
+
+        table = self.findChild(QTableWidget, "data_table")
+        if not table:
+            return
+
+        self._all_records = records
+
+        for record in records:
+            row = table.rowCount()
+            table.insertRow(row)
+            item_sample = QTableWidgetItem(record['sample_name'])
+            item_sample.setData(Qt.UserRole, record['file_path'])
+            table.setItem(row, 0, item_sample)
+            table.setItem(row, 1, QTableWidgetItem(record['time_str']))
+            table.setItem(row, 2, QTableWidgetItem(record['tester']))
+            table.setItem(row, 3, QTableWidgetItem(record['polar_num']))
+            table.setItem(row, 4, QTableWidgetItem(record['airgap']))
+            table.setItem(row, 5, QTableWidgetItem(record['remark']))
+
+        logger.info(f"填充了 {len(records)} 条历史记录到表格")
+        self._load_thread = None
 
     def _on_search_changed(self):
         """搜索条件变化，执行筛选"""
@@ -241,7 +272,7 @@ class HistoryPanel(QWidget):
         if airgap_edit:
             airgap_edit.setText("")
 
-        self._load_history_data()
+        self._start_load_history()
 
     def _on_table_double_clicked(self, item):
         """表格双击事件"""

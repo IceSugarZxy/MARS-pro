@@ -124,12 +124,10 @@ class DataProcess(QObject):
                 - magnetizer: 磁化器
         """
         self._sample_info = sample_info.copy()
-        logger.debug(f"样品信息已设置: {self._sample_info}")
 
     def stop_measure_processing(self) -> None:
         """停止测量数据处理，中途停止时调用"""
         self._stop_measure_processing = True
-        logger.debug("测量处理停止标志已设置")
 
     def update_sample_info(self, key: str, value) -> None:
         """
@@ -140,7 +138,6 @@ class DataProcess(QObject):
             value: 字段值
         """
         self._sample_info[key] = value
-        logger.debug(f"样品信息已更新: {key}={value}")
 
     def get_sample_info(self) -> dict:
         """
@@ -245,32 +242,25 @@ class DataProcess(QObject):
                     data = self.data_queue.get_nowait()
                     item_count += 1
                 except queue.Empty:
-                    # 队列为空，说明已处理完所有待处理数据
-                    if item_count > 0:
-                        logger.debug(f"check_self_detect: [{time.time():.3f}] 扫描了{item_count}个数据包，队列已空，耗时={time.time()-start_time:.3f}s")
                     break
 
                 text = data.decode('utf-8', errors='ignore')
-                logger.debug(f"check_self_detect: [{time.time():.3f}] 收到数据, 内容='{text.strip()[:50]}'")
 
                 # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
                 if text.strip().startswith('X:') and 'Z:' in text:
-                    logger.debug("check_self_detect: 收到位置数据，放回队列，退出")
                     self.data_queue.put(data)
                     break
 
                 # 检测Z轴自检完成
                 if 'Z Axis Self Detect Finished' in text:
-                    logger.info(f"check_self_detect: ★ 检测到 Z 轴自检完成！耗时={time.time()-start_time:.3f}s")
+                    logger.info(f"Z 轴自检完成")
                     self.signal_self_detect_finished.emit('Z')
                     return True
                 # 检测X轴自检完成
                 elif 'X Axis Self Detect Finished' in text:
-                    logger.info(f"check_self_detect: ★ 检测到 X 轴自检完成！耗时={time.time()-start_time:.3f}s")
+                    logger.info(f"X 轴自检完成")
                     self.signal_self_detect_finished.emit('X')
                     return True
-                else:
-                    logger.debug(f"check_self_detect: 忽略其他消息: '{text.strip()[:30]}'")
 
         except Exception as e:
             logger.error(f"检测自检完成消息失败: {e}")
@@ -373,7 +363,6 @@ class DataProcess(QObject):
             measure_list: List[float] = []  # 测量值列表
             no_data_count = 0              # 连续无数据计数
 
-            logger.debug("进入数据接收循环...")
             MAX_EMPTY_COUNT = 4  # 最大空队列计数（2秒）
             while True:
                 # 检查停止标志
@@ -416,7 +405,6 @@ class DataProcess(QObject):
                     del temp_buffer[0:batch_size * 2]
                     # 发出进度信号，用于更新UI (当前数据量, 期望总数据量)
                     self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
-                    logger.debug(f"缓冲区处理完成，本批处理 {batch_size} 组，当前总数据点: {len(measure_list)}，缓冲区剩余: {len(temp_buffer)} 字节")
 
                 # ============================================================
                 # 获取新数据
@@ -426,13 +414,10 @@ class DataProcess(QObject):
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
                         no_data_count = 0  # 重置空计数
-                        logger.debug(f"从队列获取新数据: {len(data)} 字节，缓冲区当前: {len(temp_buffer)} 字节")
                         continue
                     except queue.Empty:
                         # 连续无数据，增加计数
                         no_data_count += 1
-                        queue_size = self.data_queue.qsize()
-                        logger.debug(f"队列为空，无数据计数: {no_data_count}/{MAX_EMPTY_COUNT}，队列大小: {queue_size}")
                         time.sleep(0.5)
 
                         # 检查停止标志
@@ -462,16 +447,12 @@ class DataProcess(QObject):
                                     # 垂直测量：直接返回原始数据
                                     angle_data = list(range(len(measure_list)))
                                     mag_data = measure_list
-                                    logger.debug("垂直测量模式，直接返回原始数据")
                                 else:
                                     # 旋转测量：调用算法处理
-                                    logger.debug("旋转测量模式，开始调用算法处理...")
                                     angle_data, mag_data = self._process_measure_algorithm(measure_list)
 
                                 # 发出完成信号
-                                logger.debug(f"发送测量完成信号，数据点: {len(angle_data)}")
                                 self.signal_measure_data_process_finished.emit(angle_data, mag_data)
-                                logger.debug("========== 测量数据处理完成 ==========")
                                 break
                             else:
                                 logger.warning("未读取到有效测量数据")
@@ -812,4 +793,4 @@ class DataProcess(QObject):
 
         用于清理资源和停止后台处理任务。
         """
-        logger.debug("数据处理停止")
+        logger.info("数据处理停止")

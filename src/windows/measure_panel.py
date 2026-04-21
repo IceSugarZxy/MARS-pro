@@ -4,19 +4,21 @@
 """
 
 import os
-import queue
 import numpy as np
-from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QRadioButton, QDialog, QVBoxLayout, QComboBox
-from PyQt5.QtCore import QTimer
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
+                              QDialog, QVBoxLayout, QComboBox, QHBoxLayout, QListWidget,
+                              QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy)
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5 import uic
 import pyqtgraph as pg
 from pyqtgraph import mkPen
 from core.logger import get_logger
 from core import get_config_manager
+from core.config_manager import ACTION_TYPES
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.test_progress_dialog import TestProgressDialog
+from windows.offset_calibration_dialog import OffsetCalibrationDialog
 
 logger = get_logger('MeasurePanel')
 
@@ -36,15 +38,15 @@ class MeasurePanel(QWidget):
         self.data_process = None
         self.serial_command = None
 
+        # 偏置校准对话框
+        self._offset_dialog = None
+
         # 位置数据查询状态
         self.position_query_completed = False
         self.position_query_result = None
 
         # 初始化绘图窗口
         self.plot_window = None
-
-        # 初始化测量数据队列
-        self.measure_data_queue = queue.Queue()
 
         # 初始化波形分析数据
         self.angle_data = []
@@ -55,7 +57,6 @@ class MeasurePanel(QWidget):
 
         # 测试状态管理
         self.is_testing = False
-        self.testing_label = None
         self.test_progress_dialog = None
 
         # 初始化状态自动恢复定时器
@@ -77,37 +78,18 @@ class MeasurePanel(QWidget):
         """初始化配置显示"""
         config = get_config_manager()
 
-        # 测试类型
+        # 测试类型 - 连接信号实现双向同步
         combo_test_type = self.findChild(QComboBox, "combo_test_type")
         if combo_test_type:
-            # rotation=0, vertical=1
-            if config.test_type == 'vertical':
-                combo_test_type.setCurrentIndex(1)
-            else:
-                combo_test_type.setCurrentIndex(0)
+            combo_test_type.setCurrentIndex(config.test_type)
             combo_test_type.currentIndexChanged.connect(self._on_test_type_changed)
-
-        # 测试移动方案
-        combo_test_scheme = self.findChild(QComboBox, "combo_test_scheme")
-        if combo_test_scheme:
-            # x_first=0, z_first=1
-            if config.test_movement_scheme == 'z_first':
-                combo_test_scheme.setCurrentIndex(1)
-            else:
-                combo_test_scheme.setCurrentIndex(0)
-            combo_test_scheme.currentIndexChanged.connect(self._on_test_scheme_changed)
-
-        # 挂起移动方案
-        combo_suspend_scheme = self.findChild(QComboBox, "combo_suspend_scheme")
-        if combo_suspend_scheme:
-            # x_first=0, z_first=1
-            if config.suspend_movement_scheme == 'z_first':
-                combo_suspend_scheme.setCurrentIndex(1)
-            else:
-                combo_suspend_scheme.setCurrentIndex(0)
-            combo_suspend_scheme.currentIndexChanged.connect(self._on_suspend_scheme_changed)
+            # 连接配置管理器的信号
+            config.signal_test_type_changed.connect(self._on_config_test_type_changed)
 
         # 更新位置显示
+        self._update_config_position_display()
+
+        # 更新配置位置显示
         self._update_config_position_display()
 
     def _update_config_position_display(self):
@@ -142,29 +124,16 @@ class MeasurePanel(QWidget):
     def _on_test_type_changed(self, index):
         """测试类型改变"""
         config = get_config_manager()
-        if index == 1:
-            config.test_type = 'vertical'
-        else:
-            config.test_type = 'rotation'
-        logger.info(f"测试类型已更改: {config.test_type}")
+        config.test_type = index
+        logger.info(f"测试类型已更改: {index}")
 
-    def _on_test_scheme_changed(self, index):
-        """测试移动方案改变"""
-        config = get_config_manager()
-        if index == 1:
-            config.test_movement_scheme = 'z_first'
-        else:
-            config.test_movement_scheme = 'x_first'
-        logger.info(f"测试移动方案已更改: {config.test_movement_scheme}")
-
-    def _on_suspend_scheme_changed(self, index):
-        """挂起移动方案改变"""
-        config = get_config_manager()
-        if index == 1:
-            config.suspend_movement_scheme = 'z_first'
-        else:
-            config.suspend_movement_scheme = 'x_first'
-        logger.info(f"挂起移动方案已更改: {config.suspend_movement_scheme}")
+    def _on_config_test_type_changed(self, index):
+        """配置管理器测试类型改变，同步更新下拉框"""
+        combo_test_type = self.findChild(QComboBox, "combo_test_type")
+        if combo_test_type and combo_test_type.currentIndex() != index:
+            combo_test_type.blockSignals(True)
+            combo_test_type.setCurrentIndex(index)
+            combo_test_type.blockSignals(False)
 
     def _init_plot_display(self):
         """初始化绘图显示窗口"""
@@ -300,26 +269,21 @@ class MeasurePanel(QWidget):
         self.test_progress_dialog = TestProgressDialog(self)
         self.test_progress_dialog.btn_cancel.clicked.connect(self._on_test_cancel)
         self.test_progress_dialog.show()
-
-        while not self.measure_data_queue.empty():
-            try:
-                self.measure_data_queue.get_nowait()
-            except queue.Empty:
-                break
+        self.test_progress_dialog.set_progress(0, "正在采集数据...")
 
         self._update_status("正在测量...")
 
         # 先清空数据队列
         self.data_process.clear_data_queue()
 
-        # 先发送处理信号，启动数据处理流程
+        # 先启动设备旋转，让设备开始发数据
+        if self.serial_command and self.serial_manager.get_connection_status():
+            self.serial_command.claw_rotate()
+
+        # 再发送处理信号，启动数据处理流程
         logger.info("正在发送 signal_measure_data_process 信号...")
         self.data_process.signal_measure_data_process.emit()
         logger.info("signal_measure_data_process 信号已发送")
-
-        # 最后启动设备旋转，确保设备开始发数据时处理流程已就绪
-        if self.serial_command and self.serial_manager.get_connection_status():
-            self.serial_command.claw_rotate()
 
     def _on_test_cancel(self):
         """测试取消"""
@@ -348,7 +312,35 @@ class MeasurePanel(QWidget):
         """偏置校准"""
         logger.info("偏置校准按钮被点击")
         if self.serial_command:
+            # 停止位置查询定时器，防止干扰偏置校准
+            self.serial_command.disable_position_query_timer()
+            logger.info("偏置校准：位置查询定时器已停止")
+
+            # 显示校准对话框
+            self._offset_dialog = OffsetCalibrationDialog(self)
+            self._offset_dialog.start_progress(duration=3)  # 偏置校准约3秒
+            self._offset_dialog.show()
+            logger.info("偏置校准开始")
             self.serial_command.offset_calibration()
+
+    def _on_offset_calibration_finished(self, success):
+        """偏置校准完成"""
+        logger.info(f"偏置校准完成: success={success}")
+        # 重新启动位置查询定时器
+        if self.serial_command:
+            self.serial_command.enable_position_query_timer()
+            logger.info("偏置校准完成：位置查询定时器已重启")
+        if self._offset_dialog:
+            config = get_config_manager()
+            offset_value = getattr(config, 'offset', None)
+            self._offset_dialog.show_result(success, offset_value)
+            self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
+
+    def _close_offset_dialog(self):
+        """关闭偏置校准对话框"""
+        if self._offset_dialog:
+            self._offset_dialog.close()
+            self._offset_dialog = None
 
     def _test_position_button_clicked(self):
         """测试位置"""
@@ -445,34 +437,6 @@ class MeasurePanel(QWidget):
         self.angle_data = []
         self.mag_data = []
 
-    def _show_testing_indicator(self):
-        """显示测试中提示"""
-        self._hide_testing_indicator()
-        self.testing_label = QLabel("测试中...", self)
-        self.testing_label.setStyleSheet("""
-            QLabel {
-                background-color: rgba(255, 255, 255, 200);
-                color: red;
-                font-size: 24px;
-                font-weight: bold;
-                border: 2px solid red;
-                border-radius: 10px;
-                padding: 20px;
-            }
-        """)
-        self.testing_label.setAlignment(Qt.AlignCenter)
-        w, h = self.width(), self.height()
-        self.testing_label.setGeometry(w // 3, h // 3, w // 3, h // 6)
-        self.testing_label.show()
-        self.testing_label.raise_()
-
-    def _hide_testing_indicator(self):
-        """隐藏测试中提示"""
-        if self.testing_label:
-            self.testing_label.hide()
-            self.testing_label.deleteLater()
-            self.testing_label = None
-
     def _disable_function_buttons(self):
         """禁用功能按钮"""
         self.findChild(QPushButton, "btn_start_rotation").setEnabled(False)
@@ -489,7 +453,6 @@ class MeasurePanel(QWidget):
         """结束测试"""
         logger.info("结束测试")
         self.is_testing = False
-        self._hide_testing_indicator()
         self._enable_function_buttons()
 
         # 停止测量数据处理
@@ -585,6 +548,9 @@ class MeasurePanel(QWidget):
             # 连接位置数据更新信号
             if hasattr(tm.data_process, 'signal_position_data_process_finished'):
                 tm.data_process.signal_position_data_process_finished.connect(self._on_position_data_updated)
+            # 连接偏置校准完成信号
+            if hasattr(tm.data_process, 'signal_offset_data_process_finished'):
+                tm.data_process.signal_offset_data_process_finished.connect(self._on_offset_calibration_finished)
 
     def _on_position_data_updated(self, position_data):
         """位置数据更新"""

@@ -6,7 +6,7 @@
 import queue
 from typing import Optional
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, Qt
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
 
 from .logger import get_logger
 from .serial_manager import SerialManager
@@ -36,11 +36,6 @@ class ThreadManager(QObject):
         self.read_queue: queue.Queue = queue.Queue()
         self.write_queue: queue.Queue = queue.Queue()
 
-        # 窗口引用
-        self.serial_window = None
-        self.position_window = None
-        self.measure_window = None
-
         self.initialize_threads()
         logger.info("ThreadManager 初始化完成")
 
@@ -63,94 +58,15 @@ class ThreadManager(QObject):
         self.data_process_thread = QThread()
         self.data_process.moveToThread(self.data_process_thread)
 
-        logger.debug("线程初始化完成")
-        return True
-
-    def connect_thread_signal(self, serial_window, position_window, measure_window) -> bool:
-        """连接所有组件间的信号流"""
-        # 连接串口管理器信号
-        self.signal_connect.connect(self.serial_manager.connect_serial)
-        self.signal_disconnect.connect(self.serial_manager.disconnect_serial)
-
-        # 串口设置界面实时显示信号
-        self.serial_manager.signal_data_received.connect(serial_window._on_data_received)
-        self.serial_manager.signal_connection_status_changed.connect(
-            serial_window._on_connection_status_changed
-        )
-
-        # 连接位置数据处理信号
-        self.data_process.signal_position_data_process.connect(
-            self.data_process.process_position_data
-        )
-
-        # 连接位置数据处理完成信号 - 位置窗口更新
-        self.data_process.signal_position_data_process_finished.connect(
-            position_window._on_data_processed
-        )
-
-
-
-        # 连接位置数据处理完成信号 - 移动任务处理
-        self.data_process.signal_position_data_process_finished.connect(
-            self.serial_command._on_position_data_processed
-        )
-
-        # 连接偏置数据处理信号
-        self.data_process.signal_offset_data_process.connect(
-            self.data_process.process_offset_data
-        )
-
-        # 连接偏置数据处理完成信号 - 提示信息更新
-        self.data_process.signal_offset_data_process_finished.connect(
-            position_window._on_offset_calibration_finished
-        )
-
-        # 连接偏置数据处理完成信号 - 清除偏置校准标志
-        self.data_process.signal_offset_data_process_finished.connect(
-            self.serial_command._on_offset_calibration_finished
-        )
-
-        # 连接测量数据处理信号
-        self.data_process.signal_measure_data_process.connect(
-            self.data_process.process_measure_data, Qt.QueuedConnection
-        )
-        self.data_process.signal_measure_data_process_finished.connect(
-            measure_window._on_measure_data_processed, Qt.QueuedConnection
-        )
-        self.data_process.signal_measure_data_progress.connect(
-            measure_window._on_measure_data_progress, Qt.QueuedConnection
-        )
-
-        # 连接自检消息处理信号
-        self.data_process.signal_self_detect_process.connect(
-            self.data_process.check_self_detect
-        )
-        self.data_process.signal_self_detect_finished.connect(
-            self.serial_command._on_self_detect_finished
-        )
-
-        # 设置窗口的线程管理器引用
-        serial_window.thread_manager = self
-        position_window.thread_manager = self
-        measure_window.thread_manager = self
-
-        # 保存窗口引用
-        self.serial_window = serial_window
-        self.position_window = position_window
-        self.measure_window = measure_window
-
-        logger.info("数据流信号连接完成")
         return True
 
     def start_threads(self) -> None:
         """启动所有线程"""
         if self.serial_thread:
             self.serial_thread.start()
-            logger.debug("串口线程已启动")
 
         if self.data_process_thread:
             self.data_process_thread.start()
-            logger.debug("数据处理线程已启动")
 
     def stop_threads(self) -> None:
         """停止所有线程"""
@@ -159,14 +75,12 @@ class ThreadManager(QObject):
                 self.data_process.stop()
             self.data_process_thread.quit()
             self.data_process_thread.wait()
-            logger.debug("数据处理线程已停止")
 
         if self.serial_thread and self.serial_thread.isRunning():
             if self.serial_manager:
                 self.serial_manager.stop()
             self.serial_thread.quit()
             self.serial_thread.wait()
-            logger.debug("串口线程已停止")
 
     def cleanup(self) -> None:
         """清理资源"""

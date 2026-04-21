@@ -522,6 +522,11 @@ def get_base_stylesheet() -> str:
         border: 1px solid {COLOR_BORDER};
         border-radius: {BORDER_RADIUS_L};
     }}
+
+    /* 数据比对结果文本 - 放大字体 */
+    QTextEdit#result1_text, QTextEdit#result2_text {{
+        font-size: 26px;
+    }}
     """
 
 

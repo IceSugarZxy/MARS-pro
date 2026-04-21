@@ -34,7 +34,7 @@ class SerialManager(QObject):
         self.connection_check_timer: Optional[QTimer] = None
         self.config = get_config_manager()
 
-        logger.debug("SerialManager 初始化完成")
+        logger.info("SerialManager 初始化完成")
 
     def connect_serial(
         self,
@@ -148,7 +148,6 @@ class SerialManager(QObject):
                 # 使用deleteLater确保对象被彻底清理
                 self.serial_port.deleteLater()
                 self.serial_port = None
-                logger.debug("QSerialPort已标记删除")
             except Exception as e:
                 logger.error(f"断开串口失败: {e}")
 
@@ -170,7 +169,6 @@ class SerialManager(QObject):
             self.is_connected = False
             return
 
-        import time as time_module
         try:
             while not self.write_queue.empty():
                 if self.serial_port.bytesToWrite() > 512:
@@ -181,7 +179,7 @@ class SerialManager(QObject):
                     data = data.encode('utf-8')
 
                 result = self.serial_port.write(data)
-                logger.info(f"[{time_module.time():.3f}] ★ SerialManager._process_write: 发送数据到串口, 内容='{data.decode('utf-8', errors='replace')}', 长度={result}")
+                logger.debug(f"发送数据: {data.decode('utf-8', errors='replace')[:30]}")
 
         except Exception as e:
             logger.error(f"处理写队列失败: {e}")
@@ -191,17 +189,10 @@ class SerialManager(QObject):
         if not self.is_connected or not self.serial_port:
             return
 
-        import time as time_module
         try:
             while self.serial_port.bytesAvailable() > 0:
                 data = self.serial_port.read(1024)  # 每次最多读1KB
                 if data:
-                    # 尝试解码为文本用于日志
-                    try:
-                        text_preview = data.decode('utf-8', errors='replace')[:50]
-                    except:
-                        text_preview = f"二进制数据 {len(data)} 字节"
-                    logger.info(f"[{time_module.time():.3f}] ★ SerialManager: 收到串口数据, 长度={len(data)}, 内容='{text_preview}'")
                     self.data_queue.put(data)
                     self.signal_data_received.emit(data)
 
@@ -268,13 +259,11 @@ class SerialManager(QObject):
     def start(self) -> None:
         """启动串口管理器"""
         self.running = True
-        logger.debug("串口管理器已启动")
 
     def stop(self) -> None:
         """停止串口管理器"""
         self.running = False
         self.disconnect_serial()
-        logger.debug("串口管理器已停止")
 
     def get_connection_status(self) -> bool:
         """获取连接状态"""
