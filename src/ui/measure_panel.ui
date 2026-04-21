@@ -981,9 +981,6 @@
           <property name="text">
            <string>开始测量</string>
           </property>
-          <property name="styleSheet">
-           <string>background-color: #27ae60; color: white; border: none;</string>
-          </property>
          </widget>
         </item>
         <item row="1" column="4">
@@ -1022,9 +1019,6 @@
           <property name="text">
            <string>偏置校准</string>
           </property>
-          <property name="styleSheet">
-           <string>background-color: #f39c12; color: white; border: none;</string>
-          </property>
          </widget>
         </item>
         <item row="1" column="0">
@@ -1037,9 +1031,6 @@
           </property>
           <property name="text">
            <string>零位校准</string>
-          </property>
-          <property name="styleSheet">
-           <string>background-color: #f39c12; color: white; border: none;</string>
           </property>
          </widget>
         </item>
@@ -1078,9 +1069,6 @@
           </property>
           <property name="text">
            <string>测试位置</string>
-          </property>
-          <property name="styleSheet">
-           <string>background-color: #3498db; color: white; border: none;</string>
           </property>
          </widget>
         </item>
@@ -1173,9 +1161,6 @@
           <property name="text">
            <string>停止测量</string>
           </property>
-          <property name="styleSheet">
-           <string>background-color: #e74c3c; color: white; border: none;</string>
-          </property>
          </widget>
         </item>
         <item row="2" column="1">
@@ -1188,9 +1173,6 @@
           </property>
           <property name="text">
            <string>挂起位置</string>
-          </property>
-          <property name="styleSheet">
-           <string>background-color: #9b59b6; color: white; border: none;</string>
           </property>
          </widget>
         </item>
@@ -1305,9 +1287,6 @@
           </property>
           <property name="text">
            <string>保存数据</string>
-          </property>
-          <property name="styleSheet">
-           <string>background-color: #27ae60; color: white; border: none;</string>
           </property>
          </widget>
         </item>

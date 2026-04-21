@@ -5,7 +5,7 @@
 
 import os
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
-                              QGroupBox, QGridLayout, QComboBox)
+                              QGroupBox, QGridLayout, QComboBox, QToolButton)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5 import uic
 from core.logger import get_logger
@@ -111,6 +111,20 @@ class TestConfigPanel(QWidget):
                 self._update_scheme_display(test_type)
                 logger.info(f"测试方案已更新: {result}")
 
+    def _on_suspend_edit_scheme(self):
+        """编辑挂起方案"""
+        config = get_config_manager()
+        test_type = config.test_type
+        schemes = config.get_suspend_schemes(test_type)
+        if schemes:
+            scheme = schemes[0].copy()
+            dialog = SchemeEditDialog(scheme, self)
+            if dialog.exec_():
+                result = dialog.get_result()
+                config.update_scheme(test_type, False, 0, result)
+                self._update_scheme_display(test_type)
+                logger.info(f"挂起方案已更新: {result}")
+
     def _on_test_type_changed(self, index):
         """测试类型改变"""
         config = get_config_manager()
@@ -166,6 +180,9 @@ class TestConfigPanel(QWidget):
         self.findChild(QPushButton, "btn_suspend").clicked.connect(self._on_suspend)
         self.findChild(QPushButton, "btn_test_pos_save").clicked.connect(self._on_test_pos_save)
         self.findChild(QPushButton, "btn_suspend_save").clicked.connect(self._on_suspend_save)
+        # 方案编辑
+        self.findChild(QToolButton, "btn_test_edit_scheme").clicked.connect(self._on_edit_test_scheme)
+        self.findChild(QToolButton, "btn_suspend_edit_scheme").clicked.connect(self._on_suspend_edit_scheme)
 
     def _on_position_query_timer(self):
         """定时器触发位置查询"""

@@ -136,7 +136,7 @@ def get_base_stylesheet() -> str:
     }}
 
     QPushButton:hover {{
-        background-color: {COLOR_BORDER};
+        background-color: {COLOR_BORDER} !important;
     }}
 
     QPushButton:pressed {{
@@ -526,6 +526,23 @@ def get_base_stylesheet() -> str:
     /* 数据比对结果文本 - 放大字体 */
     QTextEdit#result1_text, QTextEdit#result2_text {{
         font-size: 26px;
+    }}
+
+    /* 测试配置面板按钮 - 悬停效果（覆盖内联样式） */
+    QPushButton#btn_offset:hover, QPushButton#btn_zeroing:hover, QPushButton#btn_press_z:hover,
+    QPushButton#btn_left_x:hover, QPushButton#btn_right_x:hover, QPushButton#btn_test_pos:hover,
+    QPushButton#btn_suspend:hover, QPushButton#btn_test_pos_save:hover, QPushButton#btn_suspend_save:hover,
+    QToolButton#btn_test_edit_scheme:hover, QToolButton#btn_suspend_edit_scheme:hover {{
+        background-color: rgb(224,224,224) !important;
+    }}
+
+    /* 测量面板按钮 - 悬停效果（覆盖内联样式） */
+    QPushButton#btn_start_rotation:hover, QPushButton#btn_stop_rotation:hover,
+    QPushButton#btn_zeroing:hover, QPushButton#btn_offset:hover,
+    QPushButton#btn_test_position:hover, QPushButton#btn_suspend_position:hover,
+    QPushButton#btn_up:hover, QPushButton#btn_down:hover, QPushButton#btn_left:hover,
+    QPushButton#btn_right:hover, QPushButton#btn_save:hover {{
+        background-color: rgb(224,224,224) !important;
     }}
     """
 
