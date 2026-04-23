@@ -2,6 +2,8 @@
 import sys
 import os
 
+SPEC_DIR = os.path.dirname(os.path.abspath(__file__))
+
 block_cipher = None
 
 # 收集所有必要的模块
@@ -24,13 +26,13 @@ hiddenimports = [
 ]
 
 a = Analysis(
-    ['src/main.py'],
-    pathex=[os.getcwd()],
+    [os.path.join(SPEC_DIR, 'src', 'main.py')],
+    pathex=[SPEC_DIR],
     binaries=[],
     datas=[
-        ('src/ui', 'ui'),
-        ('src/windows', 'windows'),
-        ('src/core', 'core'),
+        (os.path.join(SPEC_DIR, 'src', 'ui'), 'ui'),
+        (os.path.join(SPEC_DIR, 'src', 'windows'), 'windows'),
+        (os.path.join(SPEC_DIR, 'src', 'core'), 'core'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

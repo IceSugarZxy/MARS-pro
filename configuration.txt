@@ -1,9 +1,0 @@
-saved_x:15018
-saved_z:72768
-left:1.0
-offset:190.39951013386224
-COM:"COM2"
-baudrate:921600
-bytesize:8
-stopbits:1
-parity:无

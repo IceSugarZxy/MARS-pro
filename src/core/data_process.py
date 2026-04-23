@@ -650,7 +650,7 @@ class DataProcess(QObject):
             文件路径，保存失败返回None
         """
         try:
-            # MARS根目录/MARS/data/raw_data
+            # 项目根目录/data/raw_data
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             raw_data_dir = os.path.join(project_root, "data", "raw_data")
 
@@ -704,7 +704,7 @@ class DataProcess(QObject):
             文件路径，保存失败返回None
         """
         try:
-            # MARS根目录/MARS/data/plot_data
+            # 项目根目录/data/plot_data
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             plot_data_dir = os.path.join(project_root, "data", "plot_data")
 

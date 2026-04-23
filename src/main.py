@@ -167,7 +167,7 @@ def main() -> int:
     # 设置应用程序样式
     app.setStyle('Fusion')
 
-    # 创建并运行主应用程序
+    # 创建并运行主应用程序codex
     main_app = MainApplication()
     exit_code = main_app.run()
 

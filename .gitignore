@@ -4,49 +4,42 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Build outputs
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Virtual Environment
+# Virtual environments
+.venv/
 venv/
-ENV/
 env/
-.venv
+ENV/
 
-# IDE
+# IDE / local tooling
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
 
-# Qt
-*.pyc
-*.pyo
-ui/*.py
-
-# Data
-data/raw_data/*
-data/plot_data/*
-!data/raw_data/.gitkeep
-!data/plot_data/.gitkeep
-
-# Logs
-MARS/logs/
+# Runtime logs
+logs/*
+!logs/.gitkeep
+src/logs/*
+!src/logs/.gitkeep
 *.log
 
-# Config
-MARS/src/configuration.txt
+# Generated measurement data
+data/raw_data/*
+!data/raw_data/.gitkeep
+data/plot_data/*
+!data/plot_data/.gitkeep
+
+# Local configuration
+configuration.txt
+src/configuration.txt
+
+# OS files
+Thumbs.db
+.DS_Store

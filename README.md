@@ -1,35 +1,25 @@
-# 旋转体表磁测量分析系统
+# MARS
 
-基于 PyQt5 的旋转体表磁测量分析系统，支持串口通信、数据采集、波形分析和图形界面。
+MARS 是一个基于 PyQt5 的旋转体表磁测量分析系统，集成了串口通信、位置控制、偏置校准、实时波形显示、历史数据查看和波形分析能力。
 
-**2026-04-21**: 修复测试配置面板编辑按钮无响应问题；按钮样式优化 - 移除UI内联样式，按钮颜色和悬停效果统一由theme.py主题控制
+当前仓库根目录就是 `MARS/` 本身，下面的命令、路径和打包说明都以这个目录为基准。
 
-**2026-04-21**: 可自定义位置移动方案系统 - 动作步骤包括X/Z目标位置移动、正/负方向偏移移动；测量界面与测试配置面板测试类型双向同步；数据比对结果字体放大
+## 功能概览
 
-**2026-04-20**: 历史数据列表后台加载优化 - 使用独立线程加载CSV文件，避免UI卡顿
-
-**2026-04-17**: 位置等待超时逻辑优化 - 只要位置持续变化就始终等待，移除位置停滞检测
-
-**2026-04-14**: 新增测试类型选择（平面旋转/外侧面旋转/内侧面旋转/外侧面垂直）、自定义移动方案编辑、测量界面配置组显示当前位置和保存的位置
-
-## 功能特性
-
-- 串口通信（自动连接、发送接收）
-- 数据处理（低通滤波、偏置校准、零点校准）
-- 实时波形显示
-- 多窗口管理（主界面、测量、位置、串口等）
-- 数据导出（CSV格式）
-- 波形分析（峰值检测、过零点分析、面积计算、THD失真率）
-- 历史数据查看与数据比对
-- 旋转测量与垂直测量模式
+- 串口连接、参数配置和自动重连
+- 测试位置 / 挂起位置控制
+- 偏置校准、零位校准
+- 平面旋转、外侧面旋转、内侧面旋转、外侧面垂直四种测试类型
+- 可编辑的测试 / 挂起移动方案
+- 实时波形显示与结果分析
+- 历史数据加载和波形比对
+- PyInstaller 打包
 
 ## 环境要求
 
 - Python 3.8+
-- PyQt5
-- numpy
-- scipy
-- pyqtgraph
+- Windows
+- 支持 PyQt5 QtSerialPort 的运行环境
 
 ## 安装
 
@@ -37,118 +27,80 @@
 pip install -r requirements.txt
 ```
 
-## 运行
+## 启动
 
 ```bash
 python src/main.py
 ```
 
-## 项目结构
+## 打包
 
-```
-MARS/
-├── src/
-│   ├── main.py              # 主程序入口
-│   ├── core/                # 核心模块
-│   │   ├── __init__.py
-│   │   ├── logger.py        # 日志模块
-│   │   ├── config_manager.py # 配置管理
-│   │   ├── serial_manager.py # 串口管理
-│   │   ├── serial_command.py # 串口命令
-│   │   ├── data_process.py  # 数据处理
-│   │   └── thread_manager.py # 线程管理
-│   ├── windows/             # 窗口模块
-│   │   ├── __init__.py
-│   │   ├── home_window.py  # 主窗口
-│   │   ├── serial_window.py # 串口设置
-│   │   ├── test_config_panel.py # 测试配置（位置控制+偏置校准）
-│   │   ├── measure_window.py # 测量界面
-│   │   ├── measure_type_dialog.py # 测量类型选择
-│   │   ├── offset_calibration_dialog.py # 偏置校准进度对话框
-│   │   ├── plot_window.py  # 绘图窗口
-│   │   ├── compare_window.py # 数据比对
-│   │   ├── history_window.py # 历史记录
-│   │   └── wave_analysis.py # 波形分析
-│   └── ui/                 # UI资源文件
-│       ├── *.ui            # Qt Designer界面文件
-│       └── window_operations.py # 窗口操作工具
-├── logs/                   # 日志文件
-├── data/                   # 数据存储
-│   ├── raw_data/          # 原始数据
-│   └── plot_data/         # 绘图数据
-└── requirements.txt        # 依赖列表
+```bash
+pyinstaller MARS.spec --clean
 ```
 
-## 核心模块说明
+打包完成后，可执行文件输出在 `dist/MARS/`。
 
-### core - 核心功能模块
+## 目录结构
 
-| 模块 | 功能 |
-|------|------|
-| logger | 统一日志管理 |
-| config_manager | 配置文件读写 |
-| serial_manager | 串口连接和数据收发 |
-| serial_command | 串口命令封装 |
-| data_process | 数据处理算法 |
-| thread_manager | 多线程协调 |
-
-### windows - 窗口模块
-
-| 窗口 | 功能 |
-|------|------|
-| home_window | 主界面，窗口导航 |
-| serial_window | 串口参数设置 |
-| test_config_panel | 测试配置（位置控制+偏置校准） |
-| measure_window | 测量界面，方向控制 |
-| measure_type_dialog | 测量类型选择（旋转/垂直） |
-| offset_calibration_dialog | 偏置校准进度对话框 |
-| plot_window | 实时绘图 |
-| compare_window | 数据比对 |
-| history_window | 历史数据查看 |
-| wave_analysis | 波形分析算法 |
-
-## 波形分析指标
-
-- **N/S极值**: 最大值、最小值、平均值、误差
-- **极间隔**: N极间隔、S极间隔的统计值
-- **面积**: N极面积、S极面积、NS总面积
-- **THD失真率**: 总谐波失真率
-- **极对数**: FFT基波频率分析
-
-## 串口命令
-
-| 命令 | 功能 |
-|------|------|
-| B~ | 爪盘旋转（1.5圈） |
-| S~ | 停止旋转 |
-| X{pos}~ | X轴移动到位置 |
-| Z{pos}~ | Z轴移动到位置 |
-| N{distance}~ | Z轴相对移动 |
-| P~ | Z轴自检（自动下压） |
-| Y~ | X轴自检（左贴靠） |
-| Y-~ | X轴反向自检（右贴靠） |
-| I~ | 滑台复位（回原点） |
-| K{sec}~ | 定时采集（偏置校准） |
-| ?XZ~ | 查询双轴位置 |
-
-## 配置文件
-
-配置文件 `configuration.txt` 格式：
+```text
+.
+├─src/
+│  ├─core/                      # 串口、配置、数据处理、线程管理
+│  ├─ui/                        # Qt Designer .ui 文件和主题
+│  ├─windows/                   # 各功能面板和对话框
+│  ├─logs/                      # 源码运行时日志目录
+│  ├─configuration.example.txt  # 示例配置
+│  ├─configuration.txt          # 本地运行配置，首次运行会自动生成
+│  └─main.py                    # 程序入口
+├─data/
+│  ├─raw_data/                  # 原始测量数据
+│  └─plot_data/                 # 波形与分析结果数据
+├─logs/                         # 打包后程序运行日志目录
+├─MARS.spec                     # PyInstaller 配置
+├─requirements.txt              # Python 依赖
+├─用户手册.md
+├─命令集.md
+└─软件通信手册.md
 ```
-saved_x:0
-saved_z:0
-left:0
+
+## 配置说明
+
+- 程序运行时读取 `src/configuration.txt`
+- 如果文件不存在，程序会自动按默认值创建
+- `src/configuration.txt` 和根目录 `configuration.txt` 都作为本地配置处理，不再纳入 Git 跟踪
+- 可以参考 `src/configuration.example.txt` 了解常用字段
+
+示例：
+
+```text
 offset:0
 COM:COM12
 baudrate:921600
+test_x:0
+test_z:0
+suspend_x:0
+suspend_z:0
+test_type:0
+test_movement_scheme:x_first
+suspend_movement_scheme:z_first
+inner_x_offset:5
+inner_z_offset:1
 ```
 
-## 技术栈
+## 数据与日志
 
-- **GUI框架**: PyQt5
-- **数据处理**: NumPy, SciPy
-- **串口通信**: PyQt5 SerialPort
-- **波形绘图**: pyqtgraph
+- 测量数据默认保存到 `data/raw_data/` 和 `data/plot_data/`
+- 源码运行时日志默认写入 `src/logs/`
+- 打包后的程序日志默认写入可执行文件同级的 `logs/`
+
+这些目录都按运行产物处理，默认不提交到 Git。
+
+## 近期调整
+
+- 修复 PyInstaller 规格文件对工作目录的依赖，支持从仓库根直接打包
+- 测试配置面板支持编辑移动方案，测试类型可以与测量界面联动
+- 历史数据列表改为后台加载，避免界面卡顿
 
 ## 许可证
 

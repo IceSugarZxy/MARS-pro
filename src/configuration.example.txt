@@ -1,0 +1,12 @@
+offset:0
+COM:COM12
+baudrate:921600
+test_x:0
+test_z:0
+suspend_x:0
+suspend_z:0
+test_type:0
+test_movement_scheme:x_first
+suspend_movement_scheme:z_first
+inner_x_offset:5
+inner_z_offset:1
