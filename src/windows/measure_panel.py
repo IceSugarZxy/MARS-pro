@@ -22,6 +22,8 @@ from windows.offset_calibration_dialog import OffsetCalibrationDialog
 
 logger = get_logger('MeasurePanel')
 
+STATUS_AUTO_RECOVER_MS = 2000
+
 
 class MeasurePanel(QWidget):
     """测量面板 - 从 measure_panel.ui 加载"""
@@ -472,7 +474,7 @@ class MeasurePanel(QWidget):
             status_label.setText(message)
             status_label.setStyleSheet("color: red; font-weight: bold;" if is_error else "color: green; font-weight: bold;")
             if auto_recover:
-                self._status_auto_recover_timer.start(1000)
+                self._status_auto_recover_timer.start(STATUS_AUTO_RECOVER_MS)
 
     def _collect_sample_info_from_ui(self) -> dict:
         """收集样品信息"""

@@ -36,6 +36,23 @@ class SerialManager(QObject):
 
         logger.info("SerialManager 初始化完成")
 
+    @staticmethod
+    def _normalize_serial_value(value: str, default: str) -> str:
+        text = str(value or default).strip().strip('"').strip("'")
+        return text or default
+
+    @classmethod
+    def _normalize_parity(cls, parity: str) -> str:
+        text = cls._normalize_serial_value(parity, "无")
+        parity_alias_map = {
+            "N": "无",
+            "O": "奇",
+            "E": "偶",
+            "M": "标记",
+            "S": "空格",
+        }
+        return parity_alias_map.get(text.upper(), text)
+
     def connect_serial(
         self,
         port: str,
@@ -46,6 +63,12 @@ class SerialManager(QObject):
     ) -> bool:
         """连接串口"""
         try:
+            port = self._normalize_serial_value(port, "")
+            baudrate = self._normalize_serial_value(baudrate, "921600")
+            bytesize = self._normalize_serial_value(bytesize, "8")
+            stopbits = self._normalize_serial_value(stopbits, "1")
+            parity = self._normalize_parity(parity)
+
             if self.serial_port:
                 try:
                     if self.serial_port.isOpen():

@@ -71,9 +71,15 @@ class MainApplication:
             self.thread_manager.data_process.signal_position_data_process.connect(
                 self.thread_manager.data_process.process_position_data
             )
+            self.thread_manager.data_process.signal_self_detect_process.connect(
+                self.thread_manager.data_process.check_self_detect
+            )
             # 连接位置数据处理完成信号 - 更新serial_command当前位置
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
                 self.thread_manager.serial_command._on_position_data_processed
+            )
+            self.thread_manager.data_process.signal_self_detect_finished.connect(
+                self.thread_manager.serial_command._on_self_detect_finished
             )
             # 连接偏置数据处理信号
             self.thread_manager.data_process.signal_offset_data_process.connect(

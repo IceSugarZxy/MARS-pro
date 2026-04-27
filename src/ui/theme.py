@@ -486,21 +486,26 @@ def get_base_stylesheet() -> str:
         border-top: 1px solid {COLOR_BORDER};
     }}
 
+    QWidget#status_container {{
+        background: transparent;
+    }}
+
     QLabel#serial_status_indicator {{
         background-color: {COLOR_DANGER};
-        border-radius: 5px;
+        border-radius: 7px;
         border: none;
-        min-width: 10px;
-        max-width: 10px;
-        min-height: 10px;
-        max-height: 10px;
+        min-width: 14px;
+        max-width: 14px;
+        min-height: 14px;
+        max-height: 14px;
     }}
 
     QLabel#serial_status_label {{
         color: {COLOR_TEXT_SECONDARY};
         background: transparent;
         border: none;
-        font-size: 10px;
+        font-size: 15px;
+        font-weight: 600;
     }}
 
     /* 内容区 */

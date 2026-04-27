@@ -3,6 +3,7 @@
 配置管理模块
 统一管理系统配置，支持配置文件的读写
 """
+import copy
 import os
 import json
 from typing import Optional, Dict, Any, List
@@ -91,6 +92,9 @@ class ConfigManager(QObject):
         'offset': '0',
         'COM': 'COM12',
         'baudrate': '921600',
+        'bytesize': '8',
+        'stopbits': '1',
+        'parity': '无',
         # 测试位置
         'test_x': '0',
         'test_z': '0',
@@ -107,6 +111,8 @@ class ConfigManager(QObject):
         'inner_x_offset': '5',
         # Z偏移量(mm)
         'inner_z_offset': '1',
+        # 贴靠动作回弹距离(mm)
+        'retract_distance': '0.3',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -135,6 +141,8 @@ class ConfigManager(QObject):
                     if ':' in line:
                         key, value = line.split(':', 1)
                         self._config[key.strip()] = value.strip()
+            for key, value in self.DEFAULT_CONFIG.items():
+                self._config.setdefault(key, value)
             logger.info(f"配置文件加载成功: {self.config_file}")
         except Exception as e:
             logger.error(f"加载配置文件失败: {e}")
@@ -155,6 +163,12 @@ class ConfigManager(QObject):
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """获取配置值"""
         return self._config.get(key, default)
+
+    @staticmethod
+    def _strip_quotes(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip().strip('"').strip("'")
 
     def set(self, key: str, value: Any) -> bool:
         """设置配置值"""
@@ -179,19 +193,43 @@ class ConfigManager(QObject):
 
     @property
     def com_port(self) -> str:
-        return self.get('COM', 'COM12')
+        return self._strip_quotes(self.get('COM', 'COM12')) or 'COM12'
 
     @com_port.setter
     def com_port(self, value: str) -> None:
-        self.set('COM', value)
+        self.set('COM', self._strip_quotes(value) or 'COM12')
 
     @property
     def baudrate(self) -> int:
-        return int(self.get('baudrate', '921600'))
+        return int(self._strip_quotes(self.get('baudrate', '921600')) or '921600')
 
     @baudrate.setter
     def baudrate(self, value: int) -> None:
         self.set('baudrate', str(value))
+
+    @property
+    def bytesize(self) -> str:
+        return self._strip_quotes(self.get('bytesize', '8')) or '8'
+
+    @bytesize.setter
+    def bytesize(self, value: str) -> None:
+        self.set('bytesize', self._strip_quotes(value) or '8')
+
+    @property
+    def stopbits(self) -> str:
+        return self._strip_quotes(self.get('stopbits', '1')) or '1'
+
+    @stopbits.setter
+    def stopbits(self, value: str) -> None:
+        self.set('stopbits', self._strip_quotes(value) or '1')
+
+    @property
+    def parity(self) -> str:
+        return self._strip_quotes(self.get('parity', '无')) or '无'
+
+    @parity.setter
+    def parity(self, value: str) -> None:
+        self.set('parity', self._strip_quotes(value) or '无')
 
     @property
     def offset(self) -> float:
@@ -274,21 +312,81 @@ class ConfigManager(QObject):
     def inner_z_offset(self, value: float) -> None:
         self.set('inner_z_offset', value)
 
+    @property
+    def retract_distance(self) -> float:
+        return max(0.0, self.get_float('retract_distance', 0.3))
+
+    @retract_distance.setter
+    def retract_distance(self, value: float) -> None:
+        self.set('retract_distance', max(0.0, float(value)))
+
     # ==================== 移动方案管理 ====================
+
+    @staticmethod
+    def _empty_type_scheme() -> Dict[str, Any]:
+        return {
+            'test_schemes': [],
+            'suspend_schemes': [],
+            'active_test_scheme': 0,
+            'active_suspend_scheme': 0,
+        }
+
+    def _build_default_type_scheme(
+        self,
+        test_type: int,
+        schemes: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if test_type in DEFAULT_SCHEMES:
+            return copy.deepcopy(DEFAULT_SCHEMES[test_type])
+
+        if schemes:
+            fallback = schemes.get(0)
+            if fallback is None and schemes:
+                fallback = next(iter(schemes.values()))
+            if fallback is not None:
+                return copy.deepcopy(fallback)
+
+        return self._empty_type_scheme()
+
+    def _normalize_test_type_schemes(self, schemes: Any) -> Optional[Dict[int, Dict[str, Any]]]:
+        if not isinstance(schemes, dict):
+            return None
+
+        normalized: Dict[int, Dict[str, Any]] = {}
+        for raw_key, raw_value in schemes.items():
+            try:
+                test_type = int(raw_key)
+            except (TypeError, ValueError):
+                logger.warning(f"Ignore invalid test_type_schemes key: {raw_key}")
+                continue
+
+            if not isinstance(raw_value, dict):
+                logger.warning(
+                    f"Invalid scheme config for test type {test_type}, fallback to defaults."
+                )
+                normalized[test_type] = self._build_default_type_scheme(test_type, normalized)
+                continue
+
+            normalized[test_type] = copy.deepcopy(raw_value)
+
+        return normalized
 
     def _get_schemes(self) -> Dict:
         """获取所有移动方案配置"""
         schemes_json = self.get('test_type_schemes', '')
         if schemes_json:
             try:
-                return json.loads(schemes_json)
+                return self._normalize_test_type_schemes(json.loads(schemes_json))
             except json.JSONDecodeError:
                 logger.warning(f"移动方案配置解析失败，使用默认值")
         return None
 
     def _save_schemes(self, schemes: Dict) -> bool:
         """保存所有移动方案配置"""
-        schemes_json = json.dumps(schemes, ensure_ascii=False)
+        normalized_schemes = self._normalize_test_type_schemes(schemes)
+        if normalized_schemes is None:
+            normalized_schemes = {}
+        schemes_json = json.dumps(normalized_schemes, ensure_ascii=False)
         self._config['test_type_schemes'] = schemes_json
         return self.save()
 
@@ -296,7 +394,7 @@ class ConfigManager(QObject):
         """获取所有测试类型的移动方案配置"""
         schemes = self._get_schemes()
         if schemes is None:
-            schemes = DEFAULT_SCHEMES.copy()
+            schemes = copy.deepcopy(DEFAULT_SCHEMES)
             self._save_schemes(schemes)
         return schemes
 
@@ -305,10 +403,7 @@ class ConfigManager(QObject):
         schemes = self.get_test_type_schemes()
         if test_type in schemes:
             return schemes[test_type]
-        if test_type in DEFAULT_SCHEMES:
-            return DEFAULT_SCHEMES[test_type]
-        # Fallback to first available type
-        return schemes[0] if schemes else DEFAULT_SCHEMES[0]
+        return self._build_default_type_scheme(test_type, schemes)
 
     def get_test_schemes(self, test_type: int) -> List[Dict]:
         """获取指定测试类型的测试位置方案列表"""
@@ -350,7 +445,7 @@ class ConfigManager(QObject):
         """设置当前选中的方案索引"""
         schemes = self.get_test_type_schemes()
         if test_type not in schemes:
-            schemes[test_type] = DEFAULT_SCHEMES.get(test_type, schemes[0]).copy()
+            schemes[test_type] = self._build_default_type_scheme(test_type, schemes)
 
         key = 'active_test_scheme' if is_test else 'active_suspend_scheme'
         schemes[test_type][key] = index
@@ -360,12 +455,7 @@ class ConfigManager(QObject):
         """更新指定方案"""
         schemes = self.get_test_type_schemes()
         if test_type not in schemes:
-            if test_type in DEFAULT_SCHEMES:
-                schemes[test_type] = DEFAULT_SCHEMES[test_type].copy()
-            elif 0 in schemes:
-                schemes[test_type] = schemes[0].copy()
-            else:
-                schemes[test_type] = {"test_schemes": [], "suspend_schemes": [], "active_test_scheme": 0, "active_suspend_scheme": 0}
+            schemes[test_type] = self._build_default_type_scheme(test_type, schemes)
 
         key = 'test_schemes' if is_test else 'suspend_schemes'
         if scheme_index < len(schemes[test_type][key]):
@@ -378,12 +468,7 @@ class ConfigManager(QObject):
         schemes = self.get_test_type_schemes()
         if test_type not in schemes:
             # 使用DEFAULT_SCHEMES中对应的类型，如果没有则使用第一个可用的
-            if test_type in DEFAULT_SCHEMES:
-                schemes[test_type] = DEFAULT_SCHEMES[test_type].copy()
-            elif 0 in schemes:
-                schemes[test_type] = schemes[0].copy()
-            else:
-                schemes[test_type] = {"test_schemes": [], "suspend_schemes": [], "active_test_scheme": 0, "active_suspend_scheme": 0}
+            schemes[test_type] = self._build_default_type_scheme(test_type, schemes)
 
         key = 'test_schemes' if is_test else 'suspend_schemes'
         schemes[test_type][key].append(scheme)

@@ -86,6 +86,7 @@ test_movement_scheme:x_first
 suspend_movement_scheme:z_first
 inner_x_offset:5
 inner_z_offset:1
+retract_distance:0.3
 ```
 
 ## 数据与日志

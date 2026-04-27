@@ -1,135 +1,468 @@
 # -*- coding: utf-8 -*-
 """
-串口命令管理器 - 优化版本
-定义一批串口发送功能指令，并调用serial_manager中的发送功能
+Serial command coordination.
 """
+
 import time
 from contextlib import contextmanager
 from enum import Enum
-from typing import Optional, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
 
 from PyQt5.QtCore import QObject, QTimer
 
-from .logger import get_logger
 from .config_manager import get_config_manager
+from .logger import get_logger
 
 if TYPE_CHECKING:
-    from thread_manager import ThreadManager
+    from .thread_manager import ThreadManager
 
-logger = get_logger('SerialCommand')
 
-# 常量定义
-MOVE_WAIT_TIME = 5  # 移动后等待时间（秒）
-POSITION_TOLERANCE = 5  # 到位判定容差（脉冲数）
-WAIT_POLL_INTERVAL = 0.1  # 到位检测轮询间隔（秒）
+logger = get_logger("SerialCommand")
+
+X_AXIS_PULSES_PER_MM = 400
+Z_AXIS_PULSES_PER_MM = 1000 / 0.62
+POSITION_TOLERANCE_MM = 0.2
+POSITION_WAIT_TIMEOUT_MS = 20000
+POSITION_WAIT_POLL_INTERVAL_MS = 150
+POSITION_STALL_RECHECK_DELAY_MS = 500
+SELF_DETECT_TIMEOUT_MS = 10000
+SELF_DETECT_POLL_INTERVAL_MS = 50
 
 
 class WorkState(Enum):
-    """工作状态枚举"""
-    IDLE = "idle"                    # 空闲状态
-    SELF_DETECTING = "self_detecting"  # 自检中
-    WAITING_POSITION = "waiting_position"  # 等待位置数据（自检完成后查询位置）
+    IDLE = "idle"
+    SELF_DETECTING = "self_detecting"
+    WAITING_POSITION = "waiting_position"
 
 
 class SerialCommand(QObject):
-    """串口命令管理器"""
-
-    def __init__(self, thread_manager: 'ThreadManager'):
+    def __init__(self, thread_manager: "ThreadManager"):
         super().__init__()
         self.thread_manager = thread_manager
         self.serial_manager = thread_manager.serial_manager
         self.data_process = thread_manager.data_process
         self.config = get_config_manager()
 
-        # 位置查询定时器
         self.position_query_timer: Optional[QTimer] = None
         self.position_query_enabled = False
 
-        # 命令锁 - 用于独占串口通信
         self._command_lock = False
-
-        # 工作状态
+        self._allow_position_query = False
         self._work_state = WorkState.IDLE
 
-        # 待执行的反向移动任务（自检完成后需要反向移动）
         self._pending_retract_axis: Optional[str] = None
-
-        # 自检完成标志（只有收到finish消息后才为True）
-        self._self_detect_completed: bool = False
-
-        # 待执行的方向键移动任务 (axis, direction, distance)
-        # axis: 'X' 或 'Z', direction: +1 或 -1, distance: 脉冲值
+        self._self_detect_axis: Optional[str] = None
+        self._self_detect_completed = False
         self._pending_move_task: Optional[tuple] = None
 
-        # 偏置校准标志
         self._offset_calibrating = False
-
-        # 测量状态标志
         self._is_measuring = False
 
-        # 当前实时位置（用于到位检测）
         self._current_x: Optional[int] = None
         self._current_z: Optional[int] = None
 
-        # 临时允许位置查询（等待到位期间）
-        self._allow_position_query = False
-
-        # 位置查询重试计数（用于自检后反向移动）
         self._position_query_retry_count = 0
         self._max_position_query_retries = 3
+        self._position_query_in_flight = False
 
-        logger.info("SerialCommand 初始化完成")
+        self._movement_sequence: Optional[dict] = None
+        self._active_position_wait: Optional[dict] = None
+        self._async_command_lock_state: Optional[dict] = None
+
+        self._setup_async_timers()
+        logger.info("SerialCommand initialized.")
 
     @contextmanager
     def command_lock(self, allow_position_query: bool = False):
-        """
-        串口命令锁上下文管理器
-        确保命令执行期间位置查询不会打断串口通信
+        previous_lock = self._command_lock
+        previous_allow = self._allow_position_query
+        timer_was_active = bool(self.position_query_timer and self.position_query_timer.isActive())
+        timer_interval = self.position_query_timer.interval() if timer_was_active else 500
 
-        Args:
-            allow_position_query: 等待到位期间是否允许位置查询（临时解锁）
-        """
         self._command_lock = True
-        self._allow_position_query = allow_position_query
-        # 停止位置查询定时器
-        if self.position_query_enabled:
+        self._allow_position_query = previous_allow or allow_position_query
+        if timer_was_active:
             self.disable_position_query_timer()
+
         try:
             yield
         finally:
-            self._command_lock = False
-            self._allow_position_query = False
-            # 恢复位置查询（如果有窗口在显示）
-            if hasattr(self.thread_manager, 'position_window'):
-                pw = self.thread_manager.position_window
-                if pw and pw.isVisible():
-                    self.enable_position_query_timer()
+            self._command_lock = previous_lock
+            self._allow_position_query = previous_allow
+            if timer_was_active and not previous_lock and not self._offset_calibrating and not self._is_measuring:
+                self.enable_position_query_timer(timer_interval)
+
+    def _setup_async_timers(self) -> None:
+        self._position_wait_poll_timer = QTimer(self)
+        self._position_wait_poll_timer.setInterval(POSITION_WAIT_POLL_INTERVAL_MS)
+        self._position_wait_poll_timer.timeout.connect(self._poll_position_wait)
+
+        self._position_wait_stall_timer = QTimer(self)
+        self._position_wait_stall_timer.setSingleShot(True)
+        self._position_wait_stall_timer.timeout.connect(self._on_position_wait_stall_recheck)
+
+        self._position_wait_timeout_timer = QTimer(self)
+        self._position_wait_timeout_timer.setSingleShot(True)
+        self._position_wait_timeout_timer.timeout.connect(self._on_position_wait_timeout)
+
+        self._self_detect_poll_timer = QTimer(self)
+        self._self_detect_poll_timer.setInterval(SELF_DETECT_POLL_INTERVAL_MS)
+        self._self_detect_poll_timer.timeout.connect(self._poll_self_detect)
+
+        self._self_detect_timeout_timer = QTimer(self)
+        self._self_detect_timeout_timer.setSingleShot(True)
+        self._self_detect_timeout_timer.timeout.connect(self._on_self_detect_timeout)
+
+    def _begin_async_command_lock(self, allow_position_query: bool = False) -> None:
+        if self._async_command_lock_state is not None:
+            self._command_lock = True
+            self._allow_position_query = self._allow_position_query or allow_position_query
+            return
+
+        timer_was_active = bool(self.position_query_timer and self.position_query_timer.isActive())
+        timer_interval = self.position_query_timer.interval() if timer_was_active else 500
+        self._async_command_lock_state = {
+            "command_lock": self._command_lock,
+            "allow_position_query": self._allow_position_query,
+            "timer_was_active": timer_was_active,
+            "timer_interval": timer_interval,
+        }
+
+        if timer_was_active:
+            self.disable_position_query_timer()
+
+        self._command_lock = True
+        self._allow_position_query = allow_position_query
+
+    def _end_async_command_lock(self) -> None:
+        if self._async_command_lock_state is None:
+            return
+
+        previous_state = self._async_command_lock_state
+        self._async_command_lock_state = None
+        self._command_lock = previous_state["command_lock"]
+        self._allow_position_query = previous_state["allow_position_query"]
+
+        if (
+            previous_state["timer_was_active"]
+            and not self._offset_calibrating
+            and not self._is_measuring
+        ):
+            self.enable_position_query_timer(previous_state["timer_interval"])
+
+    def _can_start_async_operation(self, operation_name: str) -> bool:
+        if (
+            self._movement_sequence
+            or self._active_position_wait
+            or self._self_detect_axis
+            or self._pending_retract_axis
+            or self._command_lock
+        ):
+            logger.warning(f"{operation_name} skipped: another serial operation is running.")
+            return False
+        return True
+
+    def _clear_position_wait(self) -> Optional[dict]:
+        self._position_wait_poll_timer.stop()
+        self._position_wait_stall_timer.stop()
+        self._position_wait_timeout_timer.stop()
+        wait_state = self._active_position_wait
+        self._active_position_wait = None
+        return wait_state
+
+    @staticmethod
+    def _get_axis_pulses_per_mm(axis: str) -> float:
+        if axis == "X":
+            return X_AXIS_PULSES_PER_MM
+        if axis == "Z":
+            return Z_AXIS_PULSES_PER_MM
+        return X_AXIS_PULSES_PER_MM
+
+    def _get_position_tolerance_pulse(self, axis: str) -> int:
+        pulses_per_mm = self._get_axis_pulses_per_mm(axis)
+        return max(5, int(round(POSITION_TOLERANCE_MM * pulses_per_mm)))
+
+    def _start_position_wait(
+        self,
+        axis: str,
+        target: int,
+        callback: Callable[[bool], None],
+        timeout_ms: int = POSITION_WAIT_TIMEOUT_MS,
+    ) -> None:
+        current_position = self._current_x if axis == "X" else self._current_z
+        self._active_position_wait = {
+            "axis": axis,
+            "target": target,
+            "callback": callback,
+            "last_position": current_position,
+            "stall_reference_position": None,
+            "stall_recheck_pending": False,
+        }
+        self._work_state = WorkState.WAITING_POSITION
+        self._position_wait_timeout_timer.start(timeout_ms)
+        self._position_wait_poll_timer.start()
+        self.position_query()
+
+    def _poll_position_wait(self) -> None:
+        if self._active_position_wait:
+            self.position_query()
+
+    def _on_position_wait_stall_recheck(self) -> None:
+        if not self._active_position_wait or not self._active_position_wait.get("stall_recheck_pending"):
+            return
+        self.position_query()
+
+    def _mark_position_wait_failed(self, reason: str) -> None:
+        wait_state = self._clear_position_wait()
+        self._work_state = WorkState.IDLE
+        if wait_state:
+            logger.error(reason)
+            wait_state["callback"](False)
+
+    def _handle_position_wait_update(self, position_data: tuple) -> None:
+        if not self._active_position_wait:
+            return
+        if position_data[0] is None or position_data[1] is None:
+            return
+
+        wait_state = self._active_position_wait
+        axis = wait_state["axis"]
+        target = wait_state["target"]
+        current = self._current_x if axis == "X" else self._current_z
+        tolerance = self._get_position_tolerance_pulse(axis)
+        diff = abs(current - target) if current is not None else None
+        if current is None or diff > tolerance:
+            last_position = wait_state.get("last_position")
+            if last_position is None:
+                wait_state["last_position"] = current
+                return
+
+            if current != last_position:
+                wait_state["last_position"] = current
+                wait_state["stall_reference_position"] = None
+                wait_state["stall_recheck_pending"] = False
+                self._position_wait_stall_timer.stop()
+                if not self._position_wait_poll_timer.isActive():
+                    self._position_wait_poll_timer.start()
+                return
+
+            if wait_state.get("stall_recheck_pending"):
+                stall_reference = wait_state.get("stall_reference_position")
+                if stall_reference == current:
+                    self._mark_position_wait_failed(
+                        f"{axis} axis movement abnormal: current={current}, target={target}, "
+                        f"diff={diff}, no position change after {POSITION_STALL_RECHECK_DELAY_MS}ms recheck."
+                    )
+                    return
+
+                wait_state["last_position"] = current
+                wait_state["stall_reference_position"] = None
+                wait_state["stall_recheck_pending"] = False
+                if not self._position_wait_poll_timer.isActive():
+                    self._position_wait_poll_timer.start()
+                return
+
+            wait_state["stall_reference_position"] = current
+            wait_state["stall_recheck_pending"] = True
+            self._position_wait_poll_timer.stop()
+            self._position_wait_stall_timer.start(POSITION_STALL_RECHECK_DELAY_MS)
+            return
+
+        wait_state = self._clear_position_wait()
+        self._work_state = WorkState.IDLE
+        logger.info(
+            f"{axis} axis reached target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+        )
+        if wait_state:
+            wait_state["callback"](True)
+
+    def _on_position_wait_timeout(self) -> None:
+        wait_state = self._clear_position_wait()
+        self._work_state = WorkState.IDLE
+        if not wait_state:
+            return
+
+        axis = wait_state["axis"]
+        target = wait_state["target"]
+        current = self._current_x if axis == "X" else self._current_z
+        tolerance = self._get_position_tolerance_pulse(axis)
+        diff = abs(current - target) if current is not None else None
+        if current is not None and diff <= tolerance:
+            logger.info(
+                f"{axis} axis accepted at timeout: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+            )
+            wait_state["callback"](True)
+            return
+
+        if current is None:
+            logger.warning(f"{axis} axis move to {target} timed out: no valid position feedback.")
+        else:
+            logger.warning(
+                f"{axis} axis move to {target} timed out, current={current}, diff={diff}, tolerance={tolerance}"
+            )
+        wait_state["callback"](False)
+
+    def _resolve_step_target(self, step: str, target_x: int, target_z: int) -> Optional[tuple]:
+        x_offset_pulse = self.config.get_inner_x_offset_pulse()
+        z_offset_pulse = self.config.get_inner_z_offset_pulse()
+
+        if step == "X":
+            return "X", target_x
+        if step == "Z":
+            return "Z", target_z
+        if step == "X+":
+            current_x = self._current_x if self._current_x is not None else target_x
+            return "X", current_x + x_offset_pulse
+        if step == "X-":
+            current_x = self._current_x if self._current_x is not None else target_x
+            return "X", current_x - x_offset_pulse
+        if step == "Z+":
+            current_z = self._current_z if self._current_z is not None else target_z
+            return "Z", current_z + z_offset_pulse
+        if step == "Z-":
+            current_z = self._current_z if self._current_z is not None else target_z
+            return "Z", current_z - z_offset_pulse
+        return None
+
+    def _finish_movement_sequence(self, success: bool) -> None:
+        sequence = self._movement_sequence
+        self._movement_sequence = None
+        self._clear_position_wait()
+        self._end_async_command_lock()
+        self._work_state = WorkState.IDLE
+
+        if sequence and success:
+            logger.info(f"{sequence['name']} completed.")
+        elif sequence:
+            logger.warning(f"{sequence['name']} stopped before completion.")
+
+    def _on_movement_step_finished(self, success: bool) -> None:
+        if not self._movement_sequence:
+            self._end_async_command_lock()
+            return
+
+        if not success:
+            self._finish_movement_sequence(False)
+            return
+
+        self._movement_sequence["step_index"] += 1
+        QTimer.singleShot(0, self._run_next_movement_step)
+
+    def _run_next_movement_step(self) -> None:
+        if not self._movement_sequence:
+            self._end_async_command_lock()
+            return
+
+        steps = self._movement_sequence["steps"]
+        step_index = self._movement_sequence["step_index"]
+        if step_index >= len(steps):
+            self._finish_movement_sequence(True)
+            return
+
+        step = steps[step_index]
+        target = self._resolve_step_target(
+            step,
+            self._movement_sequence["target_x"],
+            self._movement_sequence["target_z"],
+        )
+        if target is None:
+            logger.warning(f"Unsupported movement step: {step}")
+            self._finish_movement_sequence(False)
+            return
+
+        axis, target_position = target
+        logger.info(
+            f"{self._movement_sequence['name']} step {step_index + 1}/{len(steps)}: {step} -> {target_position}"
+        )
+        move_sent = self.move_x(target_position) if axis == "X" else self.move_z(target_position)
+        if not move_sent:
+            self._finish_movement_sequence(False)
+            return
+
+        self._start_position_wait(axis, target_position, self._on_movement_step_finished)
+
+    def _start_movement_sequence(self, name: str, steps: list, target_x: int, target_z: int) -> bool:
+        if not self._can_start_async_operation(name):
+            return False
+
+        self._movement_sequence = {
+            "name": name,
+            "steps": list(steps),
+            "step_index": 0,
+            "target_x": target_x,
+            "target_z": target_z,
+        }
+        self._begin_async_command_lock(allow_position_query=True)
+        self._run_next_movement_step()
+        return True
+
+    def _stop_self_detect(self) -> None:
+        self._self_detect_poll_timer.stop()
+        self._self_detect_timeout_timer.stop()
+        self._self_detect_axis = None
+
+    def _poll_self_detect(self) -> None:
+        if self._self_detect_axis:
+            self.data_process.signal_self_detect_process.emit()
+
+    def _on_self_detect_timeout(self) -> None:
+        if not self._self_detect_axis:
+            return
+
+        logger.warning(f"{self._self_detect_axis} self detect timed out.")
+        self._stop_self_detect()
+        self._pending_retract_axis = None
+        self._self_detect_completed = False
+        self._position_query_retry_count = 0
+        self._work_state = WorkState.IDLE
+        self._end_async_command_lock()
+
+    def _start_self_detect(self, command: str, retract_axis: str, detect_axis: str) -> None:
+        operation_name = f"self detect {detect_axis}"
+        if not self._can_start_async_operation(operation_name):
+            return
+
+        self._pending_retract_axis = retract_axis
+        self._self_detect_axis = detect_axis
+        self._self_detect_completed = False
+        self._position_query_retry_count = 0
+        self._work_state = WorkState.SELF_DETECTING
+        self.data_process.clear_data_queue()
+        self._begin_async_command_lock(allow_position_query=True)
+
+        if not self.send_data(command):
+            self._stop_self_detect()
+            self._pending_retract_axis = None
+            self._work_state = WorkState.IDLE
+            self._end_async_command_lock()
+            return
+
+        self._self_detect_timeout_timer.start(SELF_DETECT_TIMEOUT_MS)
+        self._self_detect_poll_timer.start()
+        self.data_process.signal_self_detect_process.emit()
 
     def send_data(self, data: str) -> bool:
-        """发送数据到串口"""
-        # 检查命令锁 - 如果被锁定且未临时允许，跳过位置查询命令
         if self._command_lock and data.startswith("?XZ") and not self._allow_position_query:
             return False
 
         if not self.serial_manager:
-            logger.error("串口管理器未设置")
+            logger.error("SerialManager is not available.")
             return False
 
         if not self.serial_manager.get_connection_status():
-            logger.warning("串口未连接")
+            logger.warning("Serial port is not connected.")
             return False
 
         try:
             self.thread_manager.write_queue.put(data)
             return True
         except Exception as e:
-            logger.error(f"发送数据失败: {e}")
+            logger.error(f"Failed to enqueue serial command: {e}")
             return False
 
     def enable_position_query_timer(self, interval: int = 500) -> None:
-        """启用位置查询定时器"""
         if not self.position_query_timer:
-            self.position_query_timer = QTimer()
+            self.position_query_timer = QTimer(self)
             self.position_query_timer.timeout.connect(self._position_query_from_timer)
 
         self.position_query_timer.setInterval(interval)
@@ -137,439 +470,214 @@ class SerialCommand(QObject):
         self.position_query_enabled = True
 
     def disable_position_query_timer(self) -> None:
-        """禁用位置查询定时器"""
         if self.position_query_timer and self.position_query_timer.isActive():
             self.position_query_timer.stop()
-            self.position_query_enabled = False
+        self.position_query_enabled = False
 
     def _position_query_from_timer(self) -> None:
-        """定时器触发的位置查询"""
-        # 检查是否正在偏置校准中
-        if self._offset_calibrating:
+        if self._offset_calibrating or self._is_measuring:
             return
-
-        # 如果有待处理的反向移动任务，检查自检完成信号
-        if self._pending_retract_axis:
-            self.data_process.signal_self_detect_process.emit()
+        if self._active_position_wait or self._self_detect_axis or self._pending_retract_axis:
             return
-
-        # 正常的位置查询
         self.position_query()
 
-    def _wait_position_reached(self, axis: str, target: int, timeout: float = 10.0) -> bool:
-        """
-        等待指定轴到达目标位置
-
-        Args:
-            axis: 'X' 或 'Z'
-            target: 目标脉冲值
-            timeout: 超时时间（秒）
-
-        Returns:
-            是否成功到达目标位置
-        """
-        from PyQt5.QtCore import QCoreApplication
-        logger.info(f"等待{axis}轴到位: 目标={target}, 超时={timeout}s")
-
-        # 设置临时标志，表示正在等待位置到达
-        previous_lock_state = self._command_lock
-        previous_allow_query = self._allow_position_query
-        self._command_lock = True
-        self._allow_position_query = True
-
-        try:
-            start_time = time.time()
-
-            while time.time() - start_time < timeout:
-                # 直接写入队列，不走 send_data（避免命令锁检查）
-                try:
-                    self.thread_manager.write_queue.put("?XZ~")
-                except Exception as e:
-                    logger.warning(f"发送位置查询失败: {e}")
-
-                # 触发数据处理
-                self.data_process.signal_position_data_process.emit()
-
-                # 等待数据处理完成
-                time.sleep(0.15)
-
-                # 处理 Qt 事件
-                for _ in range(5):
-                    QCoreApplication.processEvents()
-                    time.sleep(0.01)
-
-                # 检查位置
-                current = self._current_x if axis == 'X' else self._current_z
-                if current is not None:
-                    diff = abs(current - target)
-                    if diff <= POSITION_TOLERANCE:
-                        logger.info(f"{axis}轴到位: 当前值={current}, 目标={target}, 差值={diff}")
-                        return True
-
-                # 轮询间隔
-                time.sleep(0.05)
-
-        finally:
-            # 恢复之前的锁状态
-            self._command_lock = previous_lock_state
-            self._allow_position_query = previous_allow_query
-
-        logger.warning(f"{axis}轴移动到{target}超时! 最后位置={self._current_x if axis == 'X' else self._current_z}")
-        return False
     def claw_rotate(self) -> None:
-        """发送爪盘旋转命令"""
-        round = 542720
-        self.send_data(f"B{int(round * 1.5)}~")
+        round_pulse = 542720
+        self.send_data(f"B{int(round_pulse * 1.5)}~")
 
     def claw_stop(self) -> None:
-        """发送爪盘停止命令"""
         with self.command_lock():
             self.send_data("S~")
 
     def vertical_move(self, distance: int) -> None:
-        """发送垂直移动命令（Z轴相对脉冲移动）"""
         with self.command_lock():
-            command = f"N{distance}~"
-            self.send_data(command)
+            self.send_data(f"N{distance}~")
 
     def auto_press(self) -> None:
-        """发送自动下压命令（Z轴）"""
-        self._pending_retract_axis = 'Z'
-        self._self_detect_completed = False
-        self._position_query_retry_count = 0
-        logger.info("开始Z轴自检")
-        # 清空队列，避免之前的位置数据干扰自检流程
-        self.data_process.clear_data_queue()
-        # 使用command_lock阻止位置查询干扰，allow_position_query允许信号触发check_self_detect
-        with self.command_lock(allow_position_query=True):
-            self.send_data("P~")
-            # 轮询等待自检完成（期间位置查询被阻止）
-            self._wait_self_detect_finished('Z')
+        logger.info("Start Z self detect.")
+        self._start_self_detect("P~", "Z", "Z")
 
     def auto_press_left(self) -> None:
-        """发送向左贴靠命令（X轴）"""
-        self._pending_retract_axis = 'X'
-        self._self_detect_completed = False
-        self._position_query_retry_count = 0
-        logger.info("开始X轴自检")
-        # 清空队列，避免之前的位置数据干扰自检流程
-        self.data_process.clear_data_queue()
-        with self.command_lock(allow_position_query=True):
-            self.send_data("Y~")
-            self._wait_self_detect_finished('X')
+        logger.info("Start X self detect.")
+        self._start_self_detect("Y~", "X", "X")
 
     def auto_press_right(self) -> None:
-        """发送向右贴靠命令（X轴）"""
-        self._pending_retract_axis = 'X-'
-        self._self_detect_completed = False
-        self._position_query_retry_count = 0
-        logger.info("开始X轴反向自检")
-        # 清空队列，避免之前的位置数据干扰自检流程
-        self.data_process.clear_data_queue()
-        with self.command_lock(allow_position_query=True):
-            self.send_data("Y-~")
-            self._wait_self_detect_finished('X')
+        logger.info("Start reverse X self detect.")
+        self._start_self_detect("Y-~", "X-", "X")
 
-    def _wait_self_detect_finished(self, axis: str, timeout: float = 10.0) -> bool:
-        """轮询等待自检完成"""
-        from PyQt5.QtCore import QCoreApplication
-        import time
-        poll_count = 0
-        logger.info(f"开始轮询等待 {axis} 轴自检完成, 超时={timeout}s")
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            poll_count += 1
-            # 处理Qt事件，让readyRead信号可以触发
-            QCoreApplication.processEvents()
-            time.sleep(0.05)
-            QCoreApplication.processEvents()
-            if self.data_process.check_self_detect():
-                elapsed = time.time() - start_time
-                logger.info(f"{axis} 轴自检完成, 耗时={elapsed:.3f}s")
-                self._self_detect_completed = True
-                return True
-        elapsed = time.time() - start_time
-        logger.warning(f"{axis} 轴自检完成超时! 耗时={elapsed:.3f}s")
-        # 超时后清除待执行任务标志，避免残留触发反向运动
-        self._pending_retract_axis = None
-        return False
+    def _on_self_detect_finished(self, axis: str) -> None:
+        if not self._pending_retract_axis:
+            logger.debug("No pending retract task.")
+            return
+        if self._self_detect_axis and axis != self._self_detect_axis:
+            logger.debug(f"Ignore self detect signal: {axis}")
+            return
 
-    def _on_self_detect_finished(self, _axis: str) -> None:
-        """
-        自检完成回调 - 检查是否有待处理的任务，有则触发位置查询
-
-        Args:
-            _axis: 轴类型，'X' 或 'Z' (未使用)
-        """
-        # 检查是否有待处理的反向移动任务
-        if self._pending_retract_axis:
-            self.position_query()
-        else:
-            logger.debug(f"没有待处理的反向移动任务")
+        self._stop_self_detect()
+        self._self_detect_completed = True
+        self._work_state = WorkState.WAITING_POSITION
+        self.position_query()
 
     def _on_position_data_processed(self, position_data: tuple) -> None:
-        """
-        位置数据处理完成回调 - 检查并执行待处理的任务
+        self._position_query_in_flight = False
 
-        Args:
-            position_data: 位置数据 (x, z)
-        """
-        # 更新当前实时位置（用于到位检测）
         if position_data[0] is not None:
             self._current_x = int(position_data[0])
         if position_data[1] is not None:
             self._current_z = int(position_data[1])
-        # 1. 优先处理自检反向移动任务
+
         if self._pending_retract_axis:
-            # 必须等自检完成消息才能执行反向运动
             if not self._self_detect_completed:
                 return
-            # 检查位置数据有效性
+
             if position_data[0] is None or position_data[1] is None:
                 self._position_query_retry_count += 1
                 if self._position_query_retry_count >= self._max_position_query_retries:
-                    logger.error(f"位置数据无效，已达最大重试次数({self._max_position_query_retries})，放弃反向移动")
+                    logger.error(
+                        f"Invalid retract position data after {self._max_position_query_retries} retries."
+                    )
                     self._pending_retract_axis = None
+                    self._self_detect_completed = False
                     self._position_query_retry_count = 0
+                    self._work_state = WorkState.IDLE
+                    self._end_async_command_lock()
                 else:
-                    logger.warning(f"位置数据无效，重新查询位置 ({self._position_query_retry_count}/{self._max_position_query_retries}): {position_data}")
                     self.position_query()
-            else:
-                self._position_query_retry_count = 0
-                self._execute_retract(position_data)
-        # 2. 处理方向键移动任务
-        elif self._pending_move_task:
+                return
+
+            self._position_query_retry_count = 0
+            self._execute_retract(position_data)
+            return
+
+        if self._active_position_wait:
+            self._handle_position_wait_update(position_data)
+            return
+
+        if self._pending_move_task:
             self._execute_move_task(position_data)
 
     def _execute_retract(self, position_data: tuple) -> None:
-        """执行反向移动"""
         axis = self._pending_retract_axis
         if not axis:
             return
 
         self._pending_retract_axis = None
+        self._self_detect_completed = False
 
-        # 反向移动距离（mm）
-        RETRACT_MM = 0.3
-        # Z轴换算公式：1000脉冲 = 0.62mm，即 1mm = 1000/0.62 ≈ 1612.9脉冲
-        # X轴换算公式：10000脉冲 = 25mm，即 1mm = 400脉冲
-        if axis == 'X':
-            retract_pulse = int(RETRACT_MM * 400)
-        elif axis == 'X-':
-            retract_pulse = int(RETRACT_MM * 400)
-        elif axis == 'Z':
-            retract_pulse = int(RETRACT_MM * 1000 / 0.62)
+        retract_mm = max(0.0, self.config.retract_distance)
+        if axis in {"X", "X-"}:
+            retract_pulse = int(retract_mm * X_AXIS_PULSES_PER_MM)
+        elif axis == "Z":
+            retract_pulse = int(retract_mm * Z_AXIS_PULSES_PER_MM)
         else:
+            self._work_state = WorkState.IDLE
+            self._end_async_command_lock()
             return
 
-        with self.command_lock():
-            if axis == 'X':
-                current_x = int(position_data[0])
-                target_x = current_x - retract_pulse
-                logger.info(f"执行X轴反向移动: X={current_x} -> {target_x}, 脉冲={retract_pulse}")
-                self.move_x(target_x)
-            elif axis == 'X-':
-                current_x = int(position_data[0])
-                target_x = current_x + retract_pulse
-                logger.info(f"执行X轴正向移动: X={current_x} -> {target_x}, 脉冲={retract_pulse}")
-                self.move_x(target_x)
-            elif axis == 'Z':
-                current_z = int(position_data[1])
-                target_z = current_z - retract_pulse
-                logger.info(f"执行Z轴反向移动: Z={current_z} -> {target_z}, 脉冲={retract_pulse}")
-                self.move_z(target_z)
+        if axis == "X":
+            current_x = int(position_data[0])
+            self.move_x(current_x - retract_pulse)
+        elif axis == "X-":
+            current_x = int(position_data[0])
+            self.move_x(current_x + retract_pulse)
+        elif axis == "Z":
+            current_z = int(position_data[1])
+            self.move_z(current_z - retract_pulse)
+
+        self._work_state = WorkState.IDLE
+        self._end_async_command_lock()
 
     def _execute_move_task(self, position_data: tuple) -> None:
-        """执行方向键移动任务"""
-        axis, direction, distance_mm = self._pending_move_task
-        if not axis:
+        if not self._pending_move_task:
             return
 
-        # 检查位置数据有效性
+        axis, direction, distance_mm = self._pending_move_task
         if position_data[0] is None or position_data[1] is None:
-            logger.warning(f"位置数据无效，跳过移动任务: {position_data}")
+            logger.warning(f"Invalid position data, skip move task: {position_data}")
             self._pending_move_task = None
             return
 
         self._pending_move_task = None
 
-        # Z轴换算公式：1000脉冲 = 0.62mm，即 1mm = 1000/0.62 ≈ 1612.9脉冲
-        # X轴换算公式：10000脉冲 = 25mm，即 1mm = 400脉冲
-        if axis == 'Z':
+        if axis == "Z":
             distance_pulse = int(distance_mm * 1000 / 0.62)
-        elif axis == 'X':
+        elif axis == "X":
             distance_pulse = int(distance_mm * 400)
         else:
-            logger.error(f"未知轴类型: {axis}")
+            logger.error(f"Unknown axis: {axis}")
             return
 
         with self.command_lock():
-            if axis == 'X':
+            if axis == "X":
                 current_x = int(position_data[0])
-                target_x = current_x + direction * distance_pulse
-                logger.info(f"X轴移动: {current_x} -> {target_x}")
-                self.move_x(target_x)
-            elif axis == 'Z':
+                self.move_x(current_x + direction * distance_pulse)
+            elif axis == "Z":
                 current_z = int(position_data[1])
-                target_z = current_z + direction * distance_pulse
-                logger.info(f"Z轴移动: {current_z} -> {target_z}")
-                self.move_z(target_z)
+                self.move_z(current_z + direction * distance_pulse)
 
     def set_move_task(self, axis: str, direction: int, distance_mm: float) -> None:
-        """
-        设置方向键移动任务（measure_window.py调用）
-
-        Args:
-            axis: 'X' 或 'Z'
-            direction: +1 或 -1（移动方向）
-            distance_mm: 距离值（mm）
-        """
+        if self._movement_sequence or self._self_detect_axis or self._pending_retract_axis or self._active_position_wait:
+            logger.warning("Manual move skipped: another serial operation is running.")
+            return
         self._pending_move_task = (axis, direction, distance_mm)
 
     def position_query(self) -> None:
-        """发送位置查询命令"""
-        if self._offset_calibrating:
+        if self._offset_calibrating or self._position_query_in_flight:
             return
         if self.send_data("?XZ~"):
+            self._position_query_in_flight = True
             self.data_process.signal_position_data_process.emit()
 
     def counter_measurer(self) -> None:
-        """发送计数器测量命令"""
         logger.info("=" * 60)
-        logger.info(f"counter_measurer: [{time.time():.3f}] 开始执行")
-        # 清空队列，确保之前的数据不会干扰
+        logger.info(f"counter_measurer: [{time.time():.3f}] start")
         self.data_process.clear_data_queue()
-        logger.info(f"counter_measurer: [{time.time():.3f}] 队列已清空")
-        command = "K3~" # 3秒测量
+        command = "K3~"
         result = self.send_data(command)
-        logger.info(f"counter_measurer: [{time.time():.3f}] 发送命令 {command}, 结果={result}")
-        # 等待0.2秒让任何正在等待的process_position_data完成超时退出
-        # 使用QTimer.singleShot避免阻塞Qt事件循环
-        logger.info(f"counter_measurer: [{time.time():.3f}] 延迟0.2秒后触发数据处理信号")
+        logger.info(f"counter_measurer: [{time.time():.3f}] send {command}, result={result}")
         QTimer.singleShot(200, self._emit_offset_process_signal)
 
     def _emit_offset_process_signal(self) -> None:
-        """延迟发射偏置处理信号"""
-        logger.info(f"counter_measurer: [{time.time():.3f}] 触发数据处理信号，当前队列大小={self.data_process.data_queue.qsize()}")
+        logger.info(
+            f"counter_measurer: [{time.time():.3f}] trigger offset process, queue_size={self.data_process.data_queue.qsize()}"
+        )
         self.data_process.signal_offset_data_process.emit()
-        logger.info(f"counter_measurer: [{time.time():.3f}] 完成，等待处理完成信号...")
 
     def slider_reset(self) -> None:
-        """发送滑台复位命令"""
         self.send_data("I~")
 
     def move_x(self, position: int) -> bool:
-        """发送X轴移动命令"""
         return self.send_data(f"X{position}~")
 
     def move_z(self, position: int) -> bool:
-        """发送Z轴移动命令"""
         return self.send_data(f"Z{position}~")
 
     def execute_movement_scheme(self, steps: list, target_x: int, target_z: int) -> bool:
-        """
-        执行自定义移动方案
-
-        Args:
-            steps: 动作步骤列表，如 ["X", "Z"] 或 ["X", "X+", "Z", "X"]
-            target_x: X轴目标位置
-            target_z: Z轴目标位置
-
-        Returns:
-            bool: 是否全部执行成功
-        """
-        x_offset_pulse = self.config.get_inner_x_offset_pulse()
-        z_offset_pulse = self.config.get_inner_z_offset_pulse()
-
-        for step in steps:
-            if step == 'X':
-                self.move_x(target_x)
-                if not self._wait_position_reached('X', target_x):
-                    logger.warning(f"X轴移动到{target_x}超时")
-                    return False
-            elif step == 'Z':
-                self.move_z(target_z)
-                if not self._wait_position_reached('Z', target_z):
-                    logger.warning(f"Z轴移动到{target_z}超时")
-                    return False
-            elif step == 'X+':
-                # X正偏移 = 当前X + 偏移量
-                current_x = self._current_x if self._current_x is not None else target_x
-                target = current_x + x_offset_pulse
-                self.move_x(target)
-                if not self._wait_position_reached('X', target):
-                    logger.warning(f"X轴正偏移({self.config.inner_x_offset}mm)移动到{target}超时")
-                    return False
-            elif step == 'X-':
-                # X负偏移 = 当前X - 偏移量
-                current_x = self._current_x if self._current_x is not None else target_x
-                target = current_x - x_offset_pulse
-                self.move_x(target)
-                if not self._wait_position_reached('X', target):
-                    logger.warning(f"X轴负偏移({self.config.inner_x_offset}mm)移动到{target}超时")
-                    return False
-            elif step == 'Z+':
-                # Z正偏移
-                current_z = self._current_z if self._current_z is not None else target_z
-                target = current_z + z_offset_pulse
-                self.move_z(target)
-                if not self._wait_position_reached('Z', target):
-                    logger.warning(f"Z轴正偏移({self.config.inner_z_offset}mm)移动到{target}超时")
-                    return False
-            elif step == 'Z-':
-                # Z负偏移
-                current_z = self._current_z if self._current_z is not None else target_z
-                target = current_z - z_offset_pulse
-                self.move_z(target)
-                if not self._wait_position_reached('Z', target):
-                    logger.warning(f"Z轴负偏移({self.config.inner_z_offset}mm)移动到{target}超时")
-                    return False
-        return True
+        return self._start_movement_sequence("movement scheme", steps, target_x, target_z)
 
     def suspend_position(self) -> None:
-        """挂起操作 - 移动到保存的挂起位置坐标"""
-        logger.info("执行挂起操作")
-
-        with self.command_lock():
-            test_type = self.config.test_type
-            scheme = self.config.get_active_suspend_scheme(test_type)
-            target_x = self.config.suspend_x
-            target_z = self.config.suspend_z
-            logger.info(f"移动到挂起位置: X={target_x}, Z={target_z}, 步骤={scheme['steps']}")
-
-            success = self.execute_movement_scheme(scheme['steps'], target_x, target_z)
-            if not success:
-                logger.warning("挂起位置移动未全部完成")
+        logger.info("Execute suspend position movement.")
+        test_type = self.config.test_type
+        scheme = self.config.get_active_suspend_scheme(test_type)
+        target_x = self.config.suspend_x
+        target_z = self.config.suspend_z
+        self._start_movement_sequence("suspend position", scheme["steps"], target_x, target_z)
 
     def test_position(self) -> None:
-        """测试位置 - 移动到保存的测试位置坐标"""
-        logger.info("执行测试位置操作")
-
-        with self.command_lock():
-            test_type = self.config.test_type
-            scheme = self.config.get_active_test_scheme(test_type)
-            target_x = self.config.test_x
-            target_z = self.config.test_z
-            logger.info(f"移动到测试位置: X={target_x}, Z={target_z}, 步骤={scheme['steps']}")
-
-            success = self.execute_movement_scheme(scheme['steps'], target_x, target_z)
-            if not success:
-                logger.warning("测试位置移动未全部完成")
+        logger.info("Execute test position movement.")
+        test_type = self.config.test_type
+        scheme = self.config.get_active_test_scheme(test_type)
+        target_x = self.config.test_x
+        target_z = self.config.test_z
+        self._start_movement_sequence("test position", scheme["steps"], target_x, target_z)
 
     def offset_calibration(self) -> None:
-        """偏置校准"""
-        logger.info("=== 开始执行偏置校准 ===")
-        # 设置偏置校准标志（both serial_command and data_process）
+        logger.info("Start offset calibration.")
         self._offset_calibrating = True
         self.data_process._offset_calibrating = True
         self.counter_measurer()
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
-        """
-        偏置校准完成回调 - 清除偏置校准标志
-
-        Args:
-            success: 校准是否成功
-        """
         self._offset_calibrating = False
         self.data_process._offset_calibrating = False
+        logger.info(f"Offset calibration finished: success={success}")

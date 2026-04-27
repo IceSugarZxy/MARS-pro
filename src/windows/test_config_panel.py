@@ -4,9 +4,7 @@
 """
 
 import os
-from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
-                              QGroupBox, QGridLayout, QComboBox, QToolButton)
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QComboBox, QToolButton, QDoubleSpinBox
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
@@ -34,10 +32,8 @@ class TestConfigPanel(QWidget):
         # 连接按钮事件
         self._connect_buttons()
 
-        # 初始化位置查询定时器
-        self._position_query_timer = QTimer()
-        self._position_query_timer.setInterval(500)  # 500ms查询一次
-        self._position_query_timer.timeout.connect(self._on_position_query_timer)
+        # 初始化快捷操作配置
+        self._init_quick_action_settings()
 
         # 偏置校准对话框
         self._offset_dialog = None
@@ -53,9 +49,7 @@ class TestConfigPanel(QWidget):
             tm.data_process.signal_position_data_process_finished.connect(self._on_position_data_updated)
             # 连接偏置校准完成信号
             tm.data_process.signal_offset_data_process_finished.connect(self._on_offset_calibration_finished)
-            # 启动位置查询定时器
-            self._position_query_timer.start()
-            logger.info("测试配置面板已启动位置查询定时器")
+            logger.info("测试配置面板已绑定线程管理器，位置查询由 SerialCommand 管理")
 
         # 加载保存的配置值
         self._load_saved_positions()
@@ -184,23 +178,21 @@ class TestConfigPanel(QWidget):
         self.findChild(QToolButton, "btn_test_edit_scheme").clicked.connect(self._on_edit_test_scheme)
         self.findChild(QToolButton, "btn_suspend_edit_scheme").clicked.connect(self._on_suspend_edit_scheme)
 
-    def _on_position_query_timer(self):
-        """定时器触发位置查询"""
-        import time
-        t = time.time()
-        if self.serial_command and self.thread_manager:
-            if self.thread_manager.serial_manager.get_connection_status():
-                # 只在命令锁未锁定且不在偏置校准时发送查询
-                if not self.serial_command._command_lock and not self.serial_command._offset_calibrating and not self.serial_command._is_measuring:
-                    logger.debug(f"[{t:.3f}] _on_position_query_timer: 发送位置查询")
-                    self.serial_command.send_data("?XZ~")
-                    # 触发数据处理信号
-                    self.thread_manager.data_process.signal_position_data_process.emit()
-                else:
-                    logger.debug(f"[{t:.3f}] _on_position_query_timer: 跳过 (_command_lock={self.serial_command._command_lock}, _offset_calibrating={self.serial_command._offset_calibrating}, _is_measuring={self.serial_command._is_measuring})")
-            else:
-                # 未连接时显示 --
-                self.update_position("--", "--")
+    def _init_quick_action_settings(self):
+        """初始化快捷操作配置"""
+        config = get_config_manager()
+        retract_spin = self.findChild(QDoubleSpinBox, "spin_retract_distance")
+        if retract_spin:
+            retract_spin.blockSignals(True)
+            retract_spin.setValue(config.retract_distance)
+            retract_spin.blockSignals(False)
+            retract_spin.valueChanged.connect(self._on_retract_distance_changed)
+
+    def _on_retract_distance_changed(self, value):
+        """更新贴靠回弹距离"""
+        config = get_config_manager()
+        config.retract_distance = value
+        logger.info(f"贴靠回弹距离已更新: {value:.2f} mm")
 
     def _on_position_data_updated(self, position_data):
         """位置数据更新"""
@@ -220,7 +212,7 @@ class TestConfigPanel(QWidget):
         """偏置校准"""
         if self.serial_command:
             # 停止位置查询定时器，防止干扰偏置校准
-            self._position_query_timer.stop()
+            self.serial_command.disable_position_query_timer()
             logger.info("偏置校准：位置查询定时器已停止")
 
             # 显示校准对话框
@@ -236,7 +228,8 @@ class TestConfigPanel(QWidget):
         """偏置校准完成"""
         logger.info(f"偏置校准完成: success={success}")
         # 重新启动位置查询定时器
-        self._position_query_timer.start()
+        if self.serial_command:
+            self.serial_command.enable_position_query_timer()
         logger.info("偏置校准完成：位置查询定时器已重启")
         if self._offset_dialog:
             config = get_config_manager()
