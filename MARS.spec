@@ -2,7 +2,8 @@
 import sys
 import os
 
-SPEC_DIR = os.path.dirname(os.path.abspath(__file__))
+SPEC_FILE = globals().get('__file__', os.path.join(os.getcwd(), 'MARS.spec'))
+SPEC_DIR = os.path.dirname(os.path.abspath(SPEC_FILE))
 
 block_cipher = None
 
@@ -13,7 +14,6 @@ hiddenimports = [
     'PyQt5.QtGui',
     'PyQt5.QtWidgets',
     'PyQt5.QtSerialPort',
-    'PyQt5.QtSerialPort.QSerialPortInfo',
     'pyqtgraph',
     'numpy',
     'scipy',

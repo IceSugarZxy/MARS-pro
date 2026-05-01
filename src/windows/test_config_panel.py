@@ -4,6 +4,7 @@
 """
 
 import os
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QComboBox, QToolButton, QDoubleSpinBox
 from PyQt5 import uic
 from core.logger import get_logger
@@ -46,9 +47,15 @@ class TestConfigPanel(QWidget):
         if tm:
             self.serial_command = tm.serial_command
             # 连接位置数据处理完成信号
-            tm.data_process.signal_position_data_process_finished.connect(self._on_position_data_updated)
+            tm.data_process.signal_position_data_process_finished.connect(
+                self._on_position_data_updated,
+                Qt.QueuedConnection,
+            )
             # 连接偏置校准完成信号
-            tm.data_process.signal_offset_data_process_finished.connect(self._on_offset_calibration_finished)
+            tm.data_process.signal_offset_data_process_finished.connect(
+                self._on_offset_calibration_finished,
+                Qt.QueuedConnection,
+            )
             logger.info("测试配置面板已绑定线程管理器，位置查询由 SerialCommand 管理")
 
         # 加载保存的配置值

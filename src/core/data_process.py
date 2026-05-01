@@ -28,6 +28,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import get_logger
 from .config_manager import get_config_manager
+from .path_utils import get_data_dir
 
 logger = get_logger('DataProcess')
 
@@ -39,9 +40,11 @@ FULL_ROTATION_ANGLE = 540 - 1.75  # 一圈半的角度（度）
 ANGLE_RESOLUTION = FULL_ROTATION_ANGLE / FULL_ROTATION_DATA_POINTS  # 角度分辨率（度/数据点），约0.001326530612
 START_OFFSET = int(FULL_ROTATION_DATA_POINTS * 90 / FULL_ROTATION_ANGLE)  # 90度对应的数据偏移 = 67840
 POINTS_FOR_360 = int(FULL_ROTATION_DATA_POINTS * 360 / FULL_ROTATION_ANGLE)  # 360度对应的数据点数
+PROGRESS_EMIT_INTERVAL_SECONDS = 1.0 / 16.0
 
 
 class DataProcess(QObject):
+    signal_measure_analysis_finished = pyqtSignal(object, object, object)
     """
     数据处理管理器
 
@@ -82,6 +85,8 @@ class DataProcess(QObject):
             data_queue: 共享队列，用于与SerialManager交换数据
         """
         super().__init__()
+        from windows.wave_analysis import WaveAnalysis
+
         self.data_queue = data_queue
         self.config = get_config_manager()
 
@@ -90,6 +95,7 @@ class DataProcess(QObject):
 
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
+        self.enable_concentricity_calibration: bool = True
 
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
@@ -102,6 +108,7 @@ class DataProcess(QObject):
 
         # 样品信息：用于保存测量数据时写入文件
         self._sample_info: dict = {}
+        self._wave_analyzer = WaveAnalysis()
 
         logger.info(f"初始化数据处理模块完成：√")
 
@@ -147,6 +154,29 @@ class DataProcess(QObject):
             样品信息字典副本
         """
         return self._sample_info.copy()
+
+    def _emit_measurement_results(self, measure_list: List[float]) -> None:
+        """Persist measurement data and emit processed results."""
+        if not measure_list:
+            return
+
+        logger.info(f"娴嬮噺鏁版嵁鎺ユ敹瀹屾垚锛屽叡 {len(measure_list)} 涓暟鎹偣")
+        self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
+        self.save_raw_measure_data(measure_list)
+
+        if self.measure_type == "vertical":
+            angle_data = list(range(len(measure_list)))
+            mag_data = measure_list
+            analysis_results = None
+        else:
+            angle_data, mag_data = self._process_measure_algorithm(measure_list)
+            analysis_results = self._wave_analyzer.analyze_waveform(
+                angle_data,
+                mag_data,
+                self.enable_concentricity_calibration,
+            )
+
+        self.signal_measure_analysis_finished.emit(angle_data, mag_data, analysis_results)
 
     # ========================================================================
     # 滤波与数据预处理
@@ -332,138 +362,79 @@ class DataProcess(QObject):
     # ========================================================================
 
     def process_measure_data(self) -> None:
-        """
-        处理测量数据
+        """Collect raw measurement bytes and emit processed results."""
+        logger.info("========== Start processing measurement data ==========")
+        logger.info(f"Measurement type: {self.measure_type}")
+        logger.info(f"Current offset: {self.mag_offset}")
 
-        从队列中读取串口返回的磁场测量数据，进行解析和处理。
-
-        数据格式：
-        - 原始数据为2字节无符号整数（HEX格式）
-        - 每两个字节组成一个测量值
-
-        处理流程：
-        1. 循环读取数据，直到连续4次（每次0.5秒）无新数据
-        2. 将HEX值转换为物理单位
-        3. 根据测量类型进行后续处理
-        4. 保存原始数据到CSV文件
-
-        Note:
-            - 旋转测量：调用算法处理，提取360度数据
-            - 垂直测量：直接返回原始数据
-        """
-        logger.info("========== 开始处理测量数据 ==========")
-        logger.info(f"测量类型: {self.measure_type}")
-        logger.info(f"当前偏置值: {self.mag_offset}")
-
-        # 重置停止标志
         self._stop_measure_processing = False
 
         try:
-            temp_buffer = bytearray()      # 临时缓冲区
-            measure_list: List[float] = []  # 测量值列表
-            no_data_count = 0              # 连续无数据计数
+            temp_buffer = bytearray()
+            measure_list: List[float] = []
+            no_data_count = 0
+            last_progress_emit_time = 0.0
 
-            MAX_EMPTY_COUNT = 4  # 最大空队列计数（2秒）
+            max_empty_count = 4
             while True:
-                # 检查停止标志
                 if self._stop_measure_processing:
-                    logger.info("检测到停止标志，中途结束处理")
-                    if len(measure_list) > 0:
-                        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
-                        # 保存原始数据到CSV
-                        self.save_raw_measure_data(measure_list)
-                        # 根据测量类型处理数据
-                        if self.measure_type == "vertical":
-                            angle_data = list(range(len(measure_list)))
-                            mag_data = measure_list
-                        else:
-                            angle_data, mag_data = self._process_measure_algorithm(measure_list)
-                        # 发出完成信号
-                        self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                    logger.info("Measurement processing stopped by request")
+                    if measure_list:
+                        logger.info(f"Measurement data collection completed: {len(measure_list)} points")
+                        self._emit_measurement_results(measure_list)
                     break
 
-                # ============================================================
-                # 处理缓冲区中的已有数据
-                # ============================================================
                 if len(temp_buffer) >= 2:
-                    # 计算可以处理的数据组数（每2字节为一组）
                     group_count = len(temp_buffer) // 2
-                    # 每批处理最多100组，避免一次处理过多
                     batch_size = min(group_count, 100)
 
                     for i in range(batch_size):
-                        # 读取两个字节组成一个测量值
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
-                        # 合并为16位无符号整数
                         hex_value = (byte1 << 8) | byte2
-                        # 转换为磁场强度（mT）并减去偏置
                         mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
                         measure_list.append(mag_value)
 
-                    # 已处理的数据从缓冲区删除
                     del temp_buffer[0:batch_size * 2]
-                    # 发出进度信号，用于更新UI (当前数据量, 期望总数据量)
-                    self.signal_measure_data_progress.emit(len(measure_list), FULL_ROTATION_DATA_POINTS)
 
-                # ============================================================
-                # 获取新数据
-                # ============================================================
+                    current_time = time.time()
+                    if current_time - last_progress_emit_time >= PROGRESS_EMIT_INTERVAL_SECONDS:
+                        self.signal_measure_data_progress.emit(
+                            len(measure_list),
+                            FULL_ROTATION_DATA_POINTS,
+                        )
+                        last_progress_emit_time = current_time
+
                 if len(temp_buffer) < 2:
                     try:
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
-                        no_data_count = 0  # 重置空计数
+                        no_data_count = 0
                         continue
                     except queue.Empty:
-                        # 连续无数据，增加计数
                         no_data_count += 1
                         time.sleep(0.5)
 
-                        # 检查停止标志
                         if self._stop_measure_processing:
-                            logger.info("停止标志触发，中途结束处理")
-                            if len(measure_list) > 0:
-                                logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
-                                self.save_raw_measure_data(measure_list)
-                                if self.measure_type == "vertical":
-                                    angle_data = list(range(len(measure_list)))
-                                    mag_data = measure_list
-                                else:
-                                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
-                                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
+                            logger.info("Measurement processing stopped by request while waiting for data")
+                            if measure_list:
+                                logger.info(f"Measurement data collection completed: {len(measure_list)} points")
+                                self._emit_measurement_results(measure_list)
                             break
 
-                        # MAX_EMPTY_COUNT次无数据则认为测量完成
-                        if no_data_count >= MAX_EMPTY_COUNT:
-                            logger.warning(f"超时停止，已连续 {no_data_count} 次队列为空")
-                            if len(measure_list) > 0:
-                                logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
-                                # 保存原始数据到CSV
-                                self.save_raw_measure_data(measure_list)
-
-                                # 根据测量类型处理数据
-                                if self.measure_type == "vertical":
-                                    # 垂直测量：直接返回原始数据
-                                    angle_data = list(range(len(measure_list)))
-                                    mag_data = measure_list
-                                else:
-                                    # 旋转测量：调用算法处理
-                                    angle_data, mag_data = self._process_measure_algorithm(measure_list)
-
-                                # 发出完成信号
-                                self.signal_measure_data_process_finished.emit(angle_data, mag_data)
-                                break
+                        if no_data_count >= max_empty_count:
+                            logger.warning(
+                                f"Measurement receive timeout after {no_data_count} empty polls"
+                            )
+                            if measure_list:
+                                logger.info(f"Measurement data collection completed: {len(measure_list)} points")
+                                self._emit_measurement_results(measure_list)
                             else:
-                                logger.warning("未读取到有效测量数据")
-                                break
+                                logger.warning("No valid measurement data received")
+                            break
 
         except Exception as e:
-            logger.error(f"处理测量数据时发生错误: {e}", exc_info=True)
-
-    # ========================================================================
-    # 偏置数据处理
-    # ========================================================================
+            logger.error(f"Error while processing measurement data: {e}", exc_info=True)
 
     def process_offset_data(self) -> None:
         """
@@ -650,9 +621,7 @@ class DataProcess(QObject):
             文件路径，保存失败返回None
         """
         try:
-            # 项目根目录/data/raw_data
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            raw_data_dir = os.path.join(project_root, "data", "raw_data")
+            raw_data_dir = get_data_dir("raw_data")
 
             # 创建目录（如果不存在）
             if not os.path.exists(raw_data_dir):
@@ -704,9 +673,7 @@ class DataProcess(QObject):
             文件路径，保存失败返回None
         """
         try:
-            # 项目根目录/data/plot_data
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            plot_data_dir = os.path.join(project_root, "data", "plot_data")
+            plot_data_dir = get_data_dir("plot_data")
 
             # 创建目录（如果不存在）
             if not os.path.exists(plot_data_dir):
@@ -731,6 +698,7 @@ class DataProcess(QObject):
                     writer.writerow(['样品编号', self._sample_info.get('sample_code', '')])
                     writer.writerow(['材料', self._sample_info.get('material', '')])
                     writer.writerow(['极数', self._sample_info.get('polar_num', '')])
+                    writer.writerow(['气隙', self._sample_info.get('airgap', '')])
                     writer.writerow(['备注', self._sample_info.get('remark', '')])
                     writer.writerow(['线圈编号', self._sample_info.get('coil_code', '')])
                     writer.writerow(['保存时间', current_time])

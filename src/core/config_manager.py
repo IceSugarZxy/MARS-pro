@@ -9,6 +9,7 @@ import json
 from typing import Optional, Dict, Any, List
 from PyQt5.QtCore import QObject, pyqtSignal
 import logging
+from .path_utils import get_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +120,7 @@ class ConfigManager(QObject):
         super().__init__()
         # 使用相对于模块文件的路径，确保无论从哪里运行都能找到配置文件
         if not os.path.isabs(config_file):
-            module_dir = os.path.dirname(os.path.abspath(__file__))
-            config_file = os.path.join(os.path.dirname(module_dir), config_file)
+            config_file = get_config_path(config_file)
         self.config_file = config_file
         self._config: Dict[str, str] = {}
         self.load()

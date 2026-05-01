@@ -40,7 +40,6 @@ class SerialPanel(QWidget):
         self._port_refresh_timer = QTimer(self)
         self._port_refresh_timer.setInterval(2000)
         self._port_refresh_timer.timeout.connect(self._refresh_ports)
-        self._port_refresh_timer.start()
 
         self._refresh_ports()
         self._apply_serial_settings_to_ui(self._get_serial_settings_from_config())
@@ -149,6 +148,24 @@ class SerialPanel(QWidget):
         )
         return True
 
+    def _set_port_refresh_enabled(self, enabled: bool) -> None:
+        if enabled:
+            if not self._port_refresh_timer.isActive():
+                self._port_refresh_timer.start()
+            self._refresh_ports()
+            return
+
+        if self._port_refresh_timer.isActive():
+            self._port_refresh_timer.stop()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._set_port_refresh_enabled(True)
+
+    def hideEvent(self, event):
+        self._set_port_refresh_enabled(False)
+        super().hideEvent(event)
+
     def _refresh_ports(self):
         port_combo = self.findChild(QComboBox, "port_combo")
         if port_combo is None:
@@ -238,6 +255,8 @@ class SerialPanel(QWidget):
 
     def _on_data_received(self, data: bytes):
         try:
+            if not self.isVisible():
+                return
             receive_text = self.findChild(QTextEdit, "receive_text")
             if receive_text:
                 receive_text.append(data.decode("utf-8", errors="replace"))

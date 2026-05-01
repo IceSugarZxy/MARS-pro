@@ -65,7 +65,8 @@ class MainApplication:
                 self.main_panel.update_serial_status, Qt.QueuedConnection
             )
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
-                lambda pos: self.main_panel.update_position(pos[0], pos[1])
+                self.main_panel.update_position_from_tuple,
+                Qt.QueuedConnection
             )
             # 连接位置数据处理信号
             self.thread_manager.data_process.signal_position_data_process.connect(
@@ -76,7 +77,8 @@ class MainApplication:
             )
             # 连接位置数据处理完成信号 - 更新serial_command当前位置
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
-                self.thread_manager.serial_command._on_position_data_processed
+                self.thread_manager.serial_command._on_position_data_processed,
+                Qt.QueuedConnection
             )
             self.thread_manager.data_process.signal_self_detect_finished.connect(
                 self.thread_manager.serial_command._on_self_detect_finished

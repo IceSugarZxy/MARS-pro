@@ -8,7 +8,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
                               QDialog, QVBoxLayout, QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy)
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 from PyQt5 import uic
 import pyqtgraph as pg
 from pyqtgraph import mkPen
@@ -23,6 +23,33 @@ from windows.offset_calibration_dialog import OffsetCalibrationDialog
 logger = get_logger('MeasurePanel')
 
 STATUS_AUTO_RECOVER_MS = 2000
+RESULT_FIELD_DEFAULTS = {
+    "n_max_edit": "0.00",
+    "n_min_edit": "0.00",
+    "n_mean_edit": "0.00",
+    "s_max_edit": "0.00",
+    "s_min_edit": "0.00",
+    "s_mean_edit": "0.00",
+    "n_error_edit": "0.00",
+    "s_error_edit": "0.00",
+    "ns_2_edit": "0.00",
+    "n_interval_max_edit": "0.00",
+    "n_interval_min_edit": "0.00",
+    "n_interval_mean_edit": "0.00",
+    "n_interval_error_edit": "0.00",
+    "s_interval_max_edit": "0.00",
+    "s_interval_min_edit": "0.00",
+    "s_interval_mean_edit": "0.00",
+    "s_interval_error_edit": "0.00",
+    "n_area_edit": "0.00",
+    "s_area_edit": "0.00",
+    "ns_area_edit": "0.00",
+    "single_polar_mean_edit": "0.00",
+    "single_polar_error_edit": "0.00",
+    "polar_error_sum_edit": "0.00",
+    "thd_error_edit": "0.00",
+    "polar_num_edit": "--",
+}
 
 
 class MeasurePanel(QWidget):
@@ -53,6 +80,7 @@ class MeasurePanel(QWidget):
         # 初始化波形分析数据
         self.angle_data = []
         self.mag_data = []
+        self.analysis_results = None
 
         # 初始化波形分析器
         self.wave_analyzer = WaveAnalysis()
@@ -417,23 +445,25 @@ class MeasurePanel(QWidget):
 
     def _reset_sample_inputs(self):
         """重置样品信息"""
-        self.findChild(QLineEdit, "sample_name_edit").setText("测试样品")
-        self.findChild(QLineEdit, "sample_code_edit").setText("")
-        self.findChild(QLineEdit, "airgap_edit").setText("--")
-        self.findChild(QLineEdit, "remark_edit").setText("测试备注")
-        self._update_display_defaults()
+        sample_name_edit = self.findChild(QLineEdit, "sample_name_edit")
+        if sample_name_edit and not sample_name_edit.text().strip():
+            sample_name_edit.setText("测试样品")
+
+        polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
+        if polar_num_edit:
+            polar_num_edit.setText("--")
 
     def _update_display_defaults(self):
         """更新显示默认值"""
-        for name in ["n_max_edit", "n_min_edit", "n_mean_edit", "s_max_edit", "s_min_edit",
-                     "s_mean_edit", "ns_2_edit", "single_polar_mean_edit", "single_polar_error_edit"]:
+        for name, default_value in RESULT_FIELD_DEFAULTS.items():
             edit = self.findChild(QLineEdit, name)
             if edit:
-                edit.setText("0.00")
+                edit.setText(default_value)
 
     def _reset_test_interface(self):
         """重置测试界面"""
         logger.info("重置测试界面")
+        self.analysis_results = None
         self._update_display_defaults()
         self.clear_plot()
         self.angle_data = []
@@ -478,12 +508,15 @@ class MeasurePanel(QWidget):
 
     def _collect_sample_info_from_ui(self) -> dict:
         """收集样品信息"""
+        airgap = self.findChild(QLineEdit, "airgap_edit").text().strip()
+        polar_num = self.findChild(QLineEdit, "polar_num_edit").text().strip()
         return {
             'sample_name': self.findChild(QLineEdit, "sample_name_edit").text().strip(),
             'sample_code': self.findChild(QLineEdit, "sample_code_edit").text().strip(),
-            'airgap': self.findChild(QLineEdit, "airgap_edit").text().strip(),
+            'airgap': "" if airgap == "--" else airgap,
             'remark': self.findChild(QLineEdit, "remark_edit").text().strip(),
-            'polar_num': self.findChild(QLineEdit, "polar_num_edit").text().strip(),
+            'polar_num': "" if polar_num == "--" else polar_num,
+            'tester': self.findChild(QLineEdit, "tester_edit").text().strip(),
         }
 
     def update_plot_data(self, angle_data=None, mag_data=None, color='r'):
@@ -498,29 +531,23 @@ class MeasurePanel(QWidget):
 
     def save_plot_data(self):
         """保存数据"""
-        import time
         try:
             if len(self.angle_data) == 0 or len(self.mag_data) == 0:
                 return False
 
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            save_dir = os.path.join(project_root, "data", "plot_data")
-            os.makedirs(save_dir, exist_ok=True)
+            if not self.data_process:
+                logger.error("保存失败：数据处理器未初始化")
+                return False
 
-            sample_name = self.findChild(QLineEdit, "sample_name_edit").text().strip()
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"{sample_name}_{timestamp}.csv"
-            file_path = os.path.join(save_dir, filename)
-
-            import csv
-            with open(file_path, 'w', encoding='utf-8', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(["样品名称", sample_name])
-                writer.writerow(["保存时间", timestamp])
-                writer.writerow([])
-                writer.writerow(["角度(度)", "磁场强度"])
-                for angle, mag in zip(self.angle_data, self.mag_data):
-                    writer.writerow([f"{angle:.6f}", f"{mag:.5f}"])
+            sample_info = self._collect_sample_info_from_ui()
+            self.data_process.set_sample_info(sample_info)
+            file_path = self.data_process.save_plot_measure_data(
+                self.angle_data,
+                self.mag_data,
+                self.analysis_results,
+            )
+            if not file_path:
+                return False
 
             logger.info(f"数据已保存: {file_path}")
             return True
@@ -533,91 +560,116 @@ class MeasurePanel(QWidget):
         logger.info("保存数据按钮被点击")
         self._update_status("正在保存数据...", auto_recover=True)
         success = self.save_plot_data()
-        self._update_status("数据保存成功" if success else "数据保存失败", is_error=not success)
+        self._update_status("数据保存成功" if success else "数据保存失败", is_error=not success, auto_recover=True)
 
     def set_thread_manager(self, tm):
-        """设置线程管理器"""
+        """Set thread manager."""
         self.thread_manager = tm
-        if tm:
-            self.serial_manager = tm.serial_manager
-            self.data_process = tm.data_process
-            self.serial_command = tm.serial_command
+        if not tm:
+            return
 
-            if hasattr(self.data_process, 'signal_measure_data_process_finished'):
-                self.data_process.signal_measure_data_process_finished.connect(self._on_measure_data_processed)
-            if hasattr(self.data_process, 'signal_measure_data_progress'):
-                self.data_process.signal_measure_data_progress.connect(self._on_measure_progress)
-            # 连接位置数据更新信号
-            if hasattr(tm.data_process, 'signal_position_data_process_finished'):
-                tm.data_process.signal_position_data_process_finished.connect(self._on_position_data_updated)
-            # 连接偏置校准完成信号
-            if hasattr(tm.data_process, 'signal_offset_data_process_finished'):
-                tm.data_process.signal_offset_data_process_finished.connect(self._on_offset_calibration_finished)
+        self.serial_manager = tm.serial_manager
+        self.data_process = tm.data_process
+        self.serial_command = tm.serial_command
+
+        if hasattr(self.data_process, "signal_measure_analysis_finished"):
+            self.data_process.signal_measure_analysis_finished.connect(
+                self._on_measure_data_processed,
+                Qt.QueuedConnection,
+            )
+        elif hasattr(self.data_process, "signal_measure_data_process_finished"):
+            self.data_process.signal_measure_data_process_finished.connect(
+                self._on_measure_data_processed_legacy,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(self.data_process, "signal_measure_data_progress"):
+            self.data_process.signal_measure_data_progress.connect(
+                self._on_measure_progress,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(tm.data_process, "signal_position_data_process_finished"):
+            tm.data_process.signal_position_data_process_finished.connect(
+                self._on_position_data_updated,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(tm.data_process, "signal_offset_data_process_finished"):
+            tm.data_process.signal_offset_data_process_finished.connect(
+                self._on_offset_calibration_finished,
+                Qt.QueuedConnection,
+            )
 
     def _on_position_data_updated(self, position_data):
-        """位置数据更新"""
+        """Update position display."""
         if position_data and len(position_data) >= 2:
             x, z = position_data[0], position_data[1]
             self._update_current_position_display(x, z)
 
     def _on_measure_progress(self, current, total):
-        """测量进度更新"""
+        """Update measurement progress."""
         if self.test_progress_dialog:
             progress = int((current / total) * 100) if total > 0 else 0
-            self.test_progress_dialog.set_progress(progress, "正在采集数据...")
+            status_text = "正在处理数据..." if total > 0 and current >= total else "正在采集数据..."
+            self.test_progress_dialog.set_progress(progress, status_text)
 
-    def _on_measure_data_processed(self, angle_data, mag_data):
-        """测量数据处理完成"""
+    def _on_measure_data_processed_legacy(self, angle_data, mag_data):
+        analysis_results = None
+        if angle_data and mag_data and self.data_process and self.data_process.measure_type != "vertical":
+            radio = self.findChild(QRadioButton, "radio_concentricity")
+            enable_concentricity = radio.isChecked() if radio else True
+            analysis_results = self.wave_analyzer.analyze_waveform(
+                angle_data,
+                mag_data,
+                enable_concentricity,
+            )
+        self._on_measure_data_processed(angle_data, mag_data, analysis_results)
+
+    @pyqtSlot(object, object, object)
+    def _on_measure_data_processed(self, angle_data, mag_data, analysis_results):
+        """Handle measurement processing completion."""
         logger.info("测量数据处理完成")
-        self.angle_data = angle_data
-        self.mag_data = mag_data
+        self.angle_data = angle_data or []
+        self.mag_data = mag_data or []
 
-        # 关闭进度对话框
         if self.test_progress_dialog:
-            if angle_data and mag_data:
-                self.test_progress_dialog.show_result(True, f"采集完成，共 {len(angle_data)} 个数据点")
+            if self.angle_data and self.mag_data:
+                self.test_progress_dialog.show_result(True, f"采集完成，共 {len(self.angle_data)} 个数据点")
             else:
                 self.test_progress_dialog.show_result(False, "未能获取有效数据")
 
-        if angle_data and mag_data:
-            self.update_plot_data(angle_data, mag_data, 'r')
+        if self.angle_data and self.mag_data:
+            self.update_plot_data(self.angle_data, self.mag_data, "r")
 
             if self.data_process.measure_type == "vertical":
-                # 垂直测量：直接完成
                 sample_info = self._collect_sample_info_from_ui()
                 self.data_process.set_sample_info(sample_info)
+                self.analysis_results = None
                 self._update_status("垂直测量完成")
             else:
-                # 旋转测量：进行波形分析
-                self._update_status("数据处理中...")
-                radio = self.findChild(QRadioButton, "radio_concentricity")
-                enable_concentricity = radio.isChecked() if radio else True
-                results = self.wave_analyzer.analyze_waveform(angle_data, mag_data, enable_concentricity)
-                self._update_display_with_results(results)
-
-                # 更新样品信息（包含分析后的极对数等）
+                self._update_display_with_results(analysis_results)
                 sample_info = self._collect_sample_info_from_ui()
-                sample_info['polar_num'] = results.get('pole_num', '') if results else ''
+                sample_info["polar_num"] = analysis_results.get("pole_num", "") if analysis_results else ""
                 self.data_process.set_sample_info(sample_info)
+                self._update_status(
+                    "测试完成" if analysis_results else "测试完成，但波形分析未返回有效结果",
+                    is_error=not bool(analysis_results),
+                )
 
-                self._update_status("测试完成")
-
-            # 只有在测试状态仍然为True时才调用_end_test
-            # （如果是通过取消按钮停止的，已经调用过_end_test了）
             if self.is_testing:
                 self._end_test()
-            # 延迟关闭进度对话框
             if self.test_progress_dialog:
-                QTimer.singleShot(1500, lambda: self._close_test_progress_dialog())
+                QTimer.singleShot(1500, self._close_test_progress_dialog)
         else:
             self._update_status("警告：处理后的数据为空", is_error=True)
             if self.is_testing:
                 self._end_test()
             if self.test_progress_dialog:
-                QTimer.singleShot(1500, lambda: self._close_test_progress_dialog())
+                QTimer.singleShot(1500, self._close_test_progress_dialog)
 
     def _close_test_progress_dialog(self):
-        """关闭测试进度对话框"""
+        """Close test progress dialog."""
         if self.test_progress_dialog:
             self.test_progress_dialog.close()
             self.test_progress_dialog = None
@@ -625,8 +677,10 @@ class MeasurePanel(QWidget):
     def _update_display_with_results(self, results):
         """更新显示结果"""
         if not results:
+            self.analysis_results = None
             return
         try:
+            self.analysis_results = dict(results)
             # N极/S极 基础值
             self.findChild(QLineEdit, "n_max_edit").setText(f"{results.get('N_max', 0):.2f}")
             self.findChild(QLineEdit, "n_min_edit").setText(f"{results.get('N_min', 0):.2f}")

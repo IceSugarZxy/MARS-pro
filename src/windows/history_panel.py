@@ -14,8 +14,64 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5 import uic
 from core.logger import get_logger
+from core.path_utils import get_data_dir
 
 logger = get_logger('HistoryPanel')
+
+
+def _read_plot_csv(file_path):
+    """Read saved plot CSV metadata and waveform data."""
+    sample_info = {}
+    angle_data = []
+    mag_data = []
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        rows = list(csv.reader(f))
+
+    data_started = False
+    for row in rows:
+        if len(row) >= 2 and "角度" in row[0] and "磁场" in row[1]:
+            data_started = True
+            continue
+
+        if not data_started:
+            if len(row) < 2:
+                continue
+
+            key = row[0].strip()
+            value = row[1].strip()
+            if "样品名称" in key:
+                sample_info['sample_name'] = value
+            elif "样品编号" in key:
+                sample_info['sample_code'] = value
+            elif "材料" in key:
+                sample_info['material'] = value
+            elif "线圈编号" in key:
+                sample_info['coil_code'] = value
+            elif "备注" in key:
+                sample_info['remark'] = value
+            elif "保存时间" in key:
+                sample_info['save_time'] = value
+            elif "极数" in key:
+                sample_info['polar_num'] = value
+            elif "气隙" in key:
+                sample_info['airgap'] = value
+            elif "测试员" in key:
+                sample_info['tester'] = value
+            elif "磁化条件" in key:
+                sample_info['mag_condition'] = value
+            elif "探头" in key:
+                sample_info['probe'] = value
+            continue
+
+        if len(row) >= 2 and row[0].strip():
+            try:
+                angle_data.append(float(row[0].strip()))
+                mag_data.append(float(row[1].strip()))
+            except (ValueError, IndexError):
+                continue
+
+    return sample_info, angle_data, mag_data
 
 
 class LoadHistoryThread(QThread):
@@ -46,41 +102,22 @@ class LoadHistoryThread(QThread):
                 except:
                     time_str = timestamp_str
 
-                # 读取CSV获取其他信息
-                polar_num = ""
-                airgap = ""
-                remark = ""
-                tester = ""
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if "极数" in line:
-                                parts = line.split(",")
-                                if len(parts) >= 2:
-                                    polar_num = parts[1].strip()
-                            elif "气隙" in line:
-                                parts = line.split(",")
-                                if len(parts) >= 2:
-                                    airgap = parts[1].strip()
-                            elif "备注" in line:
-                                parts = line.split(",")
-                                if len(parts) >= 2:
-                                    remark = parts[1].strip()
-                            elif "测试员" in line:
-                                parts = line.split(",")
-                                if len(parts) >= 2:
-                                    tester = parts[1].strip()
+                    sample_info, _, _ = _read_plot_csv(file_path)
                 except Exception as e:
                     logger.warning(f"读取CSV头信息失败: {e}")
+                    sample_info = {}
+
+                sample_name = sample_info.get('sample_name', sample_name)
+                time_str = sample_info.get('save_time', time_str)
 
                 record = {
                     'sample_name': sample_name,
                     'time_str': time_str,
-                    'polar_num': polar_num,
-                    'airgap': airgap,
-                    'remark': remark,
-                    'tester': tester,
+                    'polar_num': sample_info.get('polar_num', ''),
+                    'airgap': sample_info.get('airgap', ''),
+                    'remark': sample_info.get('remark', ''),
+                    'tester': sample_info.get('tester', ''),
                     'file_path': file_path
                 }
                 records.append(record)
@@ -154,9 +191,7 @@ class HistoryPanel(QWidget):
 
     def _get_plot_data_dir(self):
         """获取plot_data目录路径"""
-        # 从 windows/history_panel.py 向上3级得到 MARS 目录
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, "data", "plot_data")
+        return get_data_dir("plot_data")
 
     def _start_load_history(self):
         """启动后台加载历史数据"""
@@ -313,55 +348,7 @@ class HistoryPanel(QWidget):
     def _load_history_to_measure(self, file_path):
         """加载历史数据到测量界面"""
         try:
-            # 读取CSV数据
-            angle_data = []
-            mag_data = []
-            sample_info = {}
-
-            with open(file_path, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                lines = list(reader)
-
-                # 解析头部信息
-                for line in lines[:10]:  # 只读取前10行头部
-                    if len(line) >= 2:
-                        key = line[0].strip()
-                        value = line[1].strip()
-                        if "样品名称" in key:
-                            sample_info['sample_name'] = value
-                        elif "样品编号" in key:
-                            sample_info['sample_code'] = value
-                        elif "材料" in key:
-                            sample_info['material'] = value
-                        elif "线圈编号" in key:
-                            sample_info['coil_num'] = value
-                        elif "备注" in key:
-                            sample_info['remark'] = value
-                        elif "保存时间" in key:
-                            sample_info['save_time'] = value
-                        elif "极数" in key:
-                            sample_info['polar_num'] = value
-                        elif "气隙" in key:
-                            sample_info['airgap'] = value
-
-                # 找到数据起始位置（"角度(度)" 之后的行）
-                data_start = -1
-                for i, line in enumerate(lines):
-                    if len(line) >= 2 and "角度" in line[0] and "磁场" in line[1]:
-                        data_start = i + 1
-                        break
-
-                # 解析数据: 格式 角度(度),磁场强度
-                if data_start >= 0 and data_start < len(lines):
-                    for i in range(data_start, len(lines)):
-                        if len(lines[i]) >= 2 and lines[i][0].strip():
-                            try:
-                                angle = float(lines[i][0].strip())
-                                mag = float(lines[i][1].strip())
-                                angle_data.append(angle)
-                                mag_data.append(mag)
-                            except (ValueError, IndexError):
-                                continue
+            sample_info, angle_data, mag_data = _read_plot_csv(file_path)
 
             if not angle_data or not mag_data:
                 QMessageBox.warning(self, "错误", "数据文件格式错误，无法解析")
@@ -416,6 +403,10 @@ class HistoryPanel(QWidget):
                         remark_edit = measure_panel.findChild(QLineEdit, "remark_edit")
                         if remark_edit:
                             remark_edit.setText(sample_info['remark'])
+                    if sample_info.get('tester'):
+                        tester_edit = measure_panel.findChild(QLineEdit, "tester_edit")
+                        if tester_edit:
+                            tester_edit.setText(sample_info['tester'])
 
                     # 进行波形分析
                     from windows.wave_analysis import WaveAnalysis

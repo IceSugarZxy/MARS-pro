@@ -16,6 +16,7 @@ import pyqtgraph as pg
 from pyqtgraph import mkPen
 from PyQt5.QtGui import QPen
 from core.logger import get_logger
+from core.path_utils import get_data_dir
 from windows.wave_analysis import WaveAnalysis
 
 logger = get_logger('ComparePanel')
@@ -174,8 +175,7 @@ class ComparePanel(QWidget):
 
     def _get_plot_data_dir(self):
         """获取plot_data目录路径"""
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, "data", "plot_data")
+        return get_data_dir("plot_data")
 
     def _read_csv_file(self, file_path):
         """读取CSV文件"""
