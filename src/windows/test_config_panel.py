@@ -10,6 +10,7 @@ from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
 from core.config_manager import action_to_text
+from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
 
@@ -203,6 +204,8 @@ class TestConfigPanel(QWidget):
 
     def _on_position_data_updated(self, position_data):
         """位置数据更新"""
+        if not self.isVisible():
+            return
         if position_data and len(position_data) >= 2:
             x, z = position_data[0], position_data[1]
             self.update_position(x, z)
@@ -218,59 +221,87 @@ class TestConfigPanel(QWidget):
     def _on_offset(self):
         """偏置校准"""
         if self.serial_command:
+            logger.info(
+                "Offset flow: TestConfigPanel request received, "
+                f"dialog_present={self._offset_dialog is not None}"
+            )
             # 停止位置查询定时器，防止干扰偏置校准
             self.serial_command.disable_position_query_timer()
-            logger.info("偏置校准：位置查询定时器已停止")
+            logger.info("Offset flow: TestConfigPanel disabled position query timer")
 
             # 显示校准对话框
             self._offset_dialog = OffsetCalibrationDialog(self)
-            self._offset_dialog.start_progress(duration=3)  # 偏置校准约3秒
+            self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
             self._offset_dialog.show()
-            logger.info("偏置校准开始")
+            logger.info("Offset flow: TestConfigPanel progress dialog shown")
             self.serial_command.offset_calibration()
+            logger.info("Offset flow: TestConfigPanel command dispatched")
         else:
             logger.warning("串口命令未初始化")
 
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
-        logger.info(f"偏置校准完成: success={success}")
+        logger.info(
+            "Offset flow: TestConfigPanel finished callback, "
+            f"success={success}, dialog_present={self._offset_dialog is not None}"
+        )
         # 重新启动位置查询定时器
         if self.serial_command:
             self.serial_command.enable_position_query_timer()
-        logger.info("偏置校准完成：位置查询定时器已重启")
+        logger.info("Offset flow: TestConfigPanel re-enabled position query timer")
         if self._offset_dialog:
             config = get_config_manager()
             offset_value = getattr(config, 'offset', None)
+            logger.info(f"Offset flow: TestConfigPanel showing result, offset={offset_value}")
             self._offset_dialog.show_result(success, offset_value)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
 
     def _close_offset_dialog(self):
         """关闭偏置校准对话框"""
         if self._offset_dialog:
+            logger.info("Offset flow: TestConfigPanel offset dialog closed")
             self._offset_dialog.close()
             self._offset_dialog = None
 
+    def _log_adhesion_button(self, action: str) -> None:
+        serial_manager = getattr(self.thread_manager, "serial_manager", None) if self.thread_manager else None
+        connected = serial_manager.get_connection_status() if serial_manager else False
+        write_queue_size = (
+            self.thread_manager.write_queue.qsize()
+            if self.thread_manager and getattr(self.thread_manager, "write_queue", None)
+            else None
+        )
+        state = getattr(getattr(self.serial_command, "_work_state", None), "value", None)
+        logger.info(
+            "Adhesion flow: UI button clicked, "
+            f"action={action}, connected={connected}, state={state}, "
+            f"write_queue_size={write_queue_size}, serial_command_present={self.serial_command is not None}"
+        )
+
     def _on_press_z(self):
         """Z轴下压贴靠"""
+        self._log_adhesion_button("press_z")
         if self.serial_command:
-            self.serial_command.auto_press()
-            logger.info("Z轴下压贴靠")
+            accepted = self.serial_command.auto_press()
+            logger.info(f"Adhesion flow: UI command result, action=press_z, accepted={accepted}")
         else:
             logger.warning("串口命令未初始化")
 
     def _on_left_x(self):
         """X轴左贴靠"""
+        self._log_adhesion_button("left_x")
         if self.serial_command:
-            self.serial_command.auto_press_left()
-            logger.info("X轴左贴靠")
+            accepted = self.serial_command.auto_press_left()
+            logger.info(f"Adhesion flow: UI command result, action=left_x, accepted={accepted}")
         else:
             logger.warning("串口命令未初始化")
 
     def _on_right_x(self):
         """X轴右贴靠"""
+        self._log_adhesion_button("right_x")
         if self.serial_command:
-            self.serial_command.auto_press_right()
-            logger.info("X轴右贴靠")
+            accepted = self.serial_command.auto_press_right()
+            logger.info(f"Adhesion flow: UI command result, action=right_x, accepted={accepted}")
         else:
             logger.warning("串口命令未初始化")
 

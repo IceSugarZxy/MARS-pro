@@ -4,17 +4,22 @@ Serial settings panel.
 """
 
 import os
+import time
 
 import serial
 import serial.tools.list_ports
 from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QComboBox, QLabel, QPushButton, QTextEdit, QWidget
 
 from core import get_config_manager
 from core.logger import get_logger
 
 logger = get_logger("SerialPanel")
+
+SERIAL_PANEL_RX_FLUSH_INTERVAL_MS = 150
+SERIAL_PANEL_MAX_BLOCKS = 1200
 
 
 class SerialPanel(QWidget):
@@ -30,6 +35,11 @@ class SerialPanel(QWidget):
         self.thread_manager = None
         self.serial_manager = None
         self._pending_connection_settings = None
+        self._receive_stream_connected = False
+        self._rx_buffer = []
+        self._receive_text = self.findChild(QTextEdit, "receive_text")
+        if self._receive_text and hasattr(self._receive_text.document(), "setMaximumBlockCount"):
+            self._receive_text.document().setMaximumBlockCount(SERIAL_PANEL_MAX_BLOCKS)
 
         self._connect_buttons()
 
@@ -40,6 +50,10 @@ class SerialPanel(QWidget):
         self._port_refresh_timer = QTimer(self)
         self._port_refresh_timer.setInterval(2000)
         self._port_refresh_timer.timeout.connect(self._refresh_ports)
+
+        self._rx_flush_timer = QTimer(self)
+        self._rx_flush_timer.setInterval(SERIAL_PANEL_RX_FLUSH_INTERVAL_MS)
+        self._rx_flush_timer.timeout.connect(self._flush_received_data)
 
         self._refresh_ports()
         self._apply_serial_settings_to_ui(self._get_serial_settings_from_config())
@@ -161,8 +175,11 @@ class SerialPanel(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._set_port_refresh_enabled(True)
+        self._set_receive_stream_enabled(True)
 
     def hideEvent(self, event):
+        self._set_receive_stream_enabled(False)
+        self._flush_received_data()
         self._set_port_refresh_enabled(False)
         super().hideEvent(event)
 
@@ -233,8 +250,18 @@ class SerialPanel(QWidget):
             return
 
         try:
-            self.thread_manager.serial_manager.write_queue.put(data)
-            logger.info(f"Send data: {data}")
+            tx_item = {
+                "id": None,
+                "data": data,
+                "source": "serial_panel_send",
+                "enqueued_at": time.time(),
+            }
+            queue_before = self.thread_manager.write_queue.qsize()
+            self.thread_manager.serial_manager.write_queue.put(tx_item)
+            logger.info(
+                "Serial TX enqueue from panel: "
+                f"command={data}, queue_before={queue_before}, queue_after={self.thread_manager.write_queue.qsize()}"
+            )
         except Exception as e:
             logger.error(f"Send failed: {e}")
 
@@ -248,20 +275,52 @@ class SerialPanel(QWidget):
             self.serial_manager.signal_connection_status_changed.connect(
                 self._on_serial_status_changed, Qt.QueuedConnection
             )
-        if hasattr(self.serial_manager, "signal_data_received"):
+        self._set_receive_stream_enabled(self.isVisible())
+
+    def _set_receive_stream_enabled(self, enabled: bool) -> None:
+        if not self.serial_manager or not hasattr(self.serial_manager, "signal_data_received"):
+            return
+
+        if enabled and not self._receive_stream_connected:
             self.serial_manager.signal_data_received.connect(
                 self._on_data_received, Qt.QueuedConnection
             )
+            self._receive_stream_connected = True
+        elif not enabled and self._receive_stream_connected:
+            try:
+                self.serial_manager.signal_data_received.disconnect(self._on_data_received)
+            except Exception:
+                pass
+            self._receive_stream_connected = False
 
     def _on_data_received(self, data: bytes):
         try:
             if not self.isVisible():
                 return
-            receive_text = self.findChild(QTextEdit, "receive_text")
-            if receive_text:
-                receive_text.append(data.decode("utf-8", errors="replace"))
+            self._rx_buffer.append(data.decode("utf-8", errors="replace"))
+            if not self._rx_flush_timer.isActive():
+                self._rx_flush_timer.start()
         except Exception as e:
             logger.error(f"Handle received data failed: {e}")
+
+    def _flush_received_data(self):
+        if not self._rx_buffer:
+            if self._rx_flush_timer.isActive():
+                self._rx_flush_timer.stop()
+            return
+
+        receive_text = self._receive_text or self.findChild(QTextEdit, "receive_text")
+        if not receive_text:
+            self._rx_buffer.clear()
+            return
+
+        text = "".join(self._rx_buffer)
+        self._rx_buffer.clear()
+        receive_text.moveCursor(QTextCursor.End)
+        receive_text.insertPlainText(text)
+        receive_text.moveCursor(QTextCursor.End)
+        if self._rx_flush_timer.isActive():
+            self._rx_flush_timer.stop()
 
     def _on_serial_status_changed(self, connected):
         self._connection_timeout_timer.stop()

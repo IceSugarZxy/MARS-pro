@@ -7,12 +7,13 @@ from PyQt5.QtWidgets import QDialog, QMessageBox
 from PyQt5.QtCore import Qt, QPoint, QTimer
 from PyQt5 import uic
 import os
+from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 
 
 class OffsetCalibrationDialog(QDialog):
     """偏置校准对话框"""
 
-    CALIBRATION_DURATION = 3  # 偏置校准约3秒
+    CALIBRATION_DURATION = OFFSET_PROGRESS_SECONDS
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,7 +51,7 @@ class OffsetCalibrationDialog(QDialog):
         if event.button() == Qt.LeftButton:
             self.dragging = False
 
-    def start_progress(self, duration=3):
+    def start_progress(self, duration=OFFSET_PROGRESS_SECONDS):
         """开始进度更新（基于时间估算）"""
         self.CALIBRATION_DURATION = duration
         self._progress_start_time = 0

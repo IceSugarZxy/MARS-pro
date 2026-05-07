@@ -35,7 +35,7 @@
       <string>数据比对</string>
      </property>
      <property name="alignment">
-      <set>Qt::AlignCenter</set>
+      <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
      </property>
     </widget>
    </item>
@@ -45,29 +45,29 @@
       <enum>Qt::Horizontal</enum>
      </property>
      <widget class="QTextEdit" name="result1_text">
+      <property name="font">
+       <font>
+        <pointsize>26</pointsize>
+       </font>
+      </property>
       <property name="readOnly">
        <bool>true</bool>
       </property>
       <property name="placeholderText">
        <string>文件1 分析结果</string>
       </property>
+     </widget>
+     <widget class="QTextEdit" name="result2_text">
       <property name="font">
        <font>
         <pointsize>26</pointsize>
        </font>
       </property>
-     </widget>
-     <widget class="QTextEdit" name="result2_text">
       <property name="readOnly">
        <bool>true</bool>
       </property>
       <property name="placeholderText">
        <string>文件2 分析结果</string>
-      </property>
-      <property name="font">
-       <font>
-        <pointsize>26</pointsize>
-       </font>
       </property>
      </widget>
     </widget>

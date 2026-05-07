@@ -17,6 +17,7 @@
 
 from typing import Tuple, List, Optional
 import queue
+import re
 import time
 import statistics
 import os
@@ -29,6 +30,10 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from .logger import get_logger
 from .config_manager import get_config_manager
 from .path_utils import get_data_dir
+from .offset_calibration_config import (
+    OFFSET_COLLECTION_SECONDS,
+    OFFSET_MAX_PROCESS_SECONDS,
+)
 
 logger = get_logger('DataProcess')
 
@@ -41,6 +46,16 @@ ANGLE_RESOLUTION = FULL_ROTATION_ANGLE / FULL_ROTATION_DATA_POINTS  # 角度分�
 START_OFFSET = int(FULL_ROTATION_DATA_POINTS * 90 / FULL_ROTATION_ANGLE)  # 90度对应的数据偏移 = 67840
 POINTS_FOR_360 = int(FULL_ROTATION_DATA_POINTS * 360 / FULL_ROTATION_ANGLE)  # 360度对应的数据点数
 PROGRESS_EMIT_INTERVAL_SECONDS = 1.0 / 16.0
+OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 1.5
+OFFSET_NO_DATA_TIMEOUT_SECONDS = 0.5
+OFFSET_QUEUE_POLL_SECONDS = 0.02
+OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
+SELF_DETECT_BUFFER_LIMIT = 4096
+SELF_DETECT_LOG_PREVIEW_LIMIT = 220
+SELF_DETECT_FINISH_PATTERNS = {
+    "Z": re.compile(r"Z\s*(?:Axis\s*)?Self\s*Detect\s*Finished", re.IGNORECASE),
+    "X": re.compile(r"X\s*(?:Axis\s*)?Self\s*Detect\s*Finished", re.IGNORECASE),
+}
 
 
 class DataProcess(QObject):
@@ -102,6 +117,9 @@ class DataProcess(QObject):
 
         # 偏置校准标志：用于阻止位置数据处理干扰偏置校准
         self._offset_calibrating: bool = False
+        self._offset_calibrating: bool = False
+        self._self_detecting: bool = False
+        self._self_detect_text_buffer: str = ""
 
         # 测量停止标志：用于中途停止测量时立即处理已采集的数据
         self._stop_measure_processing: bool = False
@@ -241,6 +259,26 @@ class DataProcess(QObject):
             except queue.Empty:
                 break
 
+    def clear_self_detect_buffer(self) -> None:
+        """Clear buffered self-detect text fragments."""
+        self._self_detect_text_buffer = ""
+
+    def _append_self_detect_text(self, text: str) -> str:
+        self._self_detect_text_buffer = (
+            self._self_detect_text_buffer + text
+        )[-SELF_DETECT_BUFFER_LIMIT:]
+        return self._self_detect_text_buffer
+
+    @staticmethod
+    def _text_preview(text: str, limit: int = SELF_DETECT_LOG_PREVIEW_LIMIT) -> str:
+        preview = text.replace("\r", "\\r").replace("\n", "\\n")
+        if len(preview) > limit:
+            return preview[:limit] + "..."
+        return preview
+
+    def get_self_detect_buffer_preview(self) -> str:
+        return self._text_preview(self._self_detect_text_buffer)
+
     # ========================================================================
     # 自检消息检测
     # ========================================================================
@@ -262,9 +300,9 @@ class DataProcess(QObject):
         Returns:
             是否检测到自检完成消息
         """
-        import time
         start_time = time.time()
         item_count = 0
+        ignored_position_packets = 0
         try:
             while True:
                 # 非阻塞读取队列数据
@@ -275,22 +313,56 @@ class DataProcess(QObject):
                     break
 
                 text = data.decode('utf-8', errors='ignore')
+                buffered_text = self._append_self_detect_text(text)
+                if logger.isEnabledFor(10):
+                    logger.debug(
+                        "Adhesion flow: self detect RX chunk, "
+                        f"item={item_count}, bytes={len(data)}, queue_remaining={self.data_queue.qsize()}, "
+                        f"preview={self._text_preview(text)}"
+                    )
 
                 # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
-                if text.strip().startswith('X:') and 'Z:' in text:
-                    self.data_queue.put(data)
-                    break
+                # Consume stale position packets during self-detect.
+                if re.search(r'X:-?\d+,Z:-?\d+', text):
+                    ignored_position_packets += 1
 
                 # 检测Z轴自检完成
-                if 'Z Axis Self Detect Finished' in text:
-                    logger.info(f"Z 轴自检完成")
+                if SELF_DETECT_FINISH_PATTERNS["Z"].search(buffered_text):
+                    logger.debug("Z axis self detect finished.")
+                    logger.info(
+                        "Adhesion flow: Z self detect finish detected, "
+                        f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
+                        f"queue_remaining={self.data_queue.qsize()}, "
+                        f"elapsed={time.time() - start_time:.2f}s"
+                    )
+                    self.clear_self_detect_buffer()
                     self.signal_self_detect_finished.emit('Z')
                     return True
                 # 检测X轴自检完成
-                elif 'X Axis Self Detect Finished' in text:
-                    logger.info(f"X 轴自检完成")
+                elif SELF_DETECT_FINISH_PATTERNS["X"].search(buffered_text):
+                    logger.debug("X axis self detect finished.")
+                    logger.info(
+                        "Adhesion flow: X self detect finish detected, "
+                        f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
+                        f"queue_remaining={self.data_queue.qsize()}, "
+                        f"elapsed={time.time() - start_time:.2f}s"
+                    )
+                    self.clear_self_detect_buffer()
                     self.signal_self_detect_finished.emit('X')
                     return True
+
+            if item_count and ignored_position_packets and logger.isEnabledFor(10):
+                logger.debug(
+                    "Adhesion flow: ignored stale position packets during self detect, "
+                    f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
+                    f"queue_remaining={self.data_queue.qsize()}"
+                )
+            if item_count and logger.isEnabledFor(10):
+                logger.debug(
+                    "Adhesion flow: self detect scan ended without finish, "
+                    f"items={item_count}, buffer_chars={len(self._self_detect_text_buffer)}, "
+                    f"buffer_preview={self.get_self_detect_buffer_preview()}"
+                )
 
         except Exception as e:
             logger.error(f"检测自检完成消息失败: {e}")
@@ -318,6 +390,10 @@ class DataProcess(QObject):
         if self._offset_calibrating:
             self.signal_position_data_process_finished.emit((None, None))
             return
+        if self._self_detecting:
+            logger.debug("Adhesion flow: position processing skipped during self detect.")
+            self.signal_position_data_process_finished.emit((None, None))
+            return
 
         x_position: Optional[str] = None
         z_position: Optional[str] = None
@@ -330,6 +406,10 @@ class DataProcess(QObject):
         start_time = time_module.time()
 
         while time_module.time() - start_time < 1.5:
+            if self._self_detecting:
+                logger.debug("Adhesion flow: in-flight position processing stopped for self detect.")
+                self.signal_position_data_process_finished.emit((None, None))
+                return
             # 使用非阻塞get_nowait() +短暂sleep，让Qt事件循环处理其他信号
             try:
                 data = self.data_queue.get_nowait()
@@ -455,22 +535,38 @@ class DataProcess(QObject):
         Note:
             保存的偏置值会在每次程序启动时加载，用于校正测量数据
         """
-        import time
-        start_time = time.time()
-
         try:
+            start_time = time.time()
+            last_data_time = start_time
             temp_buffer = bytearray()
             offset_list: List[float] = []
-            iteration = 0
+            got_data = False
+            raw_bytes_received = 0
+            queue_items_received = 0
+            last_collect_log_time = start_time
+
+            logger.info(
+                "Offset flow: processor started, "
+                f"initial_queue_size={self.data_queue.qsize()}, "
+                f"max_process={OFFSET_MAX_PROCESS_SECONDS:.1f}s, "
+                f"no_data_timeout={OFFSET_NO_DATA_TIMEOUT_SECONDS:.1f}s"
+            )
 
             while True:
-                iteration += 1
-
                 # 1. 把队列中的数据都取出来放到缓冲区
                 try:
                     while True:
                         data = self.data_queue.get_nowait()
+                        if not got_data:
+                            logger.info(
+                                "Offset flow: first data chunk received, "
+                                f"bytes={len(data)}, elapsed={time.time() - start_time:.2f}s"
+                            )
                         temp_buffer.extend(data)
+                        raw_bytes_received += len(data)
+                        queue_items_received += 1
+                        got_data = True
+                        last_data_time = time.time()
                 except queue.Empty:
                     pass
 
@@ -484,34 +580,47 @@ class DataProcess(QObject):
                     offset_list.append(mag_value)
                     del temp_buffer[0:2]
 
-                # 3. 如果缓冲区已空或不足2字节，等待一小段时间看是否有新数据
-                if len(temp_buffer) < 2:
-                    # 首次等待时，给数据更多时间到达（K3~命令需要约0.5秒才开始返回数据）
-                    if iteration == 1 and len(offset_list) == 0:
-                        time.sleep(1.0)
-                    else:
-                        time.sleep(0.2)
+                current_time = time.time()
+                if current_time - last_collect_log_time >= OFFSET_COLLECT_LOG_INTERVAL_SECONDS:
+                    last_collect_log_time = current_time
+                    logger.debug(
+                        "Offset flow: collecting, "
+                        f"points={len(offset_list)}, "
+                        f"raw_bytes={raw_bytes_received}, "
+                        f"queue_items={queue_items_received}, "
+                        f"buffer_bytes={len(temp_buffer)}, "
+                        f"queue_size={self.data_queue.qsize()}, "
+                        f"elapsed={current_time - start_time:.2f}s"
+                    )
 
-                    # 尝试获取新数据
-                    try:
-                        data = self.data_queue.get_nowait()
-                        temp_buffer.extend(data)
-                        continue
-                    except queue.Empty:
-                        # 如果已经有处理到的数据，说明测量已完成，结束
-                        if len(offset_list) > 0:
-                            break
-                        # 没有数据且没有处理过数据，再等待一次
-                        if len(offset_list) == 0:
-                            time.sleep(0.5)
-                            try:
-                                data = self.data_queue.get_nowait()
-                                temp_buffer.extend(data)
-                                continue
-                            except queue.Empty:
-                                pass
-                        # 真的没有新数据了，结束
-                        break
+                elapsed = current_time - start_time
+                no_data_elapsed = current_time - last_data_time
+
+                if elapsed >= OFFSET_MAX_PROCESS_SECONDS:
+                    logger.warning(
+                        "Offset flow: max process time reached, "
+                        f"points={len(offset_list)}, raw_bytes={raw_bytes_received}, "
+                        f"queue_items={queue_items_received}, elapsed={elapsed:.2f}s"
+                    )
+                    break
+
+                if got_data and no_data_elapsed >= OFFSET_NO_DATA_TIMEOUT_SECONDS:
+                    logger.info(
+                        "Offset flow: receiver idle, "
+                        f"points={len(offset_list)}, raw_bytes={raw_bytes_received}, "
+                        f"queue_items={queue_items_received}, idle={no_data_elapsed:.2f}s, "
+                        f"elapsed={elapsed:.2f}s"
+                    )
+                    break
+
+                if not got_data and elapsed >= OFFSET_INITIAL_DATA_TIMEOUT_SECONDS:
+                    logger.warning(
+                        "Offset flow: initial data timeout, "
+                        f"queue_size={self.data_queue.qsize()}, elapsed={elapsed:.2f}s"
+                    )
+                    break
+
+                time.sleep(OFFSET_QUEUE_POLL_SECONDS)
 
             # 处理完成，计算偏置值
             if len(offset_list) > 0:
@@ -525,20 +634,34 @@ class DataProcess(QObject):
 
                 if start_index < end_index:
                     middle_data = filtered_offset_list[start_index:end_index]
-                    self.mag_offset = statistics.mean(middle_data)
                 else:
-                    self.mag_offset = statistics.mean(filtered_offset_list)
+                    middle_data = filtered_offset_list
+
+                logger.info(
+                    "Offset flow: calculating offset, "
+                    f"raw_points={len(offset_list)}, filtered_points={total_len}, "
+                    f"middle_range={start_index}:{end_index}, middle_points={len(middle_data)}"
+                )
+                self.mag_offset = statistics.mean(middle_data)
 
                 # 保存偏置值到配置文件
                 self.config.offset = self.mag_offset
-                logger.info(f"偏置校准完成: {self.mag_offset:.4f} mT, 数据点: {len(middle_data)}")
+                logger.info(
+                    "Offset flow: calibration succeeded, "
+                    f"offset={self.mag_offset:.4f} mT, "
+                    f"config_file={getattr(self.config, 'config_file', '')}"
+                )
+                logger.info("Offset flow: emitting finished signal, success=True")
                 self.signal_offset_data_process_finished.emit(True)
             else:
-                logger.warning("未读取到有效偏置数据")
+                logger.warning("Offset flow: no valid offset data received")
+                logger.info("Offset flow: emitting finished signal, success=False")
                 self.signal_offset_data_process_finished.emit(False)
 
         except Exception as e:
             logger.error(f"处理偏置数据时发生错误: {e}", exc_info=True)
+            logger.info("Offset flow: emitting finished signal after exception, success=False")
+            self.signal_offset_data_process_finished.emit(False)
 
     # ========================================================================
     # 测量数据算法处理

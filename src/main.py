@@ -70,10 +70,12 @@ class MainApplication:
             )
             # 连接位置数据处理信号
             self.thread_manager.data_process.signal_position_data_process.connect(
-                self.thread_manager.data_process.process_position_data
+                self.thread_manager.data_process.process_position_data,
+                Qt.QueuedConnection
             )
             self.thread_manager.data_process.signal_self_detect_process.connect(
-                self.thread_manager.data_process.check_self_detect
+                self.thread_manager.data_process.check_self_detect,
+                Qt.QueuedConnection
             )
             # 连接位置数据处理完成信号 - 更新serial_command当前位置
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
@@ -85,11 +87,13 @@ class MainApplication:
             )
             # 连接偏置数据处理信号
             self.thread_manager.data_process.signal_offset_data_process.connect(
-                self.thread_manager.data_process.process_offset_data
+                self.thread_manager.data_process.process_offset_data,
+                Qt.QueuedConnection
             )
             # 连接测量数据处理信号
             self.thread_manager.data_process.signal_measure_data_process.connect(
-                self.thread_manager.data_process.process_measure_data
+                self.thread_manager.data_process.process_measure_data,
+                Qt.QueuedConnection
             )
             # 连接偏置校准完成信号 - 清除偏置校准标志
             self.thread_manager.data_process.signal_offset_data_process_finished.connect(

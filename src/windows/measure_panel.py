@@ -15,6 +15,7 @@ from pyqtgraph import mkPen
 from core.logger import get_logger
 from core import get_config_manager
 from core.config_manager import ACTION_TYPES
+from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.test_progress_dialog import TestProgressDialog
@@ -23,6 +24,7 @@ from windows.offset_calibration_dialog import OffsetCalibrationDialog
 logger = get_logger('MeasurePanel')
 
 STATUS_AUTO_RECOVER_MS = 2000
+DEFAULT_PLOT_COLOR = '#e74c3c'
 RESULT_FIELD_DEFAULTS = {
     "n_max_edit": "0.00",
     "n_min_edit": "0.00",
@@ -81,6 +83,9 @@ class MeasurePanel(QWidget):
         self.angle_data = []
         self.mag_data = []
         self.analysis_results = None
+        self._current_plot_color = DEFAULT_PLOT_COLOR
+        self._persistent_status_message = ""
+        self._persistent_status_is_error = False
 
         # 初始化波形分析器
         self.wave_analyzer = WaveAnalysis()
@@ -91,6 +96,7 @@ class MeasurePanel(QWidget):
 
         # 初始化状态自动恢复定时器
         self._status_auto_recover_timer = QTimer(self)
+        self._status_auto_recover_timer.setSingleShot(True)
         self._status_auto_recover_timer.timeout.connect(self._clear_status_message)
 
         # 连接按钮事件
@@ -202,7 +208,7 @@ class MeasurePanel(QWidget):
         plot_widget.plotItem.setLabel('bottom', '角度', units='°')
         plot_widget.plotItem.setLabel('left', '磁场', units='mT')
 
-        curve = plot_widget.plot(pen=mkPen('#e74c3c', width=1.5))
+        curve = plot_widget.plot(pen=mkPen(self._current_plot_color, width=1.5))
         curve.setData(self.angle_data, self.mag_data)
 
         # 自动调整Y轴
@@ -239,9 +245,18 @@ class MeasurePanel(QWidget):
 
     def _clear_status_message(self):
         """清空状态消息"""
+        self._status_auto_recover_timer.stop()
+        if self._persistent_status_message:
+            self._apply_status_message(
+                self._persistent_status_message,
+                self._persistent_status_is_error,
+            )
+            return
+
         status_label = self.findChild(QLabel, "status_label")
         if status_label:
             status_label.setText("")
+            status_label.setToolTip("")
             status_label.setStyleSheet("")
 
     def _on_serial_clicked(self):
@@ -342,33 +357,42 @@ class MeasurePanel(QWidget):
         """偏置校准"""
         logger.info("偏置校准按钮被点击")
         if self.serial_command:
+            logger.info(
+                "Offset flow: MeasurePanel request received, "
+                f"dialog_present={self._offset_dialog is not None}"
+            )
             # 停止位置查询定时器，防止干扰偏置校准
             self.serial_command.disable_position_query_timer()
-            logger.info("偏置校准：位置查询定时器已停止")
+            logger.info("Offset flow: MeasurePanel disabled position query timer")
 
             # 显示校准对话框
             self._offset_dialog = OffsetCalibrationDialog(self)
-            self._offset_dialog.start_progress(duration=3)  # 偏置校准约3秒
+            self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
             self._offset_dialog.show()
-            logger.info("偏置校准开始")
+            logger.info("Offset flow: MeasurePanel progress dialog shown")
             self.serial_command.offset_calibration()
+            logger.info("Offset flow: MeasurePanel command dispatched")
 
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
-        logger.info(f"偏置校准完成: success={success}")
+        logger.info(
+            "Offset flow: MeasurePanel finished callback, "
+            f"success={success}, dialog_present={self._offset_dialog is not None}"
+        )
         # 重新启动位置查询定时器
         if self.serial_command:
             self.serial_command.enable_position_query_timer()
-            logger.info("偏置校准完成：位置查询定时器已重启")
+            logger.info("Offset flow: MeasurePanel re-enabled position query timer")
         if self._offset_dialog:
             config = get_config_manager()
             offset_value = getattr(config, 'offset', None)
+            logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_value}")
             self._offset_dialog.show_result(success, offset_value)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
-
     def _close_offset_dialog(self):
         """关闭偏置校准对话框"""
         if self._offset_dialog:
+            logger.info("Offset flow: MeasurePanel offset dialog closed")
             self._offset_dialog.close()
             self._offset_dialog = None
 
@@ -392,7 +416,7 @@ class MeasurePanel(QWidget):
             return
         self._update_status("向上移动...", auto_recover=True)
         self.serial_command.set_move_task('Z', -1, distance)
-        self.serial_command.position_query()
+        self.serial_command.position_query(source="manual_move_up")
 
     def _down_button_clicked(self):
         """下"""
@@ -402,7 +426,7 @@ class MeasurePanel(QWidget):
             return
         self._update_status("向下移动...", auto_recover=True)
         self.serial_command.set_move_task('Z', 1, distance)
-        self.serial_command.position_query()
+        self.serial_command.position_query(source="manual_move_down")
 
     def _left_button_clicked(self):
         """左"""
@@ -412,7 +436,7 @@ class MeasurePanel(QWidget):
             return
         self._update_status("向左移动...", auto_recover=True)
         self.serial_command.set_move_task('X', 1, distance)
-        self.serial_command.position_query()
+        self.serial_command.position_query(source="manual_move_left")
 
     def _right_button_clicked(self):
         """右"""
@@ -422,7 +446,7 @@ class MeasurePanel(QWidget):
             return
         self._update_status("向右移动...", auto_recover=True)
         self.serial_command.set_move_task('X', -1, distance)
-        self.serial_command.position_query()
+        self.serial_command.position_query(source="manual_move_right")
 
     def _get_distance_value(self):
         """获取距离值"""
@@ -464,6 +488,8 @@ class MeasurePanel(QWidget):
         """重置测试界面"""
         logger.info("重置测试界面")
         self.analysis_results = None
+        self._persistent_status_message = ""
+        self._persistent_status_is_error = False
         self._update_display_defaults()
         self.clear_plot()
         self.angle_data = []
@@ -497,14 +523,34 @@ class MeasurePanel(QWidget):
             self.serial_command.enable_position_query_timer()
             logger.info("已恢复位置查询定时器")
 
-    def _update_status(self, message, is_error=False, auto_recover=False):
-        """更新状态"""
+    def _apply_status_message(self, message, is_error=False):
         status_label = self.findChild(QLabel, "status_label")
         if status_label:
             status_label.setText(message)
-            status_label.setStyleSheet("color: red; font-weight: bold;" if is_error else "color: green; font-weight: bold;")
-            if auto_recover:
-                self._status_auto_recover_timer.start(STATUS_AUTO_RECOVER_MS)
+            status_label.setToolTip(message)
+            status_label.setStyleSheet(
+                "color: red; font-weight: bold;" if is_error else "color: green; font-weight: bold;"
+            )
+
+    def _update_status(self, message, is_error=False, auto_recover=False):
+        """更新状态"""
+        if not auto_recover:
+            self._persistent_status_message = ""
+            self._persistent_status_is_error = False
+
+        self._apply_status_message(message, is_error)
+        if auto_recover:
+            self._status_auto_recover_timer.start(STATUS_AUTO_RECOVER_MS)
+        else:
+            self._status_auto_recover_timer.stop()
+
+    def show_history_file_status(self, file_path: str) -> None:
+        filename = os.path.basename(file_path)
+        message = f"当前显示文件：{filename}"
+        self._persistent_status_message = message
+        self._persistent_status_is_error = False
+        self._status_auto_recover_timer.stop()
+        self._apply_status_message(message)
 
     def _collect_sample_info_from_ui(self) -> dict:
         """收集样品信息"""
@@ -521,11 +567,13 @@ class MeasurePanel(QWidget):
 
     def update_plot_data(self, angle_data=None, mag_data=None, color='r'):
         """更新绘图"""
+        self._current_plot_color = color or DEFAULT_PLOT_COLOR
         if self.plot_window:
             self.plot_window.update_plot(angle_data, mag_data, color)
 
     def clear_plot(self):
         """清除绘图"""
+        self._current_plot_color = DEFAULT_PLOT_COLOR
         if self.plot_window:
             self.plot_window.clear_plot()
 
@@ -603,6 +651,8 @@ class MeasurePanel(QWidget):
 
     def _on_position_data_updated(self, position_data):
         """Update position display."""
+        if not self.isVisible():
+            return
         if position_data and len(position_data) >= 2:
             x, z = position_data[0], position_data[1]
             self._update_current_position_display(x, z)

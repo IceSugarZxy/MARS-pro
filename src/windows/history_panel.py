@@ -357,13 +357,13 @@ class HistoryPanel(QWidget):
             logger.info(f"读取历史数据: {len(angle_data)} 个数据点")
 
             # 切换到测量面板并加载数据
-            self._switch_to_measure_and_load(angle_data, mag_data, sample_info)
+            self._switch_to_measure_and_load(angle_data, mag_data, sample_info, file_path)
 
         except Exception as e:
             logger.error(f"加载历史数据失败: {e}")
             QMessageBox.warning(self, "错误", f"加载历史数据失败: {e}")
 
-    def _switch_to_measure_and_load(self, angle_data, mag_data, sample_info):
+    def _switch_to_measure_and_load(self, angle_data, mag_data, sample_info, file_path):
         """切换到测量面板并加载数据"""
         # 查找主窗口并切换面板
         from PyQt5.QtWidgets import QApplication
@@ -380,7 +380,7 @@ class HistoryPanel(QWidget):
                     measure_panel.mag_data = mag_data
 
                     # 更新绘图
-                    measure_panel.update_plot_data(angle_data, mag_data, 'r')
+                    measure_panel.update_plot_data(angle_data, mag_data, '#1f77b4')
 
                     # 更新样品信息
                     if sample_info.get('sample_name'):
@@ -416,7 +416,10 @@ class HistoryPanel(QWidget):
                     results = wave_analyzer.analyze_waveform(angle_data, mag_data, enable_concentricity)
                     measure_panel._update_display_with_results(results)
 
-                    measure_panel._update_status("历史数据已加载")
+                    if hasattr(measure_panel, "show_history_file_status"):
+                        measure_panel.show_history_file_status(file_path)
+                    else:
+                        measure_panel._update_status(f"当前显示文件：{os.path.basename(file_path)}")
 
                     logger.info("历史数据已加载到测量界面")
 
