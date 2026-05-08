@@ -75,6 +75,7 @@ class TestConfigPanel(QWidget):
             combo_test_type.currentIndexChanged.connect(self._on_test_type_changed)
             # 连接配置管理器的信号
             config.signal_test_type_changed.connect(self._on_config_test_type_changed)
+            config.signal_scheme_changed.connect(self._on_config_scheme_changed)
 
         # 更新方案显示
         self._update_scheme_display(config.test_type)
@@ -145,6 +146,12 @@ class TestConfigPanel(QWidget):
             combo_test_type.blockSignals(False)
         # 更新方案显示
         self._update_scheme_display(index)
+
+    def _on_config_scheme_changed(self, test_type):
+        """配置管理器移动方案改变，同步更新当前测试类型流程。"""
+        config = get_config_manager()
+        if test_type == config.test_type:
+            self._update_scheme_display(test_type)
 
     def _load_saved_positions(self):
         """从配置文件加载保存的位置"""

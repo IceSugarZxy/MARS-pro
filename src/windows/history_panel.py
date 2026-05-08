@@ -19,6 +19,52 @@ from core.path_utils import get_data_dir
 logger = get_logger('HistoryPanel')
 
 
+def _is_plot_data_header(row):
+    return len(row) >= 2 and "角度" in row[0] and "磁场" in row[1]
+
+
+def _apply_sample_info_row(sample_info, row):
+    if len(row) < 2:
+        return
+
+    key = row[0].strip()
+    value = row[1].strip()
+    if "样品名称" in key:
+        sample_info['sample_name'] = value
+    elif "样品编号" in key:
+        sample_info['sample_code'] = value
+    elif "材料" in key:
+        sample_info['material'] = value
+    elif "线圈编号" in key:
+        sample_info['coil_code'] = value
+    elif "备注" in key:
+        sample_info['remark'] = value
+    elif "保存时间" in key:
+        sample_info['save_time'] = value
+    elif "极数" in key:
+        sample_info['polar_num'] = value
+    elif "气隙" in key:
+        sample_info['airgap'] = value
+    elif "测试员" in key:
+        sample_info['tester'] = value
+    elif "磁化条件" in key:
+        sample_info['mag_condition'] = value
+    elif "探头" in key:
+        sample_info['probe'] = value
+
+
+def _read_plot_csv_header(file_path):
+    """Read only CSV metadata rows for the history table."""
+    sample_info = {}
+    with open(file_path, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if _is_plot_data_header(row):
+                break
+            _apply_sample_info_row(sample_info, row)
+    return sample_info
+
+
 def _read_plot_csv(file_path):
     """Read saved plot CSV metadata and waveform data."""
     sample_info = {}
@@ -35,33 +81,7 @@ def _read_plot_csv(file_path):
             continue
 
         if not data_started:
-            if len(row) < 2:
-                continue
-
-            key = row[0].strip()
-            value = row[1].strip()
-            if "样品名称" in key:
-                sample_info['sample_name'] = value
-            elif "样品编号" in key:
-                sample_info['sample_code'] = value
-            elif "材料" in key:
-                sample_info['material'] = value
-            elif "线圈编号" in key:
-                sample_info['coil_code'] = value
-            elif "备注" in key:
-                sample_info['remark'] = value
-            elif "保存时间" in key:
-                sample_info['save_time'] = value
-            elif "极数" in key:
-                sample_info['polar_num'] = value
-            elif "气隙" in key:
-                sample_info['airgap'] = value
-            elif "测试员" in key:
-                sample_info['tester'] = value
-            elif "磁化条件" in key:
-                sample_info['mag_condition'] = value
-            elif "探头" in key:
-                sample_info['probe'] = value
+            _apply_sample_info_row(sample_info, row)
             continue
 
         if len(row) >= 2 and row[0].strip():
@@ -103,7 +123,7 @@ class LoadHistoryThread(QThread):
                     time_str = timestamp_str
 
                 try:
-                    sample_info, _, _ = _read_plot_csv(file_path)
+                    sample_info = _read_plot_csv_header(file_path)
                 except Exception as e:
                     logger.warning(f"读取CSV头信息失败: {e}")
                     sample_info = {}
@@ -150,15 +170,16 @@ class HistoryPanel(QWidget):
         # 设置表格
         self._setup_table()
 
-        # 后台加载历史数据
-        self._start_load_history()
-
         logger.info("HistoryPanel 初始化完成")
+
+    def showEvent(self, event):
+        """每次打开历史数据界面时自动刷新列表。"""
+        super().showEvent(event)
+        self._on_refresh()
 
     def _connect_buttons(self):
         """连接按钮事件"""
         self.findChild(QPushButton, "btn_refresh").clicked.connect(self._on_refresh)
-        self.findChild(QPushButton, "btn_open").clicked.connect(self._on_open)
 
         # 连接搜索输入框的文本变化事件
         sample_name_edit = self.findChild(QLineEdit, "sample_name_edit")
@@ -195,6 +216,10 @@ class HistoryPanel(QWidget):
 
     def _start_load_history(self):
         """启动后台加载历史数据"""
+        if self._load_thread and self._load_thread.isRunning():
+            logger.info("历史数据正在加载中，跳过重复刷新")
+            return
+
         plot_data_dir = self._get_plot_data_dir()
         logger.info(f"后台加载历史数据目录: {plot_data_dir}")
 
@@ -322,27 +347,6 @@ class HistoryPanel(QWidget):
             return
 
         logger.info(f"双击打开历史数据: {file_path}")
-        self._load_history_to_measure(file_path)
-
-    def _on_open(self):
-        """打开并分析"""
-        table = self.findChild(QTableWidget, "data_table")
-        if not table:
-            return
-
-        selected_rows = table.selectionModel().selectedRows()
-        if not selected_rows:
-            QMessageBox.warning(self, "提示", "请先选择一条历史数据")
-            return
-
-        # 获取选中的文件路径
-        row = selected_rows[0].row()
-        file_path = table.item(row, 0).data(Qt.UserRole)
-        if not file_path or not os.path.exists(file_path):
-            QMessageBox.warning(self, "错误", "文件不存在")
-            return
-
-        logger.info(f"打开历史数据: {file_path}")
         self._load_history_to_measure(file_path)
 
     def _load_history_to_measure(self, file_path):

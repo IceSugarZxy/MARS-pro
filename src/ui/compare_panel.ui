@@ -47,7 +47,7 @@
      <widget class="QTextEdit" name="result1_text">
       <property name="font">
        <font>
-        <pointsize>26</pointsize>
+        <pointsize>20</pointsize>
        </font>
       </property>
       <property name="readOnly">
@@ -60,7 +60,7 @@
      <widget class="QTextEdit" name="result2_text">
       <property name="font">
        <font>
-        <pointsize>26</pointsize>
+        <pointsize>20</pointsize>
        </font>
       </property>
       <property name="readOnly">

@@ -88,6 +88,8 @@ class ConfigManager(QObject):
 
     # 测试类型改变信号
     signal_test_type_changed = pyqtSignal(int)
+    # 测试/挂起移动方案改变信号
+    signal_scheme_changed = pyqtSignal(int)
 
     DEFAULT_CONFIG = {
         'offset': '0',
@@ -449,7 +451,10 @@ class ConfigManager(QObject):
 
         key = 'active_test_scheme' if is_test else 'active_suspend_scheme'
         schemes[test_type][key] = index
-        return self._save_schemes(schemes)
+        saved = self._save_schemes(schemes)
+        if saved:
+            self.signal_scheme_changed.emit(test_type)
+        return saved
 
     def update_scheme(self, test_type: int, is_test: bool, scheme_index: int, scheme: Dict) -> bool:
         """更新指定方案"""
@@ -460,7 +465,10 @@ class ConfigManager(QObject):
         key = 'test_schemes' if is_test else 'suspend_schemes'
         if scheme_index < len(schemes[test_type][key]):
             schemes[test_type][key][scheme_index] = scheme
-            return self._save_schemes(schemes)
+            saved = self._save_schemes(schemes)
+            if saved:
+                self.signal_scheme_changed.emit(test_type)
+            return saved
         return False
 
     def add_scheme(self, test_type: int, is_test: bool, scheme: Dict) -> bool:
@@ -472,7 +480,10 @@ class ConfigManager(QObject):
 
         key = 'test_schemes' if is_test else 'suspend_schemes'
         schemes[test_type][key].append(scheme)
-        return self._save_schemes(schemes)
+        saved = self._save_schemes(schemes)
+        if saved:
+            self.signal_scheme_changed.emit(test_type)
+        return saved
 
     def delete_scheme(self, test_type: int, is_test: bool, scheme_index: int) -> bool:
         """删除指定方案"""
@@ -487,7 +498,10 @@ class ConfigManager(QObject):
             active_key = 'active_test_scheme' if is_test else 'active_suspend_scheme'
             if schemes[test_type][active_key] >= scheme_index:
                 schemes[test_type][active_key] = max(0, schemes[test_type][active_key] - 1)
-            return self._save_schemes(schemes)
+            saved = self._save_schemes(schemes)
+            if saved:
+                self.signal_scheme_changed.emit(test_type)
+            return saved
         return False
 
     def get_inner_x_offset_pulse(self) -> int:

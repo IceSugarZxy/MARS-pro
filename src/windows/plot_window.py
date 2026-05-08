@@ -9,7 +9,7 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph import mkPen
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
-from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPen, QFont
 from core.logger import get_logger
 
@@ -18,9 +18,6 @@ logger = get_logger('PlotWindow')
 
 class PlotWindow(QWidget):
     """绘图窗口类"""
-    
-    # 信号定义
-    plot_double_clicked = pyqtSignal()  # 绘图区域双击信号
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -125,7 +122,6 @@ class PlotWindow(QWidget):
         """处理绘图区域双击事件"""
         if event.double():
             self.reset_plot_view()
-            self.plot_double_clicked.emit()
     
     def _on_view_range_changed(self, view_box, view_range):
         """视图范围变化回调函数"""

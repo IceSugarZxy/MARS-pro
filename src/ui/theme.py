@@ -530,7 +530,7 @@ def get_base_stylesheet() -> str:
 
     /* 数据比对结果文本 - 放大字体 */
     QTextEdit#result1_text, QTextEdit#result2_text {{
-        font-size: 26px;
+        font-size: 20px;
     }}
 
     /* 测试配置面板按钮 - 悬停效果（覆盖内联样式） */

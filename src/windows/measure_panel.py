@@ -4,17 +4,14 @@
 """
 
 import os
-import numpy as np
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
-                              QDialog, QVBoxLayout, QComboBox, QHBoxLayout, QListWidget,
+                              QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy)
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 from PyQt5 import uic
-import pyqtgraph as pg
-from pyqtgraph import mkPen
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import ACTION_TYPES
+from core.config_manager import action_to_text
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
@@ -121,47 +118,33 @@ class MeasurePanel(QWidget):
             combo_test_type.currentIndexChanged.connect(self._on_test_type_changed)
             # 连接配置管理器的信号
             config.signal_test_type_changed.connect(self._on_config_test_type_changed)
+            config.signal_scheme_changed.connect(self._on_config_scheme_changed)
+        # 更新移动方案显示
+        self._update_scheme_display(config.test_type)
 
-        # 更新位置显示
-        self._update_config_position_display()
-
-        # 更新配置位置显示
-        self._update_config_position_display()
-
-    def _update_config_position_display(self):
-        """更新配置位置显示"""
+    def _update_scheme_display(self, test_type):
+        """根据测试类型更新移动方案显示"""
         config = get_config_manager()
 
-        # 测试位置
-        test_pos_x = self.findChild(QLineEdit, "test_pos_x_edit")
-        test_pos_z = self.findChild(QLineEdit, "test_pos_z_edit")
-        if test_pos_x:
-            test_pos_x.setText(str(config.test_x))
-        if test_pos_z:
-            test_pos_z.setText(str(config.test_z))
+        test_scheme = config.get_active_test_scheme(test_type)
+        suspend_scheme = config.get_active_suspend_scheme(test_type)
+        test_steps_text = " → ".join(action_to_text(s) for s in test_scheme.get("steps", [])) or "--"
+        suspend_steps_text = " → ".join(action_to_text(s) for s in suspend_scheme.get("steps", [])) or "--"
 
-        # 挂起位置
-        suspend_pos_x = self.findChild(QLineEdit, "suspend_pos_x_edit")
-        suspend_pos_z = self.findChild(QLineEdit, "suspend_pos_z_edit")
-        if suspend_pos_x:
-            suspend_pos_x.setText(str(config.suspend_x))
-        if suspend_pos_z:
-            suspend_pos_z.setText(str(config.suspend_z))
+        test_scheme_edit = self.findChild(QLineEdit, "test_scheme_edit")
+        if test_scheme_edit:
+            test_scheme_edit.setText(test_steps_text)
 
-    def _update_current_position_display(self, x, z):
-        """更新当前位置显示"""
-        current_x = self.findChild(QLineEdit, "current_x_edit")
-        current_z = self.findChild(QLineEdit, "current_z_edit")
-        if current_x:
-            current_x.setText(str(x) if x != "--" else "--")
-        if current_z:
-            current_z.setText(str(z) if z != "--" else "--")
+        suspend_scheme_edit = self.findChild(QLineEdit, "suspend_scheme_edit")
+        if suspend_scheme_edit:
+            suspend_scheme_edit.setText(suspend_steps_text)
 
     def _on_test_type_changed(self, index):
         """测试类型改变"""
         config = get_config_manager()
         config.test_type = index
         logger.info(f"测试类型已更改: {index}")
+        self._update_scheme_display(index)
 
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
@@ -170,6 +153,13 @@ class MeasurePanel(QWidget):
             combo_test_type.blockSignals(True)
             combo_test_type.setCurrentIndex(index)
             combo_test_type.blockSignals(False)
+        self._update_scheme_display(index)
+
+    def _on_config_scheme_changed(self, test_type):
+        """配置管理器移动方案改变，同步更新当前测试类型流程。"""
+        config = get_config_manager()
+        if test_type == config.test_type:
+            self._update_scheme_display(test_type)
 
     def _init_plot_display(self):
         """初始化绘图显示窗口"""
@@ -182,47 +172,9 @@ class MeasurePanel(QWidget):
             # 使用plot_window的初始化方法
             self.plot_window.init_plot_display(plot_display_widget)
 
-            # 连接双击信号 - 打开独立窗口
-            self.plot_window.plot_double_clicked.connect(self._on_plot_double_click)
-
             logger.info("绘图窗口初始化完成")
         else:
             logger.warning("未找到widget_plot_display控件")
-
-    def _on_plot_double_click(self):
-        """双击绘图区域，打开独立窗口"""
-        if not self.angle_data or not self.mag_data:
-            return
-
-        # 创建独立窗口
-        dialog = QDialog(self)
-        dialog.setWindowTitle("波形显示")
-        dialog.resize(1000, 600)
-        dialog.showMaximized()
-
-        # 直接创建轻量级绘图控件
-        plot_widget = pg.PlotWidget()
-        plot_widget.setBackground('#ffffff')
-        plot_widget.showGrid(x=True, y=True, alpha=0.5)
-        plot_widget.setXRange(0, 360)
-        plot_widget.plotItem.setLabel('bottom', '角度', units='°')
-        plot_widget.plotItem.setLabel('left', '磁场', units='mT')
-
-        curve = plot_widget.plot(pen=mkPen(self._current_plot_color, width=1.5))
-        curve.setData(self.angle_data, self.mag_data)
-
-        # 自动调整Y轴
-        mag_arr = np.array(self.mag_data)
-        min_val = np.min(mag_arr)
-        max_val = np.max(mag_arr)
-        margin = (max_val - min_val) * 0.1
-        plot_widget.setYRange(min_val - margin, max_val + margin)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(plot_widget)
-
-        dialog.exec_()
 
     def _connect_buttons(self):
         """连接按钮事件"""
@@ -650,12 +602,8 @@ class MeasurePanel(QWidget):
             )
 
     def _on_position_data_updated(self, position_data):
-        """Update position display."""
-        if not self.isVisible():
-            return
-        if position_data and len(position_data) >= 2:
-            x, z = position_data[0], position_data[1]
-            self._update_current_position_display(x, z)
+        """保留位置数据槽函数，测量配置区不再显示当前位置。"""
+        return
 
     def _on_measure_progress(self, current, total):
         """Update measurement progress."""

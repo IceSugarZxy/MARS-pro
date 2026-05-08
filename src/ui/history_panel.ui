@@ -196,13 +196,6 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="btn_open">
-          <property name="text">
-           <string>打开并分析</string>
-          </property>
-         </widget>
-        </item>
-        <item>
          <spacer name="btn_spacer">
           <property name="orientation">
            <enum>Qt::Horizontal</enum>
