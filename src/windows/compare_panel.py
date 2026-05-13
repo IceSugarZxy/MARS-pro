@@ -104,7 +104,7 @@ class ComparePanel(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_plot_double_click(self):
-        """双击绘图区域，打开独立窗口显示两条曲线"""
+        """双击绘图区域，在独立窗口查看两条曲线。"""
         if not self.data1['angle'] and not self.data2['angle']:
             return
 

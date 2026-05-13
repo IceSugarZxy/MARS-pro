@@ -115,8 +115,7 @@ class DataProcess(QObject):
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
 
-        # 偏置校准标志：用于阻止位置数据处理干扰偏置校准
-        self._offset_calibrating: bool = False
+        # 偏置校准期间暂停位置数据处理，避免串口回信互相干扰。
         self._offset_calibrating: bool = False
         self._self_detecting: bool = False
         self._self_detect_text_buffer: str = ""
@@ -178,7 +177,7 @@ class DataProcess(QObject):
         if not measure_list:
             return
 
-        logger.info(f"娴嬮噺鏁版嵁鎺ユ敹瀹屾垚锛屽叡 {len(measure_list)} 涓暟鎹偣")
+        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
         self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
         self.save_raw_measure_data(measure_list)
 
@@ -321,8 +320,7 @@ class DataProcess(QObject):
                         f"preview={self._text_preview(text)}"
                     )
 
-                # 检测是否是位置数据（格式：X:****,Z:****），如果是则放回队列不消费
-                # Consume stale position packets during self-detect.
+                # 自检期间丢弃旧位置包，避免误判自检完成回信。
                 if re.search(r'X:-?\d+,Z:-?\d+', text):
                     ignored_position_packets += 1
 

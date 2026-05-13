@@ -120,7 +120,7 @@ class ConfigManager(QObject):
 
     def __init__(self, config_file: str = "configuration.txt"):
         super().__init__()
-        # 使用相对于模块文件的路径，确保无论从哪里运行都能找到配置文件
+        # 运行时配置放在源码入口或打包后的 MARS.exe 同级目录。
         if not os.path.isabs(config_file):
             config_file = get_config_path(config_file)
         self.config_file = config_file

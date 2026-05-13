@@ -528,7 +528,7 @@ def get_base_stylesheet() -> str:
         border-radius: {BORDER_RADIUS_L};
     }}
 
-    /* 数据比对结果文本 - 放大字体 */
+    /* 数据比对结果文本 */
     QTextEdit#result1_text, QTextEdit#result2_text {{
         font-size: 20px;
     }}

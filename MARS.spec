@@ -7,7 +7,25 @@ SPEC_DIR = os.path.dirname(os.path.abspath(SPEC_FILE))
 
 block_cipher = None
 
-# 收集所有必要的模块
+icon_file = os.path.join(SPEC_DIR, 'src', 'icon.ico')
+
+# Runtime assets that must sit next to MARS.exe in the onedir build.
+datas = [
+    (os.path.join(SPEC_DIR, 'src', 'ui'), 'ui'),
+    (os.path.join(SPEC_DIR, 'src', 'windows'), 'windows'),
+    (os.path.join(SPEC_DIR, 'src', 'core'), 'core'),
+]
+
+for relative_path in [
+    os.path.join('src', 'configuration.txt'),
+    os.path.join('src', 'configuration.example.txt'),
+    os.path.join('src', 'icon.png'),
+]:
+    source_path = os.path.join(SPEC_DIR, relative_path)
+    if os.path.exists(source_path):
+        datas.append((source_path, '.'))
+
+# Modules imported dynamically by PyQt, SciPy, pyqtgraph, and pyserial.
 hiddenimports = [
     'PyQt5',
     'PyQt5.QtCore',
@@ -29,11 +47,7 @@ a = Analysis(
     [os.path.join(SPEC_DIR, 'src', 'main.py')],
     pathex=[SPEC_DIR],
     binaries=[],
-    datas=[
-        (os.path.join(SPEC_DIR, 'src', 'ui'), 'ui'),
-        (os.path.join(SPEC_DIR, 'src', 'windows'), 'windows'),
-        (os.path.join(SPEC_DIR, 'src', 'core'), 'core'),
-    ],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -58,6 +72,8 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=icon_file,
+    contents_directory='.',
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

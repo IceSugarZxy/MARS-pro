@@ -6,20 +6,19 @@
 import sys
 import os
 
-# PyInstaller 打包后的路径处理
+# Resolve the runtime root for both source and PyInstaller builds.
 if getattr(sys, 'frozen', False):
-    # 打包后的应用程序 - 使用可执行文件所在目录
     application_path = os.path.dirname(sys.executable)
 else:
-    # 开发环境
     application_path = os.path.dirname(os.path.abspath(__file__))
 
-# 添加src目录到路径
+# Allow absolute imports such as `from core import ...`.
 sys.path.insert(0, application_path)
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
-# 绝对导入
+from PyQt5.QtGui import QIcon
+
 from core import init_logging, get_config_manager, ThreadManager
 
 
@@ -27,7 +26,6 @@ class MainApplication:
     """主应用程序类 - 负责窗口协调和数据流连接"""
 
     def __init__(self):
-        # 初始化日志 - 使用exe同级的logs目录
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -60,7 +58,7 @@ class MainApplication:
             self.thread_manager = ThreadManager()
             self.logger.info("线程管理器创建成功")
 
-            # 连接信号到各面板（使用 QueuedConnection 确保跨线程安全）
+            # Use queued connections for signals emitted from worker threads.
             self.thread_manager.serial_manager.signal_connection_status_changed.connect(
                 self.main_panel.update_serial_status, Qt.QueuedConnection
             )
@@ -68,7 +66,6 @@ class MainApplication:
                 self.main_panel.update_position_from_tuple,
                 Qt.QueuedConnection
             )
-            # 连接位置数据处理信号
             self.thread_manager.data_process.signal_position_data_process.connect(
                 self.thread_manager.data_process.process_position_data,
                 Qt.QueuedConnection
@@ -77,7 +74,7 @@ class MainApplication:
                 self.thread_manager.data_process.check_self_detect,
                 Qt.QueuedConnection
             )
-            # 连接位置数据处理完成信号 - 更新serial_command当前位置
+            # Keep SerialCommand's cached position aligned with parsed feedback.
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
                 self.thread_manager.serial_command._on_position_data_processed,
                 Qt.QueuedConnection
@@ -85,25 +82,21 @@ class MainApplication:
             self.thread_manager.data_process.signal_self_detect_finished.connect(
                 self.thread_manager.serial_command._on_self_detect_finished
             )
-            # 连接偏置数据处理信号
             self.thread_manager.data_process.signal_offset_data_process.connect(
                 self.thread_manager.data_process.process_offset_data,
                 Qt.QueuedConnection
             )
-            # 连接测量数据处理信号
             self.thread_manager.data_process.signal_measure_data_process.connect(
                 self.thread_manager.data_process.process_measure_data,
                 Qt.QueuedConnection
             )
-            # 连接偏置校准完成信号 - 清除偏置校准标志
+            # Clear offset-calibration state after the data processor finishes.
             self.thread_manager.data_process.signal_offset_data_process_finished.connect(
                 self.thread_manager.serial_command._on_offset_calibration_finished
             )
-            # 连接断开信号
             self.thread_manager.signal_disconnect.connect(
                 self.thread_manager.serial_manager.disconnect_serial
             )
-            # 连接串口连接信号
             self.thread_manager.signal_connect.connect(
                 self.thread_manager.serial_manager.connect_serial
             )
@@ -171,6 +164,9 @@ def main() -> int:
 
     # 创建应用程序实例
     app = QApplication(sys.argv)
+    icon_path = os.path.join(application_path, "icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     # 设置应用程序信息
     app.setApplicationName("旋转体表磁测量分析系统")
@@ -179,7 +175,7 @@ def main() -> int:
     # 设置应用程序样式
     app.setStyle('Fusion')
 
-    # 创建并运行主应用程序codex
+    # Create and run the coordinator object.
     main_app = MainApplication()
     exit_code = main_app.run()
 
