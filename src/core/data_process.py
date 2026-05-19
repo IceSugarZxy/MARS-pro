@@ -33,6 +33,7 @@ from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
     OFFSET_MAX_PROCESS_SECONDS,
+    OFFSET_STABLE_WINDOW_SECONDS,
 )
 
 logger = get_logger('DataProcess')
@@ -527,7 +528,7 @@ class DataProcess(QObject):
         3. 等待一小段时间看是否有新数据
         4. 重复直到真的没有新数据
         5. 对数据进行低通滤波
-        6. 取中间90%数据的平均值作为偏置
+        6. 按配置取中间稳定窗口数据的平均值作为偏置
         7. 保存到配置文件
 
         Note:
@@ -626,9 +627,17 @@ class DataProcess(QObject):
                 filtered_offset_list = self._lowpass_filter(offset_list)
                 total_len = len(filtered_offset_list)
 
-                # 取中间90%的数据（去掉首尾各5%）
-                start_index = int(total_len * 0.05)
-                end_index = int(total_len * 0.95)
+                # Use the stable middle window: for 5s collection, keep the middle 3s.
+                trim_ratio = 0.0
+                if OFFSET_COLLECTION_SECONDS > 0 and OFFSET_STABLE_WINDOW_SECONDS > 0:
+                    trim_ratio = max(
+                        0.0,
+                        (OFFSET_COLLECTION_SECONDS - OFFSET_STABLE_WINDOW_SECONDS)
+                        / (2 * OFFSET_COLLECTION_SECONDS),
+                    )
+
+                start_index = int(total_len * trim_ratio)
+                end_index = int(total_len * (1.0 - trim_ratio))
 
                 if start_index < end_index:
                     middle_data = filtered_offset_list[start_index:end_index]
@@ -638,7 +647,8 @@ class DataProcess(QObject):
                 logger.info(
                     "Offset flow: calculating offset, "
                     f"raw_points={len(offset_list)}, filtered_points={total_len}, "
-                    f"middle_range={start_index}:{end_index}, middle_points={len(middle_data)}"
+                    f"middle_range={start_index}:{end_index}, middle_points={len(middle_data)}, "
+                    f"trim_ratio={trim_ratio:.3f}"
                 )
                 self.mag_offset = statistics.mean(middle_data)
 
