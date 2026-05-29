@@ -119,6 +119,12 @@ class MeasurePanel(QWidget):
             # 连接配置管理器的信号
             config.signal_test_type_changed.connect(self._on_config_test_type_changed)
             config.signal_scheme_changed.connect(self._on_config_scheme_changed)
+
+        combo_test_speed = self.findChild(QComboBox, "combo_test_speed")
+        if combo_test_speed:
+            combo_test_speed.setCurrentIndex(config.test_speed)
+            combo_test_speed.currentIndexChanged.connect(self._on_test_speed_changed)
+            config.signal_test_speed_changed.connect(self._on_config_test_speed_changed)
         # 更新移动方案显示
         self._update_scheme_display(config.test_type)
 
@@ -146,6 +152,12 @@ class MeasurePanel(QWidget):
         logger.info(f"测试类型已更改: {index}")
         self._update_scheme_display(index)
 
+    def _on_test_speed_changed(self, index):
+        """测试速度改变"""
+        config = get_config_manager()
+        config.test_speed = index
+        logger.info(f"测试速度已更改: {index}")
+
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
         combo_test_type = self.findChild(QComboBox, "combo_test_type")
@@ -154,6 +166,14 @@ class MeasurePanel(QWidget):
             combo_test_type.setCurrentIndex(index)
             combo_test_type.blockSignals(False)
         self._update_scheme_display(index)
+
+    def _on_config_test_speed_changed(self, index):
+        """配置管理器测试速度改变，同步更新下拉框"""
+        combo_test_speed = self.findChild(QComboBox, "combo_test_speed")
+        if combo_test_speed and combo_test_speed.currentIndex() != index:
+            combo_test_speed.blockSignals(True)
+            combo_test_speed.setCurrentIndex(index)
+            combo_test_speed.blockSignals(False)
 
     def _on_config_scheme_changed(self, test_type):
         """配置管理器移动方案改变，同步更新当前测试类型流程。"""
@@ -244,6 +264,9 @@ class MeasurePanel(QWidget):
 
         self._reset_sample_inputs()
         self.data_process.measure_type = "rotation"
+        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
+        self.data_process.save_raw_data_enabled = bool(raw_checkbox and raw_checkbox.isChecked())
+        logger.info(f"原始数据自动保存: {self.data_process.save_raw_data_enabled}")
 
         sample_info = self._collect_sample_info_from_ui()
         self.data_process.set_sample_info(sample_info)
@@ -452,12 +475,18 @@ class MeasurePanel(QWidget):
         self.findChild(QPushButton, "btn_start_rotation").setEnabled(False)
         self.findChild(QPushButton, "btn_zeroing").setEnabled(False)
         self.findChild(QPushButton, "btn_test_position").setEnabled(False)
+        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
+        if raw_checkbox:
+            raw_checkbox.setEnabled(False)
 
     def _enable_function_buttons(self):
         """启用所有功能按钮"""
         self.findChild(QPushButton, "btn_start_rotation").setEnabled(True)
         self.findChild(QPushButton, "btn_zeroing").setEnabled(True)
         self.findChild(QPushButton, "btn_test_position").setEnabled(True)
+        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
+        if raw_checkbox:
+            raw_checkbox.setEnabled(True)
 
     def _end_test(self):
         """结束测试"""

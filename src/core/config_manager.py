@@ -13,6 +13,11 @@ from .path_utils import get_config_path
 
 logger = logging.getLogger(__name__)
 
+# X轴实测标定：按脉冲-位移数据过原点线性拟合得到。
+X_AXIS_PULSES_PER_MM = 3179.8133141860703
+# Z轴实测标定：按脉冲-位移数据过原点线性拟合得到。
+Z_AXIS_PULSES_PER_MM = 3346.588448364109
+
 
 # 动作类型定义
 ACTION_TYPES = ['X', 'Z', 'X+', 'X-', 'Z+', 'Z-']
@@ -88,6 +93,8 @@ class ConfigManager(QObject):
 
     # 测试类型改变信号
     signal_test_type_changed = pyqtSignal(int)
+    # 测试速度改变信号
+    signal_test_speed_changed = pyqtSignal(int)
     # 测试/挂起移动方案改变信号
     signal_scheme_changed = pyqtSignal(int)
 
@@ -106,6 +113,8 @@ class ConfigManager(QObject):
         'suspend_z': '0',
         # 测试类型: 0=平面旋转, 1=外侧面旋转, 2=内侧面旋转, 3=外侧面垂直
         'test_type': '0',
+        # 测试速度: 0=高速测量, 1=高分辨率测量
+        'test_speed': '0',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
         'test_movement_scheme': 'x_first',
         # 挂起位置移动方案
@@ -281,6 +290,15 @@ class ConfigManager(QObject):
     def test_type(self, value: int) -> None:
         self.set('test_type', value)
         self.signal_test_type_changed.emit(value)
+
+    @property
+    def test_speed(self) -> int:
+        return self.get_int('test_speed', 0)
+
+    @test_speed.setter
+    def test_speed(self, value: int) -> None:
+        self.set('test_speed', value)
+        self.signal_test_speed_changed.emit(value)
 
     @property
     def test_movement_scheme(self) -> str:
@@ -505,12 +523,12 @@ class ConfigManager(QObject):
         return False
 
     def get_inner_x_offset_pulse(self) -> int:
-        """获取X轴偏移量（脉冲），1mm = 400脉冲"""
-        return int(self.inner_x_offset * 400)
+        """获取X轴偏移量（脉冲），按实测标定换算"""
+        return int(round(self.inner_x_offset * X_AXIS_PULSES_PER_MM))
 
     def get_inner_z_offset_pulse(self) -> int:
-        """获取Z轴偏移量（脉冲），1mm ≈ 1613脉冲 (1/0.62μm)"""
-        return int(self.inner_z_offset * (1000 / 0.62))
+        """获取Z轴偏移量（脉冲），按实测标定换算"""
+        return int(round(self.inner_z_offset * Z_AXIS_PULSES_PER_MM))
 
 
 # 全局配置实例

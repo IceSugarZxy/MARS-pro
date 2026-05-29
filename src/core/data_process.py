@@ -112,6 +112,7 @@ class DataProcess(QObject):
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
         self.enable_concentricity_calibration: bool = True
+        self.save_raw_data_enabled: bool = False
 
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
@@ -180,7 +181,10 @@ class DataProcess(QObject):
 
         logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
         self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
-        self.save_raw_measure_data(measure_list)
+        if self.save_raw_data_enabled:
+            self.save_raw_measure_data(measure_list)
+        else:
+            logger.info("原始测量数据自动保存已关闭，跳过 raw_data 写入")
 
         if self.measure_type == "vertical":
             angle_data = list(range(len(measure_list)))

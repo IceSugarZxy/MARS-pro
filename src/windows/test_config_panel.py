@@ -77,6 +77,12 @@ class TestConfigPanel(QWidget):
             config.signal_test_type_changed.connect(self._on_config_test_type_changed)
             config.signal_scheme_changed.connect(self._on_config_scheme_changed)
 
+        combo_test_speed = self.findChild(QComboBox, "combo_test_speed")
+        if combo_test_speed:
+            combo_test_speed.setCurrentIndex(config.test_speed)
+            combo_test_speed.currentIndexChanged.connect(self._on_test_speed_changed)
+            config.signal_test_speed_changed.connect(self._on_config_test_speed_changed)
+
         # 更新方案显示
         self._update_scheme_display(config.test_type)
 
@@ -137,6 +143,12 @@ class TestConfigPanel(QWidget):
         # 更新方案显示
         self._update_scheme_display(index)
 
+    def _on_test_speed_changed(self, index):
+        """测试速度改变"""
+        config = get_config_manager()
+        config.test_speed = index
+        logger.info(f"测试速度已更改: {index}")
+
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
         combo_test_type = self.findChild(QComboBox, "combo_test_type")
@@ -146,6 +158,14 @@ class TestConfigPanel(QWidget):
             combo_test_type.blockSignals(False)
         # 更新方案显示
         self._update_scheme_display(index)
+
+    def _on_config_test_speed_changed(self, index):
+        """配置管理器测试速度改变，同步更新下拉框"""
+        combo_test_speed = self.findChild(QComboBox, "combo_test_speed")
+        if combo_test_speed and combo_test_speed.currentIndex() != index:
+            combo_test_speed.blockSignals(True)
+            combo_test_speed.setCurrentIndex(index)
+            combo_test_speed.blockSignals(False)
 
     def _on_config_scheme_changed(self, test_type):
         """配置管理器移动方案改变，同步更新当前测试类型流程。"""
@@ -184,7 +204,6 @@ class TestConfigPanel(QWidget):
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._on_offset)
         self.findChild(QPushButton, "btn_press_z").clicked.connect(self._on_press_z)
         self.findChild(QPushButton, "btn_left_x").clicked.connect(self._on_left_x)
-        self.findChild(QPushButton, "btn_right_x").clicked.connect(self._on_right_x)
         self.findChild(QPushButton, "btn_test_pos").clicked.connect(self._on_test_pos)
         self.findChild(QPushButton, "btn_suspend").clicked.connect(self._on_suspend)
         self.findChild(QPushButton, "btn_test_pos_save").clicked.connect(self._on_test_pos_save)
@@ -196,18 +215,52 @@ class TestConfigPanel(QWidget):
     def _init_quick_action_settings(self):
         """初始化快捷操作配置"""
         config = get_config_manager()
-        retract_spin = self.findChild(QDoubleSpinBox, "spin_retract_distance")
-        if retract_spin:
-            retract_spin.blockSignals(True)
-            retract_spin.setValue(config.retract_distance)
-            retract_spin.blockSignals(False)
-            retract_spin.valueChanged.connect(self._on_retract_distance_changed)
+
+        self._bind_double_spin(
+            "spin_retract_distance",
+            config.retract_distance,
+            self._on_retract_distance_changed,
+        )
+        self._bind_double_spin(
+            "spin_x_offset",
+            config.inner_x_offset,
+            self._on_x_offset_changed,
+        )
+        self._bind_double_spin(
+            "spin_z_offset",
+            config.inner_z_offset,
+            self._on_z_offset_changed,
+        )
+
+    def _bind_double_spin(self, object_name, value, handler):
+        """Load a double spin box from config and persist user changes."""
+        spin = self.findChild(QDoubleSpinBox, object_name)
+        if not spin:
+            logger.warning(f"未找到数值输入控件: {object_name}")
+            return
+
+        spin.blockSignals(True)
+        spin.setValue(float(value))
+        spin.blockSignals(False)
+        spin.valueChanged.connect(handler)
 
     def _on_retract_distance_changed(self, value):
         """更新贴靠回弹距离"""
         config = get_config_manager()
         config.retract_distance = value
         logger.info(f"贴靠回弹距离已更新: {value:.2f} mm")
+
+    def _on_x_offset_changed(self, value):
+        """更新X轴偏移量"""
+        config = get_config_manager()
+        config.inner_x_offset = value
+        logger.info(f"X轴偏移量已更新: {value:.2f} mm")
+
+    def _on_z_offset_changed(self, value):
+        """更新Z轴偏移量"""
+        config = get_config_manager()
+        config.inner_z_offset = value
+        logger.info(f"Z轴偏移量已更新: {value:.2f} mm")
 
     def _on_position_data_updated(self, position_data):
         """位置数据更新"""
@@ -300,15 +353,6 @@ class TestConfigPanel(QWidget):
         if self.serial_command:
             accepted = self.serial_command.auto_press_left()
             logger.info(f"Adhesion flow: UI command result, action=left_x, accepted={accepted}")
-        else:
-            logger.warning("串口命令未初始化")
-
-    def _on_right_x(self):
-        """X轴右贴靠"""
-        self._log_adhesion_button("right_x")
-        if self.serial_command:
-            accepted = self.serial_command.auto_press_right()
-            logger.info(f"Adhesion flow: UI command result, action=right_x, accepted={accepted}")
         else:
             logger.warning("串口命令未初始化")
 

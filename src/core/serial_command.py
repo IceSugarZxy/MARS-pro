@@ -10,7 +10,11 @@ from typing import Callable, Optional, TYPE_CHECKING
 
 from PyQt5.QtCore import QObject, QTimer
 
-from .config_manager import get_config_manager
+from .config_manager import (
+    X_AXIS_PULSES_PER_MM,
+    Z_AXIS_PULSES_PER_MM,
+    get_config_manager,
+)
 from .logger import get_logger
 from .offset_calibration_config import (
     OFFSET_COLLECTION_COMMAND_SECONDS,
@@ -23,8 +27,6 @@ if TYPE_CHECKING:
 
 logger = get_logger("SerialCommand")
 
-X_AXIS_PULSES_PER_MM = 400
-Z_AXIS_PULSES_PER_MM = 1000 / 0.62
 POSITION_TOLERANCE_MM = 0.2
 POSITION_WAIT_TIMEOUT_MS = 20000
 POSITION_WAIT_POLL_INTERVAL_MS = 150
@@ -592,10 +594,6 @@ class SerialCommand(QObject):
         logger.info("Adhesion flow: X left press requested.")
         return self._start_self_detect("Y~", "X", "X")
 
-    def auto_press_right(self) -> bool:
-        logger.info("Adhesion flow: X right press requested.")
-        return self._start_self_detect("Y-~", "X-", "X")
-
     def _on_self_detect_finished(self, axis: str) -> None:
         if not self._pending_retract_axis:
             logger.debug("No pending retract task.")
@@ -681,9 +679,9 @@ class SerialCommand(QObject):
 
         retract_mm = max(0.0, self.config.retract_distance)
         if axis in {"X", "X-"}:
-            retract_pulse = int(retract_mm * X_AXIS_PULSES_PER_MM)
+            retract_pulse = int(round(retract_mm * X_AXIS_PULSES_PER_MM))
         elif axis == "Z":
-            retract_pulse = int(retract_mm * Z_AXIS_PULSES_PER_MM)
+            retract_pulse = int(round(retract_mm * Z_AXIS_PULSES_PER_MM))
         else:
             self._work_state = WorkState.IDLE
             self._end_async_command_lock()
@@ -734,9 +732,9 @@ class SerialCommand(QObject):
         self._pending_move_task = None
 
         if axis == "Z":
-            distance_pulse = int(distance_mm * 1000 / 0.62)
+            distance_pulse = int(round(distance_mm * Z_AXIS_PULSES_PER_MM))
         elif axis == "X":
-            distance_pulse = int(distance_mm * 400)
+            distance_pulse = int(round(distance_mm * X_AXIS_PULSES_PER_MM))
         else:
             logger.error(f"Unknown axis: {axis}")
             return

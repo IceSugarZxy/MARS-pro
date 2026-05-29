@@ -104,6 +104,26 @@ def get_base_stylesheet() -> str:
         color: {COLOR_TEXT_SECONDARY};
     }}
 
+    QCheckBox {{
+        background-color: transparent;
+        color: {COLOR_TEXT_PRIMARY};
+        spacing: 6px;
+        font-size: {FONT_SIZE_M};
+    }}
+
+    QCheckBox::indicator {{
+        width: 14px;
+        height: 14px;
+        border: 1px solid {COLOR_GRAY};
+        border-radius: 3px;
+        background-color: transparent;
+    }}
+
+    QCheckBox::indicator:checked {{
+        background-color: {COLOR_PRIMARY};
+        border: 1px solid {COLOR_PRIMARY};
+    }}
+
     /* 输入框 */
     QLineEdit, QTextEdit, QPlainTextEdit {{
         background-color: #ffffff;
@@ -535,7 +555,7 @@ def get_base_stylesheet() -> str:
 
     /* 测试配置面板按钮 - 悬停效果（覆盖内联样式） */
     QPushButton#btn_offset:hover, QPushButton#btn_zeroing:hover, QPushButton#btn_press_z:hover,
-    QPushButton#btn_left_x:hover, QPushButton#btn_right_x:hover, QPushButton#btn_test_pos:hover,
+    QPushButton#btn_left_x:hover, QPushButton#btn_test_pos:hover,
     QPushButton#btn_suspend:hover, QPushButton#btn_test_pos_save:hover, QPushButton#btn_suspend_save:hover,
     QToolButton#btn_test_edit_scheme:hover, QToolButton#btn_suspend_edit_scheme:hover {{
         background-color: rgb(224,224,224) !important;
