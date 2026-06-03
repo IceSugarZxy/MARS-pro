@@ -14,10 +14,92 @@ logger = get_logger('WaveAnalysis')
 
 class WaveAnalysis:
     """波形分析类"""
-    
+
     def __init__(self):
         pass
-    
+
+    @staticmethod
+    def _get_zero_angle_merge_tolerance(x):
+        """计算过零点去重容差，避免0度/360度同一过零点被重复计入。"""
+        try:
+            diffs = np.diff(x)
+            positive_diffs = diffs[diffs > 0]
+            if len(positive_diffs) > 0:
+                return max(1e-6, float(np.median(positive_diffs) * 5))
+        except Exception:
+            pass
+        return 1e-6
+
+    @staticmethod
+    def _get_zero_value_tolerance(y):
+        """计算磁场零值容差，用于识别首尾恰好落在零点的闭环边界。"""
+        try:
+            y_scale = float(np.max(np.abs(y)))
+            if np.isfinite(y_scale) and y_scale > 0:
+                return max(1e-9, y_scale * 1e-6)
+        except Exception:
+            pass
+        return 1e-9
+
+    def _normalize_zero_angles(self, zero_angles, x):
+        """去除过近的重复过零点，并合并首尾相接的同一物理过零点。"""
+        if not zero_angles:
+            return []
+
+        merge_tolerance = self._get_zero_angle_merge_tolerance(x)
+        normalized = []
+        for angle in sorted(float(a) for a in zero_angles):
+            if not normalized or abs(angle - normalized[-1]) > merge_tolerance:
+                normalized.append(angle)
+
+        if len(normalized) > 1:
+            boundary_gap = (normalized[0] - x[0]) + (x[-1] - normalized[-1])
+            if 0 <= boundary_gap <= merge_tolerance:
+                removed = normalized.pop()
+                logger.info(
+                    "  首尾过零点合并: "
+                    f"first={normalized[0]:.6f}, removed_last={removed:.6f}, "
+                    f"boundary_gap={boundary_gap:.6f}, tolerance={merge_tolerance:.6f}"
+                )
+
+        return normalized
+
+    def _build_circular_polar_intervals(self, zero_angles, x, y):
+        """按闭环过零点计算N/S半波间隔和单对极周期。"""
+        if len(zero_angles) < 2:
+            return [], [], []
+
+        span = float(x[-1] - x[0])
+        if span <= 0:
+            return [], [], []
+
+        intervals = []
+        for i, start_angle in enumerate(zero_angles):
+            end_angle = zero_angles[(i + 1) % len(zero_angles)]
+            if i == len(zero_angles) - 1:
+                end_angle += span
+
+            interval = float(end_angle - start_angle)
+            if interval <= 0:
+                continue
+
+            midpoint = start_angle + interval / 2
+            sample_angle = ((midpoint - x[0]) % span) + x[0]
+            midpoint_value = float(np.interp(sample_angle, x, y))
+            pole = 'N' if midpoint_value >= 0 else 'S'
+            intervals.append({'length': interval, 'pole': pole})
+
+        N_interval = [item['length'] for item in intervals if item['pole'] == 'N']
+        S_interval = [item['length'] for item in intervals if item['pole'] == 'S']
+
+        SinglePolarValue = []
+        for i, item in enumerate(intervals):
+            next_item = intervals[(i + 1) % len(intervals)]
+            if item['pole'] == 'N' and next_item['pole'] == 'S':
+                SinglePolarValue.append(item['length'] + next_item['length'])
+
+        return N_interval, S_interval, SinglePolarValue
+
     def analyze_waveform(self, angle_data, mag_data, enable_concentricity_calibration=True):
         """执行波形分析
         
@@ -127,6 +209,14 @@ class WaveAnalysis:
             # Part 2: 过零点分析
             zero_crossings = []
             zero_angles = []
+            zero_value_tolerance = self._get_zero_value_tolerance(y)
+
+            # 角度首尾是同一个物理位置；如果边界点正好在零点，先纳入一个闭环零点，
+            # 后续归一化会把0度/360度的重复点合并为同一个物理过零点。
+            if abs(float(y[0])) <= zero_value_tolerance:
+                zero_angles.append(float(x[0]))
+            if len(y) > 1 and abs(float(y[-1])) <= zero_value_tolerance:
+                zero_angles.append(float(x[-1]))
 
             # 检测过零点
             for i in range(len(y) - 1):
@@ -153,48 +243,24 @@ class WaveAnalysis:
                     logger.info(f"  过零点{zero_idx}计算失败: {e}")
                     continue
 
-            zero_angles.sort()
-
-            # 构建角度列表：从0度到第一个过零点，然后从最后一个过零点回绕到360度
-            # 0到第一个过零点 + 最后一个过零点 + 第一个过零点到最后一个过零点
-            if len(zero_angles) >= 2:
-                angles_at_zero = [x[0]] + zero_angles + [x[-1]]
-            elif len(zero_angles) == 1:
-                # 只有一个过零点时，整个范围作为一个间隔
-                angles_at_zero = [x[0], zero_angles[0], x[-1]]
-            else:
-                angles_at_zero = [x[0], x[-1]]
+            zero_angles = self._normalize_zero_angles(zero_angles, x)
 
             # 计算极间隔和误差
             N_interval, S_interval, SinglePolarValue = [], [], []
             SinglePolarError, PolarErrorSumList = [], []
 
-            if len(angles_at_zero) > 2:
-                # 第一个间隔和最后一个间隔需要合并（首尾相连）
-                # angles_at_zero = [0, first_zc, ..., last_zc, 360]
-                # 合并后的第一个N极间隔 = (360 - last_zc) + (first_zc - 0)
-                wrap_interval = (angles_at_zero[-1] - angles_at_zero[-2]) + (angles_at_zero[1] - angles_at_zero[0])
-                N_interval.append(wrap_interval)
-
-                # 计算中间的S极和N极间隔
-                for i in range(1, len(angles_at_zero) - 2):
-                    interval = angles_at_zero[i+1] - angles_at_zero[i]
-                    if interval > 0:
-                        if i % 2 == 1:  # i=1,3,5...为S极间隔
-                            S_interval.append(interval)
-                        else:  # i=2,4,6...为N极间隔
-                            N_interval.append(interval)
+            if len(zero_angles) >= 2:
+                N_interval, S_interval, SinglePolarValue = self._build_circular_polar_intervals(
+                    zero_angles, x, y
+                )
 
                 # 验证间隔数量一致性
                 if len(N_interval) > 0 and len(S_interval) > 0:
                     logger.info(f"  N极间隔数量: {len(N_interval)}, S极间隔数量: {len(S_interval)}")
-
-                # 单对极周期 = 相邻的N极间隔+S极间隔
-                # 单对极周期计算使用合并后的间隔对
-                for i in range(len(N_interval)):
-                    if i < len(S_interval):
-                        polar_cycle = N_interval[i] + S_interval[i]
-                        SinglePolarValue.append(polar_cycle)
+                if len(N_interval) != len(S_interval):
+                    logger.info(
+                        f"  N/S极间隔数量不一致: N={len(N_interval)}, S={len(S_interval)}"
+                    )
 
                 # 单极误差
                 if len(SinglePolarValue) > 0:
@@ -223,22 +289,25 @@ class WaveAnalysis:
                         y_mean = np.mean(y_original)
                         y_amplitude = (np.max(y_original) - np.min(y_original)) / 2
 
-                        # 尝试不同的初始参数
-                        initial_guess = [y_amplitude, 2*np.pi/len(x_fit), 0, y_mean]
+                        if y_amplitude <= 1e-12:
+                            logger.info("  单极误差波动过小，跳过正弦拟合")
+                        else:
+                            # 尝试不同的初始参数
+                            initial_guess = [y_amplitude, 2*np.pi/len(x_fit), 0, y_mean]
 
-                        # 进行正弦拟合
-                        popt, _ = curve_fit(sin_func, x_fit, y_original, p0=initial_guess, maxfev=5000)
+                            # 进行正弦拟合
+                            popt, _ = curve_fit(sin_func, x_fit, y_original, p0=initial_guess, maxfev=5000)
 
-                        A_fit, omega_fit, phi_fit, C_fit = popt
+                            A_fit, omega_fit, phi_fit, C_fit = popt
 
-                        # 计算拟合值
-                        y_fit = sin_func(x_fit, A_fit, omega_fit, phi_fit, C_fit)
+                            # 计算拟合值
+                            y_fit = sin_func(x_fit, A_fit, omega_fit, phi_fit, C_fit)
 
-                        # 用原始单极误差减去拟合的正弦函数，削弱同心度导致的周期性波动
-                        y_adjusted = y_original - y_fit
+                            # 用原始单极误差减去拟合的正弦函数，削弱同心度导致的周期性波动
+                            y_adjusted = y_original - y_fit
 
-                        # 更新单极误差列表，后续累计误差基于校准后的单极误差重新累加
-                        SinglePolarError = y_adjusted.tolist()
+                            # 更新单极误差列表，后续累计误差基于校准后的单极误差重新累加
+                            SinglePolarError = y_adjusted.tolist()
 
                     except Exception as e:
                         logger.info(f"  单极误差正弦拟合失败，使用原始单极误差: {e}")
