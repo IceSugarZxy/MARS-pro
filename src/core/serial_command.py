@@ -211,6 +211,7 @@ class SerialCommand(QObject):
             "start_position": current_position,
             "last_position": current_position,
             "timeout_ms": timeout_ms,
+            "motion_confirmed": False,
         }
         self._work_state = WorkState.WAITING_POSITION
         logger.info(
@@ -244,7 +245,7 @@ class SerialCommand(QObject):
             wait_state = self._clear_position_wait()
             self._work_state = WorkState.IDLE
             logger.info(
-                f"{axis} axis already at target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+                f"{axis} axis reached target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
             )
             if wait_state:
                 wait_state["callback"](True)
@@ -257,21 +258,20 @@ class SerialCommand(QObject):
             return
 
         if current != start_position:
-            wait_state = self._clear_position_wait()
-            self._work_state = WorkState.IDLE
-            logger.info(
-                f"{axis} axis motion detected: start={start_position}, current={current}, "
-                f"target={target}, diff={diff}, tolerance={tolerance}"
-            )
-            if wait_state:
-                wait_state["callback"](True)
+            if not wait_state.get("motion_confirmed", False):
+                wait_state["motion_confirmed"] = True
+                self._position_wait_timeout_timer.stop()
+                logger.info(
+                    f"{axis} axis motion detected, wait until target: start={start_position}, "
+                    f"current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+                )
+            wait_state["last_position"] = current
             return
 
         wait_state["last_position"] = current
 
     def _on_position_wait_timeout(self) -> None:
-        wait_state = self._clear_position_wait()
-        self._work_state = WorkState.IDLE
+        wait_state = self._active_position_wait
         if not wait_state:
             return
 
@@ -283,6 +283,8 @@ class SerialCommand(QObject):
         start_position = wait_state.get("start_position")
 
         if current is not None and diff <= tolerance:
+            wait_state = self._clear_position_wait()
+            self._work_state = WorkState.IDLE
             logger.info(
                 f"{axis} axis accepted after motion check timeout: current={current}, target={target}, "
                 f"diff={diff}, tolerance={tolerance}"
@@ -291,13 +293,16 @@ class SerialCommand(QObject):
             return
 
         if current is not None and start_position is not None and current != start_position:
+            wait_state["motion_confirmed"] = True
+            self._position_wait_timeout_timer.stop()
             logger.info(
-                f"{axis} axis motion detected at timeout: start={start_position}, current={current}, "
-                f"target={target}, diff={diff}, tolerance={tolerance}"
+                f"{axis} axis motion detected at timeout, continue waiting target: "
+                f"start={start_position}, current={current}, target={target}, diff={diff}, tolerance={tolerance}"
             )
-            wait_state["callback"](True)
             return
 
+        wait_state = self._clear_position_wait()
+        self._work_state = WorkState.IDLE
         if current is None:
             logger.warning(f"{axis} axis motion check failed: no valid position feedback within {POSITION_WAIT_TIMEOUT_MS}ms.")
         else:
