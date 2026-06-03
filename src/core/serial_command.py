@@ -28,9 +28,8 @@ if TYPE_CHECKING:
 logger = get_logger("SerialCommand")
 
 POSITION_TOLERANCE_MM = 0.2
-POSITION_WAIT_TIMEOUT_MS = 20000
+POSITION_WAIT_TIMEOUT_MS = 3000
 POSITION_WAIT_POLL_INTERVAL_MS = 150
-POSITION_STALL_RECHECK_DELAY_MS = 500
 SELF_DETECT_TIMEOUT_MS = 10000
 SELF_DETECT_POLL_INTERVAL_MS = 50
 
@@ -103,10 +102,6 @@ class SerialCommand(QObject):
         self._position_wait_poll_timer = QTimer(self)
         self._position_wait_poll_timer.setInterval(POSITION_WAIT_POLL_INTERVAL_MS)
         self._position_wait_poll_timer.timeout.connect(self._poll_position_wait)
-
-        self._position_wait_stall_timer = QTimer(self)
-        self._position_wait_stall_timer.setSingleShot(True)
-        self._position_wait_stall_timer.timeout.connect(self._on_position_wait_stall_recheck)
 
         self._position_wait_timeout_timer = QTimer(self)
         self._position_wait_timeout_timer.setSingleShot(True)
@@ -184,7 +179,6 @@ class SerialCommand(QObject):
 
     def _clear_position_wait(self) -> Optional[dict]:
         self._position_wait_poll_timer.stop()
-        self._position_wait_stall_timer.stop()
         self._position_wait_timeout_timer.stop()
         wait_state = self._active_position_wait
         self._active_position_wait = None
@@ -214,11 +208,14 @@ class SerialCommand(QObject):
             "axis": axis,
             "target": target,
             "callback": callback,
+            "start_position": current_position,
             "last_position": current_position,
-            "stall_reference_position": None,
-            "stall_recheck_pending": False,
+            "timeout_ms": timeout_ms,
         }
         self._work_state = WorkState.WAITING_POSITION
+        logger.info(
+            f"Check {axis} axis motion: start={current_position}, target={target}, timeout_ms={timeout_ms}"
+        )
         self._position_wait_timeout_timer.start(timeout_ms)
         self._position_wait_poll_timer.start()
         self.position_query(source="position_wait_start")
@@ -226,18 +223,6 @@ class SerialCommand(QObject):
     def _poll_position_wait(self) -> None:
         if self._active_position_wait:
             self.position_query(source="position_wait_poll")
-
-    def _on_position_wait_stall_recheck(self) -> None:
-        if not self._active_position_wait or not self._active_position_wait.get("stall_recheck_pending"):
-            return
-        self.position_query(source="position_wait_stall_recheck")
-
-    def _mark_position_wait_failed(self, reason: str) -> None:
-        wait_state = self._clear_position_wait()
-        self._work_state = WorkState.IDLE
-        if wait_state:
-            logger.error(reason)
-            wait_state["callback"](False)
 
     def _handle_position_wait_update(self, position_data: tuple) -> None:
         if not self._active_position_wait:
@@ -251,50 +236,38 @@ class SerialCommand(QObject):
         current = self._current_x if axis == "X" else self._current_z
         tolerance = self._get_position_tolerance_pulse(axis)
         diff = abs(current - target) if current is not None else None
-        if current is None or diff > tolerance:
-            last_position = wait_state.get("last_position")
-            if last_position is None:
-                wait_state["last_position"] = current
-                return
 
-            if current != last_position:
-                wait_state["last_position"] = current
-                wait_state["stall_reference_position"] = None
-                wait_state["stall_recheck_pending"] = False
-                self._position_wait_stall_timer.stop()
-                if not self._position_wait_poll_timer.isActive():
-                    self._position_wait_poll_timer.start()
-                return
-
-            if wait_state.get("stall_recheck_pending"):
-                stall_reference = wait_state.get("stall_reference_position")
-                if stall_reference == current:
-                    self._mark_position_wait_failed(
-                        f"{axis} axis movement abnormal: current={current}, target={target}, "
-                        f"diff={diff}, no position change after {POSITION_STALL_RECHECK_DELAY_MS}ms recheck."
-                    )
-                    return
-
-                wait_state["last_position"] = current
-                wait_state["stall_reference_position"] = None
-                wait_state["stall_recheck_pending"] = False
-                if not self._position_wait_poll_timer.isActive():
-                    self._position_wait_poll_timer.start()
-                return
-
-            wait_state["stall_reference_position"] = current
-            wait_state["stall_recheck_pending"] = True
-            self._position_wait_poll_timer.stop()
-            self._position_wait_stall_timer.start(POSITION_STALL_RECHECK_DELAY_MS)
+        if current is None:
             return
 
-        wait_state = self._clear_position_wait()
-        self._work_state = WorkState.IDLE
-        logger.info(
-            f"{axis} axis reached target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
-        )
-        if wait_state:
-            wait_state["callback"](True)
+        if diff is not None and diff <= tolerance:
+            wait_state = self._clear_position_wait()
+            self._work_state = WorkState.IDLE
+            logger.info(
+                f"{axis} axis already at target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+            )
+            if wait_state:
+                wait_state["callback"](True)
+            return
+
+        start_position = wait_state.get("start_position")
+        if start_position is None:
+            wait_state["start_position"] = current
+            wait_state["last_position"] = current
+            return
+
+        if current != start_position:
+            wait_state = self._clear_position_wait()
+            self._work_state = WorkState.IDLE
+            logger.info(
+                f"{axis} axis motion detected: start={start_position}, current={current}, "
+                f"target={target}, diff={diff}, tolerance={tolerance}"
+            )
+            if wait_state:
+                wait_state["callback"](True)
+            return
+
+        wait_state["last_position"] = current
 
     def _on_position_wait_timeout(self) -> None:
         wait_state = self._clear_position_wait()
@@ -307,18 +280,30 @@ class SerialCommand(QObject):
         current = self._current_x if axis == "X" else self._current_z
         tolerance = self._get_position_tolerance_pulse(axis)
         diff = abs(current - target) if current is not None else None
+        start_position = wait_state.get("start_position")
+
         if current is not None and diff <= tolerance:
             logger.info(
-                f"{axis} axis accepted at timeout: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
+                f"{axis} axis accepted after motion check timeout: current={current}, target={target}, "
+                f"diff={diff}, tolerance={tolerance}"
+            )
+            wait_state["callback"](True)
+            return
+
+        if current is not None and start_position is not None and current != start_position:
+            logger.info(
+                f"{axis} axis motion detected at timeout: start={start_position}, current={current}, "
+                f"target={target}, diff={diff}, tolerance={tolerance}"
             )
             wait_state["callback"](True)
             return
 
         if current is None:
-            logger.warning(f"{axis} axis move to {target} timed out: no valid position feedback.")
+            logger.warning(f"{axis} axis motion check failed: no valid position feedback within {POSITION_WAIT_TIMEOUT_MS}ms.")
         else:
             logger.warning(
-                f"{axis} axis move to {target} timed out, current={current}, diff={diff}, tolerance={tolerance}"
+                f"{axis} axis motion check failed: start={start_position}, current={current}, "
+                f"target={target}, diff={diff}, tolerance={tolerance}, timeout_ms={POSITION_WAIT_TIMEOUT_MS}"
             )
         wait_state["callback"](False)
 
