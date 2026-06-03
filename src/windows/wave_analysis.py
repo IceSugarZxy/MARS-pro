@@ -204,18 +204,12 @@ class WaveAnalysis:
                         error = (SinglePolarValue[i] - mean_polar) / mean_polar * 100
                         SinglePolarError.append(error)
 
-                # 误差和
-                errorSum = 0
-                for i in range(len(SinglePolarError)):
-                    errorSum += SinglePolarError[i]
-                    PolarErrorSumList.append(errorSum)
-
-                # 正弦函数拟合削弱波动性
-                if len(PolarErrorSumList) > 2 and enable_concentricity_calibration:
+                # 正弦函数拟合校准单极误差列表
+                if len(SinglePolarError) >= 4 and enable_concentricity_calibration:
                     try:
                         # 创建x轴数据（从0开始的索引）
-                        x_fit = np.arange(len(PolarErrorSumList))
-                        y_original = np.array(PolarErrorSumList)
+                        x_fit = np.arange(len(SinglePolarError))
+                        y_original = np.array(SinglePolarError)
 
                         # 正弦函数拟合：y = A * sin(ω*x + φ) + C
                         # 使用最小二乘法进行正弦拟合
@@ -240,16 +234,23 @@ class WaveAnalysis:
                         # 计算拟合值
                         y_fit = sin_func(x_fit, A_fit, omega_fit, phi_fit, C_fit)
 
-                        # 用原始数据减去拟合的正弦函数，削弱波动性
+                        # 用原始单极误差减去拟合的正弦函数，削弱同心度导致的周期性波动
                         y_adjusted = y_original - y_fit
 
-                        # 更新误差和列表
-                        PolarErrorSumList = y_adjusted.tolist()
+                        # 更新单极误差列表，后续累计误差基于校准后的单极误差重新累加
+                        SinglePolarError = y_adjusted.tolist()
 
                     except Exception as e:
-                        logger.info(f"  正弦拟合失败，使用原始误差和: {e}")
+                        logger.info(f"  单极误差正弦拟合失败，使用原始单极误差: {e}")
                 else:
-                    logger.info("  误差和数据点不足，跳过正弦拟合")
+                    logger.info("  单极误差数据点不足，跳过正弦拟合")
+
+                # 误差和：基于当前单极误差列表逐项累加，包含起点0以保持累计范围定义完整
+                errorSum = 0
+                PolarErrorSumList.append(errorSum)
+                for i in range(len(SinglePolarError)):
+                    errorSum += SinglePolarError[i]
+                    PolarErrorSumList.append(errorSum)
             else:
                 logger.info("过零点数量不足，无法计算极间隔")
 
@@ -348,7 +349,7 @@ class WaveAnalysis:
             # 计算单极统计
             if len(SinglePolarValue) > 1:
                 SinglePolarMean = round(np.mean(SinglePolarValue), 2)
-                SinglePolarErrorMax = round(float(np.max(SinglePolarError)), 5)
+                SinglePolarErrorMax = round(float(np.max(np.abs(SinglePolarError))), 5)
                 PolarErrorSum = round(float(np.max(PolarErrorSumList)-np.min(PolarErrorSumList)), 5)
             else:
                 SinglePolarMean = SinglePolarErrorMax = PolarErrorSum = float('nan')
