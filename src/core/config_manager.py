@@ -32,6 +32,10 @@ ACTION_TEXT = {
     'Z-': 'Z负偏移',
 }
 
+SENSOR_RANGE_OPTIONS = ("80mT量程", "160mT量程")
+SENSOR_RANGE_80MT_INDEX = 0
+SENSOR_RANGE_160MT_INDEX = 1
+
 # 动作类型到显示文本的映射
 def action_to_text(action: str) -> str:
     return ACTION_TEXT.get(action, action)
@@ -95,6 +99,8 @@ class ConfigManager(QObject):
     signal_test_type_changed = pyqtSignal(int)
     # 测试速度改变信号
     signal_test_speed_changed = pyqtSignal(int)
+    # 探头量程改变信号
+    signal_sensor_range_changed = pyqtSignal(int)
     # 测试/挂起移动方案改变信号
     signal_scheme_changed = pyqtSignal(int)
 
@@ -115,6 +121,8 @@ class ConfigManager(QObject):
         'test_type': '0',
         # 测试速度: 0=高速测量, 1=高分辨率测量
         'test_speed': '0',
+        # 探头量程: 0=80mT量程, 1=160mT量程
+        'sensor_range': str(SENSOR_RANGE_80MT_INDEX),
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
         'test_movement_scheme': 'x_first',
         # 挂起位置移动方案
@@ -299,6 +307,23 @@ class ConfigManager(QObject):
     def test_speed(self, value: int) -> None:
         self.set('test_speed', value)
         self.signal_test_speed_changed.emit(value)
+
+    @property
+    def sensor_range(self) -> int:
+        index = self.get_int('sensor_range', SENSOR_RANGE_80MT_INDEX)
+        if 0 <= index < len(SENSOR_RANGE_OPTIONS):
+            return index
+        return SENSOR_RANGE_80MT_INDEX
+
+    @sensor_range.setter
+    def sensor_range(self, value: int) -> None:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            index = SENSOR_RANGE_80MT_INDEX
+        index = max(0, min(index, len(SENSOR_RANGE_OPTIONS) - 1))
+        self.set('sensor_range', index)
+        self.signal_sensor_range_changed.emit(index)
 
     @property
     def test_movement_scheme(self) -> str:

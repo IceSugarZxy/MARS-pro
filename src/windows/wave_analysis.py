@@ -142,71 +142,9 @@ class WaveAnalysis:
             dict: 分析结果字典
         """
         try:
-            # Part 1: 峰值分析
-            N_part = y[y >= 0]
-            S_part = abs(y[y <= 0])
-
-            N_peaks, _ = find_peaks(N_part, height=1.0, distance=20, prominence=0.5)
-            N_peak_values = N_part[N_peaks]
-            
-            S_peaks, _ = find_peaks(S_part, height=1.0, distance=20, prominence=0.5)
-            S_peak_values = S_part[S_peaks]
-
-            # 排除异常峰值
-            def remove_low_peaks(values):
-                if len(values) <= 1:
-                    return values
-                mean_val = np.mean(values)
-                mask = values >= mean_val
-                filtered_values = values[mask]
-                return filtered_values if len(filtered_values) > 0 else values
-
-            def remove_high_peaks(values):
-                if len(values) <= 1:
-                    return values
-                mean_val = np.mean(values)
-                mask = values <= mean_val
-                filtered_values = values[mask]
-                return filtered_values if len(filtered_values) > 0 else values
-
-            if len(N_peak_values) > 1:
-                N_peak_values = remove_low_peaks(N_peak_values)
-            if len(S_peak_values) > 1:
-                S_peak_values = remove_high_peaks(S_peak_values)
-
-            # 计算N极统计
-            if len(N_peak_values) > 1:
-                N_max = round(float(np.max(N_peak_values)), 2)
-                N_min = round(float(np.min(N_peak_values)), 2)
-                N_mean = round(np.mean(N_peak_values), 2)
-                N_se = round(np.std(N_peak_values, ddof=1)/np.mean(N_peak_values)*100, 2)
-            elif len(N_peak_values) == 1:
-                N_max = N_min = N_mean = round(float(N_peak_values[0]), 2)
-                N_se = float('nan')
-                logger.info(f"  N极只有1个峰值: {N_max}")
-            else:
-                N_max = N_min = N_mean = N_se = float('nan')
-                logger.info("  N极无有效峰值")
-
-            # 计算S极统计
-            if len(S_peak_values) > 1:
-                S_max = round(float(np.max(S_peak_values)), 2)
-                S_min = round(float(np.min(S_peak_values)), 2)
-                S_mean = round(np.mean(S_peak_values), 2)
-                S_se = round(np.std(S_peak_values, ddof=1)/np.mean(S_peak_values)*100, 2)
-            elif len(S_peak_values) == 1:
-                S_max = S_min = S_mean = round(float(S_peak_values[0]), 2)
-                S_se = float('nan')
-                logger.info(f"  S极只有1个峰值: {S_max}")
-            else:
-                S_max = S_min = S_mean = S_se = float('nan')
-                logger.info("  S极无有效峰值")
-
-            # 计算NS_2
-            peak_combine = np.concatenate((N_peak_values, S_peak_values))
-            NS_2 = round(np.mean(peak_combine), 2) if len(peak_combine) > 0 else float('nan')
-
-            # Part 2: 过零点分析
+            # =====================================================================
+            # Part 1: 过零点分析（先执行 - 定义极性区间）
+            # =====================================================================
             zero_crossings = []
             zero_angles = []
             zero_value_tolerance = self._get_zero_value_tolerance(y)
@@ -245,7 +183,162 @@ class WaveAnalysis:
 
             zero_angles = self._normalize_zero_angles(zero_angles, x)
 
-            # 计算极间隔和误差
+            # =====================================================================
+            # Part 2: 极值分析（后执行 - 在过零点定义的区间内查找极值）
+            # =====================================================================
+            N_peak_values = np.array([])
+            S_peak_values = np.array([])
+            N_peak_source_indices = np.array([], dtype=int)
+            S_peak_source_indices = np.array([], dtype=int)
+
+            if len(zero_angles) >= 2:
+                # 在相邻两个过零点之间查找极值
+                # 每两个相邻过零点之间应该恰好有一个极值
+                span = float(x[-1] - x[0])
+                
+                for i in range(len(zero_angles)):
+                    start_angle = zero_angles[i]
+                    end_angle = zero_angles[(i + 1) % len(zero_angles)]
+                    
+                    # 处理闭合问题：如果是跨越 360° 的最后一个区间
+                    if i == len(zero_angles) - 1:
+                        end_angle += span
+                    
+                    # 提取该区间内的数据（不包含边界点）
+                    if i == len(zero_angles) - 1 and end_angle > x[-1]:
+                        # 跨越 360° 的区间，分成两段
+                        mask1 = (x > start_angle)
+                        mask2 = (x < (end_angle - span))
+                        mask = mask1 | mask2
+                    else:
+                        # 普通区间
+                        mask = (x > start_angle) & (x < end_angle)
+                    
+                    y_interval = y[mask]
+                    original_indices = np.where(mask)[0]
+                    
+                    if len(y_interval) < 2:
+                        logger.info(f"  区间 {i+1} ({start_angle:.2f}°-{end_angle:.2f}°): 数据点不足")
+                        continue
+                    
+                    # 判断极性：取区间中点的磁场值
+                    midpoint = start_angle + (end_angle - start_angle) / 2
+                    sample_angle = ((midpoint - x[0]) % span) + x[0]
+                    midpoint_value = float(np.interp(sample_angle, x, y))
+                    is_positive = midpoint_value >= 0
+                    
+                    if is_positive:
+                        # N 极区间：在此区间内应该有 1 个最大值
+                        max_idx_local = np.argmax(y_interval)
+                        max_idx_global = original_indices[max_idx_local]
+                        max_value = float(y[max_idx_global])
+                        max_angle = float(x[max_idx_global])
+                        
+                        logger.info(
+                            f"  N极：过零点 {start_angle:.2f}° → {end_angle:.2f}° 中的极值 = "
+                            f"{max_angle:.2f}°, 幅值 {max_value:.2f} mT"
+                        )
+                        
+                        # 保留所有 N 极极值（每个区间一定有一个）
+                        N_peak_source_indices = np.concatenate((N_peak_source_indices, [max_idx_global]))
+                        N_peak_values = np.concatenate((N_peak_values, [max_value]))
+                    else:
+                        # S 极区间：在此区间内应该有 1 个最小值
+                        min_idx_local = np.argmin(y_interval)
+                        min_idx_global = original_indices[min_idx_local]
+                        min_value = float(y[min_idx_global])
+                        min_angle = float(x[min_idx_global])
+                        
+                        logger.info(
+                            f"  S极：过零点 {start_angle:.2f}° → {end_angle:.2f}° 中的极值 = "
+                            f"{min_angle:.2f}°, 幅值 {-min_value:.2f} mT"
+                        )
+                        
+                        # 保留所有 S 极极值（每个区间一定有一个）
+                        S_peak_source_indices = np.concatenate((S_peak_source_indices, [min_idx_global]))
+                        S_peak_values = np.concatenate((S_peak_values, [-min_value]))
+                
+                logger.info(
+                    f"  极值检测完成：共检测到 {len(zero_angles)} 个区间，"
+                    f"N极极值 {len(N_peak_values)} 个，S极极值 {len(S_peak_values)} 个"
+                )
+            else:
+                # 当过零点数量不足时，降级为全局检测
+                logger.info("  过零点数量不足，降级为全局极值检测")
+                N_part = y[y >= 0]
+                S_part = abs(y[y <= 0])
+
+                N_indices = np.where(y >= 0)[0]
+                S_indices = np.where(y <= 0)[0]
+
+                N_peaks, _ = find_peaks(N_part, height=1.0, distance=20, prominence=0.5)
+                N_peak_values = N_part[N_peaks]
+                N_peak_source_indices = N_indices[N_peaks] if len(N_peaks) > 0 else np.array([], dtype=int)
+                
+                S_peaks, _ = find_peaks(S_part, height=1.0, distance=20, prominence=0.5)
+                S_peak_values = S_part[S_peaks]
+                S_peak_source_indices = S_indices[S_peaks] if len(S_peaks) > 0 else np.array([], dtype=int)
+
+            peak_details = []
+            for source_index, value in zip(N_peak_source_indices, N_peak_values):
+                peak_details.append({
+                    'pole': 'N',
+                    'angle': round(float(x[source_index]), 6),
+                    'value': round(float(y[source_index]), 6),
+                    'abs_value': round(float(value), 6),
+                })
+            for source_index, value in zip(S_peak_source_indices, S_peak_values):
+                peak_details.append({
+                    'pole': 'S',
+                    'angle': round(float(x[source_index]), 6),
+                    'value': round(float(y[source_index]), 6),
+                    'abs_value': round(float(value), 6),
+                })
+            peak_details.sort(key=lambda item: item['angle'])
+
+            # 计算N极统计
+            if len(N_peak_values) > 1:
+                N_max = round(float(np.max(N_peak_values)), 2)
+                N_min = round(float(np.min(N_peak_values)), 2)
+                N_mean = round(np.mean(N_peak_values), 2)
+                N_se = round(np.std(N_peak_values, ddof=1)/np.mean(N_peak_values)*100, 2)
+            elif len(N_peak_values) == 1:
+                N_max = N_min = N_mean = round(float(N_peak_values[0]), 2)
+                N_se = float('nan')
+                logger.info(f"  N极只有1个峰值: {N_max}")
+            else:
+                N_max = N_min = N_mean = N_se = float('nan')
+                logger.info("  N极无有效峰值")
+
+            # 计算S极统计
+            if len(S_peak_values) > 1:
+                S_max = round(float(np.max(S_peak_values)), 2)
+                S_min = round(float(np.min(S_peak_values)), 2)
+                S_mean = round(np.mean(S_peak_values), 2)
+                S_se = round(np.std(S_peak_values, ddof=1)/np.mean(S_peak_values)*100, 2)
+            elif len(S_peak_values) == 1:
+                S_max = S_min = S_mean = round(float(S_peak_values[0]), 2)
+                S_se = float('nan')
+                logger.info(f"  S极只有1个峰值: {S_max}")
+            else:
+                S_max = S_min = S_mean = S_se = float('nan')
+                logger.info("  S极无有效峰值")
+
+            for item in peak_details:
+                if item['pole'] == 'N' and np.isfinite(N_mean) and N_mean != 0:
+                    item['error_percent'] = round((item['abs_value'] - float(N_mean)) / float(N_mean) * 100, 5)
+                elif item['pole'] == 'S' and np.isfinite(S_mean) and S_mean != 0:
+                    item['error_percent'] = round((item['abs_value'] - float(S_mean)) / float(S_mean) * 100, 5)
+                else:
+                    item['error_percent'] = float('nan')
+
+            # 计算NS_2
+            peak_combine = np.concatenate((N_peak_values, S_peak_values))
+            NS_2 = round(np.mean(peak_combine), 2) if len(peak_combine) > 0 else float('nan')
+
+            # =====================================================================
+            # Part 3: 极间隔分析（基于已有的过零点）
+            # =====================================================================
             N_interval, S_interval, SinglePolarValue = [], [], []
             SinglePolarError, PolarErrorSumList = [], []
 
@@ -322,6 +415,38 @@ class WaveAnalysis:
                     PolarErrorSumList.append(errorSum)
             else:
                 logger.info("过零点数量不足，无法计算极间隔")
+
+            zero_crossing_details = []
+            if len(zero_angles) >= 2:
+                span = float(x[-1] - x[0])
+                for i, start_angle in enumerate(zero_angles):
+                    end_angle = zero_angles[(i + 1) % len(zero_angles)]
+                    if i == len(zero_angles) - 1:
+                        end_angle += span
+                    interval = float(end_angle - start_angle)
+                    midpoint = start_angle + interval / 2
+                    sample_angle = ((midpoint - x[0]) % span) + x[0] if span > 0 else midpoint
+                    midpoint_value = float(np.interp(sample_angle, x, y))
+                    zero_crossing_details.append({
+                        'angle': round(float(start_angle), 6),
+                        'interval_to_next': round(interval, 6),
+                        'pole': 'N' if midpoint_value >= 0 else 'S',
+                    })
+
+            period_error_details = []
+            for index, period_angle in enumerate(SinglePolarValue):
+                error_percent = SinglePolarError[index] if index < len(SinglePolarError) else float('nan')
+                cumulative_error = PolarErrorSumList[index + 1] if index + 1 < len(PolarErrorSumList) else float('nan')
+                period_error_details.append({
+                    'index': index + 1,
+                    'period_angle': round(float(period_angle), 6),
+                    'error_percent': round(float(error_percent), 6) if np.isfinite(error_percent) else float('nan'),
+                    'cumulative_error': round(float(cumulative_error), 6) if np.isfinite(cumulative_error) else float('nan'),
+                })
+
+            # =====================================================================
+            # Part 4: 其他分析指标（面积、THD、极对数等）
+            # =====================================================================
 
             # 计算N极间隔统计
             if len(N_interval) > 1:
@@ -435,7 +560,10 @@ class WaveAnalysis:
                 'N_area': N_area, 'S_area': S_area, 'NS_area': NS_area,
                 'SinglePolarMean': SinglePolarMean, 'SinglePolarError': SinglePolarErrorMax,
                 'PolarErrorSum': PolarErrorSum, 'THD_error': THD_error,
-                'pole_num': pole_num
+                'pole_num': pole_num,
+                'zero_crossing_details': zero_crossing_details,
+                'peak_details': peak_details,
+                'period_error_details': period_error_details,
             }
 
             # 记录最终指标，便于追踪分析结果。

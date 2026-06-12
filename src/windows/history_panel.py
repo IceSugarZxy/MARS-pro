@@ -10,7 +10,7 @@ import csv
 from datetime import datetime
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
                               QTableWidgetItem, QLineEdit, QRadioButton,
-                              QHeaderView, QHBoxLayout, QMessageBox)
+                              QHeaderView, QHBoxLayout, QMessageBox, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5 import uic
 from core.logger import get_logger
@@ -408,9 +408,17 @@ class HistoryPanel(QWidget):
                         if remark_edit:
                             remark_edit.setText(sample_info['remark'])
                     if sample_info.get('tester'):
-                        tester_edit = measure_panel.findChild(QLineEdit, "tester_edit")
-                        if tester_edit:
-                            tester_edit.setText(sample_info['tester'])
+                        tester_combo = measure_panel.findChild(QComboBox, "comboBox_tester_edit")
+                        if tester_combo:
+                            tester_combo.setCurrentText(sample_info['tester'])
+                        else:
+                            tester_edit = measure_panel.findChild(QLineEdit, "tester_edit")
+                            if tester_edit:
+                                tester_edit.setText(sample_info['tester'])
+                    if sample_info.get('probe'):
+                        sensor_combo = measure_panel.findChild(QComboBox, "comboBox_sensor_edit")
+                        if sensor_combo:
+                            sensor_combo.setCurrentText(sample_info['probe'])
 
                     # 进行波形分析
                     from windows.wave_analysis import WaveAnalysis

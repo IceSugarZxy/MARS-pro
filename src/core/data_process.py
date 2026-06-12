@@ -28,7 +28,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import get_logger
-from .config_manager import get_config_manager
+from .config_manager import SENSOR_RANGE_160MT_INDEX, SENSOR_RANGE_OPTIONS, get_config_manager
 from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
@@ -41,11 +41,21 @@ logger = get_logger('DataProcess')
 # ============================================================================
 # 常量定义
 # ============================================================================
-FULL_ROTATION_DATA_POINTS = 407040  # 一圈半（540度）的数据点数
-FULL_ROTATION_ANGLE = 540 - 1.75  # 一圈半的角度（度）
-ANGLE_RESOLUTION = FULL_ROTATION_ANGLE / FULL_ROTATION_DATA_POINTS  # 角度分辨率（度/数据点），约0.001326530612
-START_OFFSET = int(FULL_ROTATION_DATA_POINTS * 90 / FULL_ROTATION_ANGLE)  # 90度对应的数据偏移 = 67840
-POINTS_FOR_360 = int(FULL_ROTATION_DATA_POINTS * 360 / FULL_ROTATION_ANGLE)  # 360度对应的数据点数
+FULL_ROTATION_DATA_POINTS = 407040  # 一圈半采集数据点数
+POINTS_FOR_360 = 271_360  # 初步按一圈数据量截取
+FULL_ROTATION_ANGLE = 540.0  # 一圈半角度，仅用于记录旧采集定义
+ANGLE_RESOLUTION = 360.0 / POINTS_FOR_360  # 理论角度分辨率，闭合校准失败时使用
+START_OFFSET = (FULL_ROTATION_DATA_POINTS - POINTS_FOR_360) // 2  # 中段截取起点 = 67840
+CLOSURE_ROUGH_START_FRACTION = 1.0 / 6.0  # rawdata 一圈半数据中的一圈起点
+CLOSURE_ROUGH_END_FRACTION = 5.0 / 6.0  # rawdata 一圈半数据中的一圈粗尾点
+CLOSURE_SEARCH_PERIOD_FRACTION = 0.25  # 在粗截取尾点前后各1/4磁周期内寻找闭合点
+CLOSURE_MIN_PERIOD_POINTS = 4.0
+CLOSURE_DIRECTION_PERIOD_FRACTION = 1.0 / 32.0
+CLOSURE_MIN_DIRECTION_SPAN_POINTS = 20
+CLOSURE_MAX_DIRECTION_SPAN_POINTS = 1000
+CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO = 0.002  # 峰/谷端点判定容差，占整体幅值比例
+CLOSURE_COARSE_CANDIDATE_COUNT = 5000
+CLOSURE_FINE_RADIUS_POINTS = 120
 PROGRESS_EMIT_INTERVAL_SECONDS = 1.0 / 16.0
 OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 1.5
 OFFSET_NO_DATA_TIMEOUT_SECONDS = 0.5
@@ -107,7 +117,7 @@ class DataProcess(QObject):
         self.config = get_config_manager()
 
         # 从配置文件加载偏置值，如果不存在则使用默认值
-        self.mag_offset = self.config.offset or self.DEFAULT_OFFSET
+        self.mag_offset = self.config.offset or self._get_default_offset()
 
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
@@ -130,6 +140,27 @@ class DataProcess(QObject):
         self._wave_analyzer = WaveAnalysis()
 
         logger.info(f"初始化数据处理模块完成：√")
+
+    def _get_sensor_range_index(self) -> int:
+        index = self.config.sensor_range
+        if 0 <= index < len(SENSOR_RANGE_OPTIONS):
+            return index
+        return 0
+
+    def _get_sensor_range_text(self) -> str:
+        return SENSOR_RANGE_OPTIONS[self._get_sensor_range_index()]
+
+    def _get_mag_conversion_factor(self) -> float:
+        factor = self.MAG_CONVERSION_FACTOR
+        if self._get_sensor_range_index() == SENSOR_RANGE_160MT_INDEX:
+            return factor / 2.0
+        return factor
+
+    def _get_default_offset(self) -> float:
+        default_offset = self.DEFAULT_OFFSET
+        if self._get_sensor_range_index() == SENSOR_RANGE_160MT_INDEX:
+            return default_offset / 2.0
+        return default_offset
 
     def set_sample_info(self, sample_info: dict) -> None:
         """
@@ -448,7 +479,13 @@ class DataProcess(QObject):
         """Collect raw measurement bytes and emit processed results."""
         logger.info("========== Start processing measurement data ==========")
         logger.info(f"Measurement type: {self.measure_type}")
-        logger.info(f"Current offset: {self.mag_offset}")
+        mag_conversion_factor = self._get_mag_conversion_factor()
+        self.mag_offset = self.config.offset or self._get_default_offset()
+        logger.info(
+            f"Current offset: {self.mag_offset}, "
+            f"sensor_range={self._get_sensor_range_text()}, "
+            f"conversion_factor={mag_conversion_factor}"
+        )
 
         self._stop_measure_processing = False
 
@@ -475,7 +512,7 @@ class DataProcess(QObject):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
                         hex_value = (byte1 << 8) | byte2
-                        mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR - self.mag_offset, 4)
+                        mag_value = round(hex_value * mag_conversion_factor - self.mag_offset, 4)
                         measure_list.append(mag_value)
 
                     del temp_buffer[0:batch_size * 2]
@@ -539,6 +576,7 @@ class DataProcess(QObject):
             保存的偏置值会在每次程序启动时加载，用于校正测量数据
         """
         try:
+            mag_conversion_factor = self._get_mag_conversion_factor()
             start_time = time.time()
             last_data_time = start_time
             temp_buffer = bytearray()
@@ -551,6 +589,8 @@ class DataProcess(QObject):
             logger.info(
                 "Offset flow: processor started, "
                 f"initial_queue_size={self.data_queue.qsize()}, "
+                f"sensor_range={self._get_sensor_range_text()}, "
+                f"conversion_factor={mag_conversion_factor}, "
                 f"max_process={OFFSET_MAX_PROCESS_SECONDS:.1f}s, "
                 f"no_data_timeout={OFFSET_NO_DATA_TIMEOUT_SECONDS:.1f}s"
             )
@@ -579,7 +619,7 @@ class DataProcess(QObject):
                     byte2 = temp_buffer[1]
                     hex_value = (byte1 << 8) | byte2
                     # 转换为磁场强度（mT），注意：偏置数据不使用偏置校正
-                    mag_value = round(hex_value * self.MAG_CONVERSION_FACTOR, 4)
+                    mag_value = round(hex_value * mag_conversion_factor, 4)
                     offset_list.append(mag_value)
                     del temp_buffer[0:2]
 
@@ -679,6 +719,291 @@ class DataProcess(QObject):
     # 测量数据算法处理
     # ========================================================================
 
+    @staticmethod
+    def _candidate_range(lower: int, upper: int, max_count: int) -> np.ndarray:
+        if upper < lower:
+            return np.array([], dtype=int)
+
+        count = upper - lower + 1
+        if count <= max_count:
+            return np.arange(lower, upper + 1, dtype=int)
+        return np.unique(np.linspace(lower, upper, max_count, dtype=int))
+
+    @staticmethod
+    def _slope_sign(value: float, threshold: float) -> int:
+        if value > threshold:
+            return 1
+        if value < -threshold:
+            return -1
+        return 0
+
+    def _classify_local_shape(
+        self,
+        data: np.ndarray,
+        index: int,
+        span: int,
+        value_scale: float,
+    ) -> Tuple[str, float, Optional[float]]:
+        """Classify local waveform shape around an index."""
+        if span <= 0 or index + span >= len(data):
+            return "unknown", 0.0, None
+
+        slope_threshold = max(value_scale * 1e-4, 1e-9)
+        extremum_tolerance = max(value_scale * CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO, slope_threshold)
+        center_value = float(data[index])
+        forward_slope = float(data[index + span] - data[index])
+        approach_slope = None
+        if index - span >= 0:
+            approach_slope = float(data[index] - data[index - span])
+
+        forward_sign = self._slope_sign(forward_slope, slope_threshold)
+        approach_sign = self._slope_sign(approach_slope, slope_threshold) if approach_slope is not None else 0
+
+        if approach_sign > 0 and forward_sign < 0:
+            return "peak", forward_slope, approach_slope
+        if approach_sign < 0 and forward_sign > 0:
+            return "valley", forward_slope, approach_slope
+        if approach_sign >= 0 and forward_sign >= 0 and (approach_sign > 0 or forward_sign > 0):
+            return "rising", forward_slope, approach_slope
+        if approach_sign <= 0 and forward_sign <= 0 and (approach_sign < 0 or forward_sign < 0):
+            return "falling", forward_slope, approach_slope
+
+        window_start = max(0, index - span)
+        window_end = min(len(data), index + span + 1)
+        local_window = data[window_start:window_end]
+        if len(local_window) > 0:
+            local_max = float(np.max(local_window))
+            local_min = float(np.min(local_window))
+            if center_value >= local_max - extremum_tolerance:
+                return "peak", forward_slope, approach_slope
+            if center_value <= local_min + extremum_tolerance:
+                return "valley", forward_slope, approach_slope
+
+        if index - span >= 0:
+            wide_slope = float(data[index + span] - data[index - span])
+            wide_sign = self._slope_sign(wide_slope, slope_threshold)
+            if wide_sign > 0:
+                return "rising", forward_slope, approach_slope
+            if wide_sign < 0:
+                return "falling", forward_slope, approach_slope
+
+        return "unknown", forward_slope, approach_slope
+
+    def _score_closure_candidate(
+        self,
+        data: np.ndarray,
+        candidate_index: int,
+        slope_span: int,
+        head_first_value: float,
+        head_shape: str,
+        value_scale: float,
+    ) -> float:
+        candidate_shape, _, _ = self._classify_local_shape(
+            data,
+            candidate_index,
+            slope_span,
+            value_scale,
+        )
+        if candidate_shape != head_shape:
+            return float("inf")
+        value_score = abs(float(data[candidate_index]) - head_first_value) / value_scale
+        return value_score
+
+    @staticmethod
+    def _estimate_cycle_count(segment: np.ndarray) -> int:
+        """估算一圈数据中的磁周期数，用于自适应限制闭合点搜索范围。"""
+        if len(segment) < 4:
+            return 1
+
+        centered = segment - float(np.mean(segment))
+        signs = np.sign(centered)
+        nonzero_mask = signs != 0
+        if np.any(nonzero_mask):
+            signs = signs[nonzero_mask]
+        zero_crossings = int(np.sum(signs[:-1] * signs[1:] < 0)) if len(signs) > 1 else 0
+        zero_crossing_cycles = int(round(zero_crossings / 2)) if zero_crossings >= 2 else 0
+
+        fft_cycles = 0
+        try:
+            max_fft_points = 32768
+            if len(centered) > max_fft_points:
+                sample_indices = np.linspace(0, len(centered) - 1, max_fft_points, dtype=int)
+                fft_segment = centered[sample_indices]
+            else:
+                fft_segment = centered
+
+            fft_segment = fft_segment - float(np.mean(fft_segment))
+            spectrum = np.abs(np.fft.rfft(fft_segment))
+            if len(spectrum) > 1:
+                spectrum[0] = 0
+                fft_cycles = int(np.argmax(spectrum))
+        except Exception:
+            fft_cycles = 0
+
+        if zero_crossing_cycles > 0:
+            return zero_crossing_cycles
+        if fft_cycles > 0:
+            return fft_cycles
+        return 1
+
+    def _estimate_period_points(self, segment: np.ndarray, fallback_points: int) -> float:
+        """Estimate one magnetic period from the roughly sliced one-rotation data."""
+        segment = np.asarray(segment, dtype=float)
+        if len(segment) < 4:
+            return float(fallback_points)
+
+        centered = segment - float(np.mean(segment))
+        crossing_points = []
+        min_crossing_gap = max(5.0, len(centered) / 10000.0)
+
+        for index in range(1, len(centered)):
+            previous_value = float(centered[index - 1])
+            current_value = float(centered[index])
+            if previous_value == current_value:
+                continue
+            if (previous_value <= 0 <= current_value) or (previous_value >= 0 >= current_value):
+                crossing_index = (index - 1) + (0.0 - previous_value) / (current_value - previous_value)
+                direction = 1 if current_value >= previous_value else -1
+                if crossing_points and crossing_index - crossing_points[-1][0] < min_crossing_gap:
+                    continue
+                crossing_points.append((crossing_index, direction))
+
+        same_direction_diffs = []
+        last_crossing_by_direction = {}
+        for crossing_index, direction in crossing_points:
+            if direction in last_crossing_by_direction:
+                same_direction_diffs.append(crossing_index - last_crossing_by_direction[direction])
+            last_crossing_by_direction[direction] = crossing_index
+
+        if same_direction_diffs:
+            estimated_period = float(statistics.median(same_direction_diffs))
+            if estimated_period >= CLOSURE_MIN_PERIOD_POINTS:
+                return estimated_period
+
+        cycle_count = self._estimate_cycle_count(segment)
+        if cycle_count > 0:
+            estimated_period = float(len(segment)) / float(cycle_count)
+            if estimated_period >= CLOSURE_MIN_PERIOD_POINTS:
+                return estimated_period
+
+        return float(fallback_points)
+
+    def _find_best_rotation_closure(
+        self,
+        data: List[float],
+        start_index: int,
+        rough_end_index: int,
+        estimated_period_points: float,
+    ) -> Tuple[int, bool, float]:
+        """在粗尾点附近寻找与起点局部形态一致、数值最接近的闭合点。"""
+        total_length = len(data)
+        if total_length <= 1:
+            return 0, False, float("nan")
+
+        data_array = np.asarray(data, dtype=float)
+        start_index = max(0, min(total_length - 1, start_index))
+        rough_end_index = max(start_index + 1, min(total_length - 1, rough_end_index))
+        rough_points = rough_end_index - start_index
+        search_radius = max(
+            CLOSURE_MIN_DIRECTION_SPAN_POINTS,
+            int(round(estimated_period_points * CLOSURE_SEARCH_PERIOD_FRACTION)),
+        )
+        slope_span = max(
+            CLOSURE_MIN_DIRECTION_SPAN_POINTS,
+            int(round(estimated_period_points * CLOSURE_DIRECTION_PERIOD_FRACTION)),
+        )
+        slope_span = min(CLOSURE_MAX_DIRECTION_SPAN_POINTS, slope_span)
+        slope_span = min(
+            slope_span,
+            max(1, start_index),
+            max(1, total_length - rough_end_index - 1),
+        )
+        logger.info(
+            "闭合点局部搜索: "
+            f"粗截取范围={start_index}-{rough_end_index}, "
+            f"粗截取点数={rough_points}, "
+            f"估算周期点数={estimated_period_points:.1f}, "
+            f"1/4周期搜索半径={search_radius}, "
+            f"趋势判断跨度={slope_span}, "
+            f"粗尾点索引={rough_end_index}"
+        )
+        lower = max(start_index + 1, rough_end_index - search_radius)
+        upper = min(total_length - 1, rough_end_index + search_radius)
+
+        # 趋势判断需要候选闭合点之后仍有一小段数据。
+        min_points_after_candidate = slope_span + 1
+        if total_length - upper < min_points_after_candidate:
+            upper = total_length - min_points_after_candidate
+        if upper < lower:
+            return rough_end_index, False, float("nan")
+
+        head_first_value = float(data_array[start_index])
+        value_scale = max(
+            float(np.ptp(data_array[start_index:rough_end_index + 1])),
+            1e-6,
+        )
+        head_shape, head_forward_slope, head_approach_slope = self._classify_local_shape(
+            data_array,
+            start_index,
+            slope_span,
+            value_scale,
+        )
+        if head_shape == "unknown":
+            logger.warning("闭合点局部搜索失败：起始点局部形态无法判断，将回退为粗截取。")
+            return rough_end_index, False, float("nan")
+
+        coarse_candidates = self._candidate_range(lower, upper, CLOSURE_COARSE_CANDIDATE_COUNT)
+        if len(coarse_candidates) == 0:
+            return rough_end_index, False, float("nan")
+
+        best_index = int(coarse_candidates[0])
+        best_score = float("inf")
+        for candidate_index in coarse_candidates:
+            score = self._score_closure_candidate(
+                data_array,
+                int(candidate_index),
+                slope_span,
+                head_first_value,
+                head_shape,
+                value_scale,
+            )
+            if score < best_score:
+                best_index = int(candidate_index)
+                best_score = score
+
+        if not np.isfinite(best_score):
+            logger.warning(
+                "闭合点局部搜索失败：粗尾点前后各1/4磁周期范围内没有找到与起点趋势一致的候选点，"
+                "将回退为粗截取。"
+            )
+            return rough_end_index, False, float("nan")
+
+        fine_lower = max(lower, best_index - CLOSURE_FINE_RADIUS_POINTS)
+        fine_upper = min(upper, best_index + CLOSURE_FINE_RADIUS_POINTS)
+        for candidate_index in range(fine_lower, fine_upper + 1):
+            score = self._score_closure_candidate(
+                data_array,
+                candidate_index,
+                slope_span,
+                head_first_value,
+                head_shape,
+                value_scale,
+            )
+            if score < best_score:
+                best_index = candidate_index
+                best_score = score
+
+        logger.info(
+            "闭合点选择完成: "
+            f"起点形态={head_shape}, "
+            f"起点前向斜率={head_forward_slope:.6f}, "
+            f"起点接近斜率={head_approach_slope if head_approach_slope is not None else float('nan'):.6f}, "
+            f"闭合点索引={best_index}, 闭合点偏移={best_index - rough_end_index}, "
+            f"首尾磁值差={float(data_array[best_index] - data_array[start_index]):.6f}, "
+            f"score={best_score:.6f}"
+        )
+        return best_index, True, best_score
+
     def _process_measure_algorithm(self, measure_list: List[float]) -> Tuple[List[float], List[float]]:
         """
         测量数据处理算法
@@ -687,8 +1012,9 @@ class DataProcess(QObject):
 
         算法流程：
         1. 低通滤波去除高频噪声
-        2. 使用预计算常量提取中间一段360°的数据
-        3. 用角度分辨率生成x轴数组，保留6位精度
+        2. 使用预计算常量确定中间一段360°数据的大致范围
+        3. 在理论一圈点数附近搜索最佳首尾闭合点
+        4. 根据实际闭合点数重新计算角度分辨率
 
         Args:
             measure_list: 原始测量数据列表
@@ -703,33 +1029,62 @@ class DataProcess(QObject):
         # Step 1: 低通滤波
         measure_list = self._lowpass_filter(measure_list)
 
-        # Step 2: 使用预计算常量提取360度数据
-        # 常量: POINTS_FOR_360=271360, START_OFFSET=67840
+        # Step 2: 按 rawdata 的 1/6 到 5/6 粗截取一圈，并在 5/6 附近寻找闭合点。
         total_length = len(measure_list)
+        closure_found = False
+        closure_score = float("nan")
 
-        # 数据充足时：从偏移位置开始取360度数据
-        if total_length >= START_OFFSET + POINTS_FOR_360:
-            start_index = START_OFFSET
-            end_index = start_index + POINTS_FOR_360
-        # 数据不足时：从0开始取360度数据
-        elif total_length >= POINTS_FOR_360:
-            start_index = 0
-            end_index = POINTS_FOR_360
-            logger.warning(f"数据不足，从索引0开始取360度数据")
-        # 数据仍不足：取全部数据
+        # 数据充足时：rawdata 为一圈半数据，1/6 到 5/6 为中间完整一圈的粗范围。
+        if total_length >= 6:
+            start_index = int(round(total_length * CLOSURE_ROUGH_START_FRACTION))
+            rough_end_index = int(round(total_length * CLOSURE_ROUGH_END_FRACTION))
+            start_index = max(0, min(total_length - 2, start_index))
+            rough_end_index = max(start_index + 1, min(total_length - 1, rough_end_index))
+            fallback_period_points = max(
+                CLOSURE_MIN_PERIOD_POINTS,
+                float(max(1, rough_end_index - start_index)),
+            )
+            estimated_period_points = self._estimate_period_points(
+                np.asarray(measure_list, dtype=float),
+                fallback_period_points,
+            )
+            end_index, closure_found, closure_score = self._find_best_rotation_closure(
+                measure_list,
+                start_index,
+                rough_end_index,
+                estimated_period_points,
+            )
+        # 数据严重不足：取全部数据
         else:
             start_index = 0
-            end_index = total_length
+            end_index = total_length - 1
             logger.warning(f"数据严重不足，取全部数据: {total_length} 个点")
 
-        # 提取数据
-        extracted_values = measure_list[start_index:end_index]
+        # 提取数据。闭合失败时 end_index 已经回退为 5/6 粗尾点。
+        extracted_values = measure_list[start_index:end_index + 1]
         data_length = len(extracted_values)
 
         logger.info(f"提取数据: 索引 {start_index} - {end_index}，共 {data_length} 个数据点")
 
-        # Step 3: 用角度分辨率生成x轴数组（从0度开始）
-        extracted_angles = [i * ANGLE_RESOLUTION for i in range(data_length)]
+        # Step 3: 用实际闭合点数重新计算角度分辨率（从0度开始）
+        if data_length > 1:
+            actual_points_for_360 = end_index - start_index
+            actual_angle_resolution = 360.0 / actual_points_for_360
+            extracted_angles = [i * actual_angle_resolution for i in range(data_length)]
+            logger.info(
+                "截取角度自校准完成: "
+                f"理论一圈点数={POINTS_FOR_360}, 实际一圈点数={actual_points_for_360}, "
+                f"理论分辨率={ANGLE_RESOLUTION:.9f}°/点, "
+                f"实际分辨率={actual_angle_resolution:.9f}°/点, "
+                f"闭合点偏移={actual_points_for_360 - POINTS_FOR_360}, "
+                f"closure_found={closure_found}, score={closure_score:.6f}"
+            )
+        else:
+            extracted_angles = [i * ANGLE_RESOLUTION for i in range(data_length)]
+            logger.warning(
+                "闭合点自校准未启用，使用理论角度分辨率: "
+                f"理论分辨率={ANGLE_RESOLUTION:.9f}°/点"
+            )
 
         # 保留6位小数精度
         angle_data_for_plot = [round(v, 6) for v in extracted_angles]

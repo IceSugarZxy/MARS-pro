@@ -4,17 +4,20 @@
 """
 
 import os
+import json
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
                               QComboBox, QHBoxLayout, QListWidget,
-                              QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy)
+                              QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
+                              QMessageBox)
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import action_to_text
+from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
+from windows.analysis_detail_dialog import AnalysisDetailDialog
 from windows.test_progress_dialog import TestProgressDialog
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 
@@ -22,6 +25,9 @@ logger = get_logger('MeasurePanel')
 
 STATUS_AUTO_RECOVER_MS = 2000
 DEFAULT_PLOT_COLOR = '#e74c3c'
+TESTER_HISTORY_CONFIG_KEY = "tester_history"
+LAST_TESTER_CONFIG_KEY = "last_tester"
+MAX_TESTER_HISTORY_COUNT = 20
 RESULT_FIELD_DEFAULTS = {
     "n_max_edit": "0.00",
     "n_min_edit": "0.00",
@@ -83,6 +89,7 @@ class MeasurePanel(QWidget):
         self._current_plot_color = DEFAULT_PLOT_COLOR
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
+        self._analysis_detail_dialogs = []
 
         # 初始化波形分析器
         self.wave_analyzer = WaveAnalysis()
@@ -104,8 +111,121 @@ class MeasurePanel(QWidget):
 
         # 初始化配置显示
         self._init_config_display()
+        self._init_sample_info_inputs()
 
         logger.info("MeasurePanel 初始化完成")
+
+    def _init_sample_info_inputs(self):
+        """Initialize the sample info combo boxes."""
+        self._init_tester_combo()
+        self._init_sensor_combo()
+
+    def _init_tester_combo(self):
+        combo = self.findChild(QComboBox, "comboBox_tester_edit")
+        if not combo:
+            return
+
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+
+        config = get_config_manager()
+        history = self._load_tester_history()
+        last_tester = (config.get(LAST_TESTER_CONFIG_KEY, "") or "").strip()
+        if last_tester:
+            history = self._merge_tester_history(last_tester, history)
+
+        self._set_combo_items(combo, history, last_tester)
+
+    def _init_sensor_combo(self):
+        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
+        if not combo:
+            return
+
+        config = get_config_manager()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(SENSOR_RANGE_OPTIONS)
+        combo.setCurrentIndex(config.sensor_range)
+        combo.blockSignals(False)
+        combo.currentIndexChanged.connect(self._on_sensor_range_changed)
+        config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
+
+    def _on_sensor_range_changed(self, index):
+        config = get_config_manager()
+        config.sensor_range = index
+        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
+
+    def _on_config_sensor_range_changed(self, index):
+        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
+        if combo and combo.currentIndex() != index:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+
+    def _sync_sensor_range_from_ui(self):
+        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
+        if combo:
+            get_config_manager().sensor_range = combo.currentIndex()
+
+    def _load_tester_history(self):
+        config = get_config_manager()
+        raw_value = (config.get(TESTER_HISTORY_CONFIG_KEY, "") or "").strip()
+        if not raw_value:
+            return []
+
+        try:
+            parsed = json.loads(raw_value)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except (TypeError, ValueError):
+            pass
+
+        return [item.strip() for item in raw_value.split("|") if item.strip()]
+
+    def _merge_tester_history(self, latest, history):
+        merged = []
+        for item in [latest, *history]:
+            item = str(item).strip()
+            if item and item not in merged:
+                merged.append(item)
+        return merged[:MAX_TESTER_HISTORY_COUNT]
+
+    def _set_combo_items(self, combo, items, current_text=""):
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(items)
+        if current_text:
+            combo.setCurrentText(current_text)
+        elif combo.count() > 0:
+            combo.setCurrentIndex(0)
+        else:
+            combo.setCurrentText("")
+        combo.blockSignals(False)
+
+    def _combo_text(self, combo_name, fallback_line_edit_name=None):
+        combo = self.findChild(QComboBox, combo_name)
+        if combo:
+            return combo.currentText().strip()
+
+        if fallback_line_edit_name:
+            line_edit = self.findChild(QLineEdit, fallback_line_edit_name)
+            if line_edit:
+                return line_edit.text().strip()
+        return ""
+
+    def _save_tester_history(self, tester):
+        tester = (tester or "").strip()
+        if not tester:
+            return
+
+        config = get_config_manager()
+        history = self._merge_tester_history(tester, self._load_tester_history())
+        config.set(TESTER_HISTORY_CONFIG_KEY, json.dumps(history))
+        config.set(LAST_TESTER_CONFIG_KEY, tester)
+
+        combo = self.findChild(QComboBox, "comboBox_tester_edit")
+        if combo:
+            self._set_combo_items(combo, history, tester)
 
     def _init_config_display(self):
         """初始化配置显示"""
@@ -205,6 +325,8 @@ class MeasurePanel(QWidget):
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._offset_button_clicked)
         self.findChild(QPushButton, "btn_test_position").clicked.connect(self._test_position_button_clicked)
         self.findChild(QPushButton, "btn_suspend_position").clicked.connect(self._suspend_position_button_clicked)
+        self.findChild(QPushButton, "btn_press_z").clicked.connect(self._press_z_button_clicked)
+        self.findChild(QPushButton, "btn_left_x").clicked.connect(self._left_x_button_clicked)
 
         # 方向控制按钮
         self.findChild(QPushButton, "btn_up").clicked.connect(self._up_button_clicked)
@@ -214,6 +336,56 @@ class MeasurePanel(QWidget):
 
         # 底部按钮
         self.findChild(QPushButton, "btn_save").clicked.connect(self._save_data_button_clicked)
+
+        detail_button_map = {
+            "btn_zero_crossing_info": "zero_crossing",
+            "btn_extreme_point_info": "extreme_point",
+            "btn_period_error_info": "period_error",
+        }
+        for button_name, detail_type in detail_button_map.items():
+            button = self.findChild(QPushButton, button_name)
+            if button:
+                button.clicked.connect(lambda checked=False, item_type=detail_type: self._show_analysis_detail(item_type))
+
+    def _has_current_waveform_analysis(self):
+        return bool(
+            self.angle_data
+            and self.mag_data
+            and len(self.angle_data) > 0
+            and len(self.mag_data) > 0
+            and self.analysis_results
+        )
+
+    def _show_analysis_detail(self, detail_type):
+        """显示当前波形的分析详情。"""
+        if not self._has_current_waveform_analysis():
+            QMessageBox.information(self, "提示", "当前没有打开或测量完成的有效波形数据")
+            return
+
+        detail_key_map = {
+            "zero_crossing": "zero_crossing_details",
+            "extreme_point": "peak_details",
+            "period_error": "period_error_details",
+        }
+        detail_key = detail_key_map.get(detail_type)
+        if detail_key and not self.analysis_results.get(detail_key):
+            QMessageBox.information(self, "提示", "当前波形没有可显示的分析明细")
+            return
+
+        dialog = AnalysisDetailDialog(
+            detail_type,
+            self.angle_data,
+            self.mag_data,
+            self.analysis_results,
+            self,
+        )
+        self._analysis_detail_dialogs.append(dialog)
+        dialog.finished.connect(lambda _result, item=dialog: self._remove_analysis_detail_dialog(item))
+        dialog.show()
+
+    def _remove_analysis_detail_dialog(self, dialog):
+        if dialog in self._analysis_detail_dialogs:
+            self._analysis_detail_dialogs.remove(dialog)
 
     def _clear_status_message(self):
         """清空状态消息"""
@@ -262,6 +434,7 @@ class MeasurePanel(QWidget):
             self._update_status("错误：串口未连接", is_error=True)
             return
 
+        self._sync_sensor_range_from_ui()
         self._reset_sample_inputs()
         self.data_process.measure_type = "rotation"
         raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
@@ -332,6 +505,7 @@ class MeasurePanel(QWidget):
         """偏置校准"""
         logger.info("偏置校准按钮被点击")
         if self.serial_command:
+            self._sync_sensor_range_from_ui()
             logger.info(
                 "Offset flow: MeasurePanel request received, "
                 f"dialog_present={self._offset_dialog is not None}"
@@ -382,6 +556,20 @@ class MeasurePanel(QWidget):
         logger.info("挂起位置按钮被点击")
         if self.serial_command:
             self.serial_command.suspend_position()
+
+    def _press_z_button_clicked(self):
+        """Z轴下压贴靠"""
+        logger.info("向下贴靠按钮被点击")
+        if self.serial_command:
+            accepted = self.serial_command.auto_press()
+            logger.info(f"向下贴靠操作已执行，接受状态: {accepted}")
+
+    def _left_x_button_clicked(self):
+        """X轴左贴靠"""
+        logger.info("左贴向靠按钮被点击")
+        if self.serial_command:
+            accepted = self.serial_command.auto_press_left()
+            logger.info(f"左贴向靠操作已执行，接受状态: {accepted}")
 
     def _up_button_clicked(self):
         """上"""
@@ -543,7 +731,8 @@ class MeasurePanel(QWidget):
             'airgap': "" if airgap == "--" else airgap,
             'remark': self.findChild(QLineEdit, "remark_edit").text().strip(),
             'polar_num': "" if polar_num == "--" else polar_num,
-            'tester': self.findChild(QLineEdit, "tester_edit").text().strip(),
+            'tester': self._combo_text("comboBox_tester_edit", "tester_edit"),
+            'probe': self._combo_text("comboBox_sensor_edit"),
         }
 
     def update_plot_data(self, angle_data=None, mag_data=None, color='r'):
@@ -578,6 +767,7 @@ class MeasurePanel(QWidget):
             if not file_path:
                 return False
 
+            self._save_tester_history(sample_info.get('tester', ''))
             logger.info(f"数据已保存: {file_path}")
             return True
         except Exception as e:
