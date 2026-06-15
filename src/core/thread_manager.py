@@ -20,7 +20,7 @@ class ThreadManager(QObject):
     """线程管理器"""
 
     # 信号定义
-    signal_connect = pyqtSignal(str, str, str, str, str)
+    signal_connect = pyqtSignal(str)
     signal_disconnect = pyqtSignal()
     signal_connection_status_changed = pyqtSignal(bool)
     signal_data_received = pyqtSignal(bytes)

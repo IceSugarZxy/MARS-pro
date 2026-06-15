@@ -107,10 +107,6 @@ class ConfigManager(QObject):
     DEFAULT_CONFIG = {
         'offset': '0',
         'COM': 'COM12',
-        'baudrate': '921600',
-        'bytesize': '8',
-        'stopbits': '1',
-        'parity': '无',
         # 测试位置
         'test_x': '0',
         'test_z': '0',
@@ -217,38 +213,6 @@ class ConfigManager(QObject):
     @com_port.setter
     def com_port(self, value: str) -> None:
         self.set('COM', self._strip_quotes(value) or 'COM12')
-
-    @property
-    def baudrate(self) -> int:
-        return int(self._strip_quotes(self.get('baudrate', '921600')) or '921600')
-
-    @baudrate.setter
-    def baudrate(self, value: int) -> None:
-        self.set('baudrate', str(value))
-
-    @property
-    def bytesize(self) -> str:
-        return self._strip_quotes(self.get('bytesize', '8')) or '8'
-
-    @bytesize.setter
-    def bytesize(self, value: str) -> None:
-        self.set('bytesize', self._strip_quotes(value) or '8')
-
-    @property
-    def stopbits(self) -> str:
-        return self._strip_quotes(self.get('stopbits', '1')) or '1'
-
-    @stopbits.setter
-    def stopbits(self, value: str) -> None:
-        self.set('stopbits', self._strip_quotes(value) or '1')
-
-    @property
-    def parity(self) -> str:
-        return self._strip_quotes(self.get('parity', '无')) or '无'
-
-    @parity.setter
-    def parity(self, value: str) -> None:
-        self.set('parity', self._strip_quotes(value) or '无')
 
     @property
     def offset(self) -> float:

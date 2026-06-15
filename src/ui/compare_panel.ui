@@ -15,19 +15,19 @@
   </property>
   <layout class="QGridLayout" name="main_layout">
    <property name="leftMargin">
-    <number>20</number>
+         <number>10</number>
    </property>
    <property name="topMargin">
-    <number>20</number>
+         <number>10</number>
    </property>
    <property name="rightMargin">
-    <number>20</number>
+         <number>10</number>
    </property>
    <property name="bottomMargin">
-    <number>20</number>
+         <number>10</number>
    </property>
    <property name="spacing">
-    <number>16</number>
+         <number>10</number>
    </property>
    <item row="0" column="0" colspan="3">
     <widget class="QLabel" name="panel_title">

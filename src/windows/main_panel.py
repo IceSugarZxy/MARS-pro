@@ -41,7 +41,6 @@ class MainPanel(QMainWindow):
     def _init_nav_buttons(self):
         self._nav_button_map = {
             "nav_button_measure": "measure",
-            "nav_button_serial": "serial",
             "nav_button_position": "test_config",
             "nav_button_history": "history",
             "nav_button_compare": "compare",
@@ -90,14 +89,12 @@ class MainPanel(QMainWindow):
         from windows.compare_panel import ComparePanel
         from windows.history_panel import HistoryPanel
         from windows.measure_panel import MeasurePanel
-        from windows.serial_panel import SerialPanel
         from windows.test_config_panel import TestConfigPanel
 
         content_stacked = self.findChild(QStackedWidget, "content_stacked")
 
         panels = [
             ("measure", MeasurePanel()),
-            ("serial", SerialPanel()),
             ("test_config", TestConfigPanel()),
             ("history", HistoryPanel()),
             ("compare", ComparePanel()),

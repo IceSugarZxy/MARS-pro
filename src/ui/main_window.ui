@@ -110,28 +110,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QWidget" name="nav_button_serial" native="true">
-            <property name="minimumSize">
-             <size>
-              <width>0</width>
-              <height>48</height>
-             </size>
-            </property>
-            <layout class="QHBoxLayout" name="nav_btn_serial_layout">
-             <item>
-              <widget class="QLabel" name="nav_text_serial">
-               <property name="text">
-                <string>串口设置</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-          <item>
            <widget class="QWidget" name="nav_button_position" native="true">
             <property name="minimumSize">
              <size>
@@ -226,19 +204,19 @@
             </property>
             <layout class="QHBoxLayout" name="status_layout">
              <property name="spacing">
-              <number>10</number>
+         <number>10</number>
              </property>
              <property name="leftMargin">
-              <number>0</number>
+         <number>10</number>
              </property>
              <property name="topMargin">
-              <number>0</number>
+         <number>10</number>
              </property>
              <property name="rightMargin">
-              <number>0</number>
+         <number>10</number>
              </property>
              <property name="bottomMargin">
-              <number>0</number>
+         <number>10</number>
              </property>
              <item>
               <widget class="QLabel" name="serial_status_indicator">

@@ -4,7 +4,10 @@
 实现磁场波形的各项指标分析功能
 """
 
+import warnings
+
 import numpy as np
+from scipy.optimize import OptimizeWarning
 from scipy.signal import find_peaks
 from scipy.fft import fft
 from core.logger import get_logger
@@ -388,8 +391,10 @@ class WaveAnalysis:
                             # 尝试不同的初始参数
                             initial_guess = [y_amplitude, 2*np.pi/len(x_fit), 0, y_mean]
 
-                            # 进行正弦拟合
-                            popt, _ = curve_fit(sin_func, x_fit, y_original, p0=initial_guess, maxfev=5000)
+                            # 进行正弦拟合；部分数据能拟合出曲线但无法估计协方差，忽略该提示即可。
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore", OptimizeWarning)
+                                popt, _ = curve_fit(sin_func, x_fit, y_original, p0=initial_guess, maxfev=5000)
 
                             A_fit, omega_fit, phi_fit, C_fit = popt
 

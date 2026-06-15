@@ -1163,14 +1163,15 @@ class DataProcess(QObject):
             文件路径，保存失败返回None
         """
         try:
-            plot_data_dir = get_data_dir("plot_data")
-
-            # 创建目录（如果不存在）
-            if not os.path.exists(plot_data_dir):
-                os.makedirs(plot_data_dir)
-
             # 生成文件名：样品名称_YYYYMMDD_HHMMSS.csv
-            current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            now = datetime.now()
+            date_folder = now.strftime("%Y%m%d")
+            current_time = now.strftime("%Y%m%d_%H%M%S")
+            plot_data_dir = os.path.join(get_data_dir("plot_data"), date_folder)
+
+            # 创建当天目录（如果不存在）
+            os.makedirs(plot_data_dir, exist_ok=True)
+
             sample_name = self._sample_info.get('sample_name', '未命名') if self._sample_info else '未命名'
             filename = f"{sample_name}_{current_time}.csv"
             filepath = os.path.join(plot_data_dir, filename)

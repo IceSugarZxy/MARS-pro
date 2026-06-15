@@ -94,17 +94,6 @@ class PlotWindow(QWidget):
         pw_x.setPen(QPen(Qt.transparent))  # 隐藏x轴轴线，保留刻度
         pw_x.setStyle(tickFont=QFont('Alibaba PuHuiTi', 10), tickTextOffset=10, tickLength=5)
     
-    def _setup_y_axis(self):
-        """设置Y轴刻度"""
-        y_num = list(range(-700, 700, 7))
-        y_str = [f'{abs(y)}' if y != 0 else '0' for y in y_num]
-        
-        ticks_y = [[i, j] for i, j in zip(y_num, y_str)]
-        pw_y = self.plot_widget.plotItem.getAxis('left')
-        pw_y.setTicks([ticks_y])
-        pw_y.setPen(QPen(Qt.transparent))  # 隐藏y轴轴线，保留刻度
-        pw_y.setStyle(tickFont=QFont('Alibaba PuHuiTi', 10), tickTextOffset=10, tickLength=5)
-    
     def _setup_plot_layout(self):
         """设置绘图布局"""
         layout = QVBoxLayout(self)

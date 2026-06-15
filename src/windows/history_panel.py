@@ -106,7 +106,7 @@ class LoadHistoryThread(QThread):
         """后台加载历史数据"""
         records = []
 
-        csv_files = glob.glob(os.path.join(self.plot_data_dir, "*.csv"))
+        csv_files = glob.glob(os.path.join(self.plot_data_dir, "**", "*.csv"), recursive=True)
         csv_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
         for file_path in csv_files:

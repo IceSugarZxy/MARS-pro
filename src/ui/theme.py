@@ -124,6 +124,26 @@ def get_base_stylesheet() -> str:
         border: 1px solid {COLOR_PRIMARY};
     }}
 
+    QRadioButton {{
+        background-color: transparent;
+        color: {COLOR_TEXT_PRIMARY};
+        spacing: 6px;
+        font-size: {FONT_SIZE_M};
+    }}
+
+    QRadioButton::indicator {{
+        width: 14px;
+        height: 14px;
+        border: 1px solid {COLOR_GRAY};
+        border-radius: 7px;
+        background-color: transparent;
+    }}
+
+    QRadioButton::indicator:checked {{
+        background-color: {COLOR_PRIMARY};
+        border: 1px solid {COLOR_PRIMARY};
+    }}
+
     /* 输入框 */
     QLineEdit, QTextEdit, QPlainTextEdit {{
         background-color: #ffffff;
@@ -233,6 +253,22 @@ def get_base_stylesheet() -> str:
 
     QPushButton#btnTeal:hover {{
         background-color: {COLOR_TEAL_HOVER};
+    }}
+
+    /* 方向控制按钮（白底） */
+    QPushButton#btn_up, QPushButton#btn_down, QPushButton#btn_left, QPushButton#btn_right {{
+        background-color: #ffffff;
+    }}
+
+    /* 方向移动距离输入框（白底） */
+    QLineEdit#distance_edit {{
+        background-color: #ffffff;
+        color: #000000;
+    }}
+
+    /* 方向控制外层容器（透明，不阻断子控件样式继承） */
+    QWidget#widget_control {{
+        background-color: transparent;
     }}
 
     /* 导航按钮 */
@@ -435,24 +471,24 @@ def get_base_stylesheet() -> str:
     }}
 
     /* 导航按钮 - 具体按钮 */
-    QWidget#nav_button_measure, QWidget#nav_button_serial, QWidget#nav_button_position,
+    QWidget#nav_button_measure, QWidget#nav_button_position,
     QWidget#nav_button_history, QWidget#nav_button_compare {{
         background-color: transparent;
         border: none;
     }}
-    QWidget#nav_button_measure:hover, QWidget#nav_button_serial:hover,
+    QWidget#nav_button_measure:hover,
     QWidget#nav_button_position:hover, QWidget#nav_button_history:hover,
     QWidget#nav_button_compare:hover {{
         background-color: {COLOR_BG_PANEL};
     }}
-    QWidget#nav_button_measure:selected, QWidget#nav_button_serial:selected,
+    QWidget#nav_button_measure:selected,
     QWidget#nav_button_position:selected, QWidget#nav_button_history:selected,
     QWidget#nav_button_compare:selected {{
         background-color: {COLOR_PRIMARY_LIGHT};
     }}
 
     /* 导航按钮文字 */
-    QLabel#nav_text_measure, QLabel#nav_text_serial, QLabel#nav_text_position,
+    QLabel#nav_text_measure, QLabel#nav_text_position,
     QLabel#nav_text_history, QLabel#nav_text_compare {{
         color: {COLOR_TEXT_PRIMARY};
         background: transparent;

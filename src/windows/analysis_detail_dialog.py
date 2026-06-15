@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (
     QLabel,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 from PyQt5.QtCore import Qt
 
@@ -52,12 +54,26 @@ class AnalysisDetailDialog(QDialog):
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(title, 0, 0, 1, 2)
 
+        self.plot_container = QWidget()
+        self.plot_container_layout = QVBoxLayout(self.plot_container)
+        self.plot_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.plot_container_layout.setSpacing(8)
+
+        self.waveform_plot_widget = pg.PlotWidget()
+        self.waveform_plot_widget.setBackground("#ffffff")
+        self.waveform_plot_widget.showGrid(x=True, y=True, alpha=0.35)
+        self.waveform_plot_widget.plotItem.setLabel("bottom", "角度", units="°")
+        self.waveform_plot_widget.plotItem.setLabel("left", "磁场", units="mT")
+        self.waveform_plot_widget.hide()
+        self.plot_container_layout.addWidget(self.waveform_plot_widget)
+
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("#ffffff")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.35)
         self.plot_widget.plotItem.setLabel("bottom", "角度", units="°")
         self.plot_widget.plotItem.setLabel("left", "磁场", units="mT")
-        layout.addWidget(self.plot_widget, 1, 0)
+        self.plot_container_layout.addWidget(self.plot_widget)
+        layout.addWidget(self.plot_container, 1, 0)
 
         self.stats_table = QTableWidget()
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -100,6 +116,7 @@ class AnalysisDetailDialog(QDialog):
         details = list(self.analysis_results.get("zero_crossing_details", []))
         intervals = [item.get("interval_to_next") for item in details]
         mean_interval = self._mean(intervals)
+        self._plot_zero_crossing_waveform(details)
         self._plot_zero_crossing_intervals(details, mean_interval)
 
         self._set_stats_table([
@@ -120,6 +137,49 @@ class AnalysisDetailDialog(QDialog):
                 item.get("pole", ""),
             ] for item in details]
         )
+
+    def _plot_zero_crossing_waveform(self, details):
+        self.waveform_plot_widget.show()
+        self.waveform_plot_widget.clear()
+        self.waveform_plot_widget.addLegend(offset=(10, 10))
+        self.waveform_plot_widget.plotItem.setLabel("bottom", "角度", units="°")
+        self.waveform_plot_widget.plotItem.setLabel("left", "磁场", units="mT")
+
+        if self.angle_data and self.mag_data:
+            count = min(len(self.angle_data), len(self.mag_data))
+            self.waveform_plot_widget.plot(
+                self.angle_data[:count],
+                self.mag_data[:count],
+                pen=mkPen("#34495e", width=1),
+                name="磁场波形",
+            )
+            self.waveform_plot_widget.setXRange(0, 360)
+            mag_values = np.asarray(self.mag_data[:count], dtype=float)
+            if len(mag_values) > 0:
+                min_value = float(np.nanmin(mag_values))
+                max_value = float(np.nanmax(mag_values))
+                margin = max((max_value - min_value) * 0.1, 1.0)
+                self.waveform_plot_widget.setYRange(min_value - margin, max_value + margin)
+
+        zero_angles = [float(item.get("angle")) for item in details if self._is_number(item.get("angle"))]
+        if zero_angles:
+            zero_values = [0.0] * len(zero_angles)
+            self.waveform_plot_widget.addItem(pg.ScatterPlotItem(
+                x=zero_angles,
+                y=zero_values,
+                size=9,
+                brush=pg.mkBrush("#f39c12"),
+                pen=pg.mkPen("#d35400", width=1),
+                name="过零点",
+            ))
+
+            for angle in zero_angles:
+                line = pg.InfiniteLine(
+                    pos=angle,
+                    angle=90,
+                    pen=pg.mkPen("#f39c12", width=1, style=Qt.DotLine),
+                )
+                self.waveform_plot_widget.addItem(line)
 
     def _plot_zero_crossing_intervals(self, details, mean_interval):
         self.plot_widget.clear()

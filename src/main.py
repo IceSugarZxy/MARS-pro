@@ -103,7 +103,6 @@ class MainApplication:
             self.logger.info("信号连接完成")
 
             # 将线程管理器传递给各面板
-            self.main_panel.get_panel("serial").set_thread_manager(self.thread_manager)
             self.main_panel.get_panel("measure").set_thread_manager(self.thread_manager)
             self.main_panel.get_panel("test_config").set_thread_manager(self.thread_manager)
             self.logger.info("面板线程管理器设置完成")
@@ -113,7 +112,7 @@ class MainApplication:
             self.logger.info("线程启动完成")
 
             # 自动连接串口
-            self.main_panel.get_panel("serial").auto_connect_from_config()
+            self.main_panel.get_panel("measure").auto_connect_from_config()
             self.logger.info("自动连接串口完成")
 
             return True

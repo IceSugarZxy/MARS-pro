@@ -11,7 +11,6 @@ from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 from PyQt5.QtSerialPort import QSerialPort
 
 from .logger import get_logger
-from .config_manager import get_config_manager
 
 logger = get_logger('SerialManager')
 
@@ -22,6 +21,7 @@ SERIAL_BINARY_RX_SUMMARY_SECONDS = 1.0
 SERIAL_LIGHT_ADC_RX_SUMMARY_SECONDS = 2.0
 SERIAL_UI_RX_EMIT_INTERVAL_MS = 120
 SERIAL_UI_RX_BUFFER_FLUSH_BYTES = 4096
+SERIAL_BAUDRATE = 115200
 
 
 class SerialManager(QObject):
@@ -42,7 +42,6 @@ class SerialManager(QObject):
         self.timer: Optional[QTimer] = None
         self.connection_check_timer: Optional[QTimer] = None
         self._ui_rx_emit_timer: Optional[QTimer] = None
-        self.config = get_config_manager()
         self._pending_write_item = None
         self._last_write_time = 0.0
         self._binary_rx_bytes = 0
@@ -186,33 +185,13 @@ class SerialManager(QObject):
             )
         return dropped
 
-    @classmethod
-    def _normalize_parity(cls, parity: str) -> str:
-        text = cls._normalize_serial_value(parity, "无")
-        parity_alias_map = {
-            "N": "无",
-            "O": "奇",
-            "E": "偶",
-            "M": "标记",
-            "S": "空格",
-        }
-        return parity_alias_map.get(text.upper(), text)
-
     def connect_serial(
         self,
         port: str,
-        baudrate: str = "921600",
-        bytesize: str = "8",
-        stopbits: str = "1",
-        parity: str = "无"
     ) -> bool:
         """连接串口"""
         try:
             port = self._normalize_serial_value(port, "")
-            baudrate = self._normalize_serial_value(baudrate, "921600")
-            bytesize = self._normalize_serial_value(bytesize, "8")
-            stopbits = self._normalize_serial_value(stopbits, "1")
-            parity = self._normalize_parity(parity)
 
             if self.serial_port:
                 try:
@@ -226,36 +205,10 @@ class SerialManager(QObject):
 
             self.serial_port = QSerialPort()
             self.serial_port.setPortName(port)
-            self.serial_port.setBaudRate(int(baudrate))
-
-            # 数据位
-            data_bits_map = {
-                "5": QSerialPort.Data5,
-                "6": QSerialPort.Data6,
-                "7": QSerialPort.Data7,
-                "8": QSerialPort.Data8,
-            }
-            self.serial_port.setDataBits(data_bits_map.get(bytesize, QSerialPort.Data8))
-
-            # 停止位
-            stop_bits_map = {
-                "1": QSerialPort.OneStop,
-                "1.5": QSerialPort.OneAndHalfStop,
-                "2": QSerialPort.TwoStop,
-            }
-            self.serial_port.setStopBits(stop_bits_map.get(stopbits, QSerialPort.OneStop))
-
-            # 校验位
-            parity_map = {
-                "无": QSerialPort.NoParity,
-                "奇": QSerialPort.OddParity,
-                "偶": QSerialPort.EvenParity,
-                "标记": QSerialPort.MarkParity,
-                "空格": QSerialPort.SpaceParity,
-            }
-            self.serial_port.setParity(parity_map.get(parity, QSerialPort.NoParity))
-
-            # 硬件流控 - 改为无，避免握手问题
+            self.serial_port.setBaudRate(SERIAL_BAUDRATE)
+            self.serial_port.setDataBits(QSerialPort.Data8)
+            self.serial_port.setStopBits(QSerialPort.OneStop)
+            self.serial_port.setParity(QSerialPort.NoParity)
             self.serial_port.setFlowControl(QSerialPort.NoFlowControl)
 
             # 连接 readyRead 信号到数据接收处理（高频接收）
@@ -288,7 +241,7 @@ class SerialManager(QObject):
                 self.connection_check_timer.start()
 
                 self.signal_connection_status_changed.emit(True)
-                logger.info(f"串口连接成功: {port} @ {baudrate}bps")
+                logger.info(f"串口连接成功: {port}")
                 return True
             else:
                 logger.error(f"打开串口失败: {port}")

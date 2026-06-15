@@ -52,20 +52,15 @@ class ComparePanel(QWidget):
 
     def _init_plot_widget(self):
         """初始化绘图控件"""
-        # 找到占位符并替换为真正的绘图控件
         placeholder = self.findChild(QLabel, "plot_placeholder")
         if placeholder:
-            # 创建绘图控件
-            self.plot_widget = pg.PlotWidget()
-
-            # 设置背景色为白色
+            # 创建绘图控件（启用 OpenGL 加速和自动降采样）
+            self.plot_widget = pg.PlotWidget(useOpenGL=True)
             self.plot_widget.setBackground('#ffffff')
-
-            # 显示网格
             self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
-
-            # 禁用自动范围调整
             self.plot_widget.enableAutoRange(False, False)
+            self.plot_widget.plotItem.setClipToView(True)
+            self.plot_widget.setDownsampling(auto=True, mode='peak')
 
             # 创建两条曲线
             self.curve1 = self.plot_widget.plot(pen=mkPen('#e74c3c', width=1.5))  # 红色
@@ -108,19 +103,21 @@ class ComparePanel(QWidget):
         if not self.data1['angle'] and not self.data2['angle']:
             return
 
-        # 创建独立窗口
+        # 创建独立窗口（非模态，避免嵌套事件循环卡顿）
         dialog = QDialog(self)
         dialog.setWindowTitle("波形比对")
         dialog.resize(1000, 600)
-        dialog.showMaximized()
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
 
-        # 创建新的绘图控件
-        full_plot = pg.PlotWidget()
+        # 创建绘图控件，启用 OpenGL 加速和自动降采样
+        full_plot = pg.PlotWidget(useOpenGL=True)
         full_plot.setBackground('#ffffff')
         full_plot.showGrid(x=True, y=True, alpha=0.5)
         full_plot.setXRange(0, 360)
         full_plot.plotItem.setLabel('bottom', '角度', units='°')
         full_plot.plotItem.setLabel('left', '磁场', units='mT')
+        full_plot.plotItem.setClipToView(True)
+        full_plot.setDownsampling(auto=True, mode='peak')
 
         # 绘制两条曲线
         curve1_full = full_plot.plot(pen=mkPen('#e74c3c', width=1.5))
@@ -153,7 +150,7 @@ class ComparePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(full_plot)
 
-        dialog.exec_()
+        dialog.showMaximized()
 
     def _on_browse(self, file_num):
         """浏览文件"""

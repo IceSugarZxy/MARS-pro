@@ -5,6 +5,7 @@
 
 import os
 import json
+import serial.tools.list_ports
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
                               QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
@@ -56,6 +57,16 @@ RESULT_FIELD_DEFAULTS = {
     "polar_num_edit": "--",
 }
 
+MEASUREMENT_LOCKED_BUTTONS = (
+    "btn_start_rotation",
+    "btn_zeroing",
+    "btn_offset",
+    "btn_test_position",
+    "btn_suspend_position",
+    "btn_press_z",
+    "btn_left_x",
+)
+
 
 class MeasurePanel(QWidget):
     """测量面板 - 从 measure_panel.ui 加载"""
@@ -103,6 +114,15 @@ class MeasurePanel(QWidget):
         self._status_auto_recover_timer.setSingleShot(True)
         self._status_auto_recover_timer.timeout.connect(self._clear_status_message)
 
+        self._pending_connection_port = None
+        self._connection_timeout_timer = QTimer(self)
+        self._connection_timeout_timer.setSingleShot(True)
+        self._connection_timeout_timer.timeout.connect(self._on_connection_timeout)
+
+        self._port_refresh_timer = QTimer(self)
+        self._port_refresh_timer.setInterval(2000)
+        self._port_refresh_timer.timeout.connect(self._refresh_ports)
+
         # 连接按钮事件
         self._connect_buttons()
 
@@ -111,7 +131,11 @@ class MeasurePanel(QWidget):
 
         # 初始化配置显示
         self._init_config_display()
+        self._init_serial_controls()
         self._init_sample_info_inputs()
+
+        # 初始化时显示提示文字
+        self._clear_status_message()
 
         logger.info("MeasurePanel 初始化完成")
 
@@ -316,8 +340,201 @@ class MeasurePanel(QWidget):
         else:
             logger.warning("未找到widget_plot_display控件")
 
+    def _init_serial_controls(self):
+        """Initialize serial controls embedded in the test configuration area."""
+        self._refresh_ports()
+        self._apply_serial_port_to_ui(get_config_manager().com_port)
+        self._set_serial_status("未连接", "#e74c3c")
+        self._set_serial_button_state(False)
+
+    def _set_combo_text(self, combo_name: str, value: str) -> None:
+        combo = self.findChild(QComboBox, combo_name)
+        if not combo:
+            return
+
+        index = combo.findText(str(value))
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _get_serial_port_from_ui(self) -> str:
+        port_combo = self.findChild(QComboBox, "port_combo")
+        return port_combo.currentText() if port_combo else ""
+
+    def _apply_serial_port_to_ui(self, com_port: str) -> None:
+        self._set_combo_text("port_combo", com_port)
+
+    def _set_serial_status(self, text: str, color: str) -> None:
+        status_label = self.findChild(QLabel, "serial_status_label")
+        if status_label:
+            status_label.setText(text)
+            status_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
+
+    def _set_serial_button_state(self, connected: bool = False, connecting: bool = False) -> None:
+        connect_btn = self.findChild(QPushButton, "btnSuccess")
+        if not connect_btn:
+            return
+
+        connect_btn.setEnabled(True)
+        if connecting:
+            connect_btn.setText("连接中...")
+            connect_btn.setStyleSheet(
+                "QPushButton { background-color: #3498db; color: white; }"
+            )
+        elif connected:
+            connect_btn.setText("断开")
+            connect_btn.setStyleSheet(
+                "QPushButton { background-color: #e74c3c; color: white; }"
+            )
+        else:
+            connect_btn.setText("连接")
+            connect_btn.setStyleSheet(
+                "QPushButton { background-color: #27ae60; color: white; }"
+            )
+
+    def _save_serial_port(self, com_port: str) -> None:
+        config = get_config_manager()
+        config.com_port = com_port or config.com_port
+
+    def _refresh_ports(self):
+        port_combo = self.findChild(QComboBox, "port_combo")
+        if port_combo is None:
+            logger.error("port_combo not found")
+            return
+
+        current_port = port_combo.currentText() or get_config_manager().com_port
+
+        port_combo.blockSignals(True)
+        port_combo.clear()
+        try:
+            ports = list(serial.tools.list_ports.comports())
+            for port in ports:
+                port_combo.addItem(port.device)
+
+            if current_port:
+                index = port_combo.findText(current_port)
+                if index >= 0:
+                    port_combo.setCurrentIndex(index)
+
+            if port_combo.count() == 0:
+                port_combo.addItem("无可用串口")
+                port_combo.setEnabled(False)
+            else:
+                port_combo.setEnabled(True)
+        except Exception as e:
+            logger.error(f"Refresh serial ports failed: {e}")
+            port_combo.addItem("刷新失败")
+        finally:
+            port_combo.blockSignals(False)
+
+    def _start_connect(self, com_port: str, status_text: str) -> bool:
+        if not self.thread_manager or not self.thread_manager.serial_manager:
+            logger.error("Serial manager is not initialized.")
+            return False
+
+        if self.thread_manager.serial_manager.get_connection_status():
+            logger.info("Serial port is already connected.")
+            return True
+
+        if not com_port or com_port == "无可用串口":
+            logger.error("Please select a valid serial port.")
+            return False
+
+        self._pending_connection_port = com_port
+        self._apply_serial_port_to_ui(com_port)
+        self._set_serial_status(status_text, "#3498db")
+        self._set_serial_button_state(connecting=True)
+        self._connection_timeout_timer.start(2000)
+
+        logger.info(f"Connecting serial port {com_port}...")
+        self.thread_manager.signal_connect.emit(com_port)
+        return True
+
+    def _set_port_refresh_enabled(self, enabled: bool) -> None:
+        if enabled:
+            if not self._port_refresh_timer.isActive():
+                self._port_refresh_timer.start()
+            self._refresh_ports()
+            return
+
+        if self._port_refresh_timer.isActive():
+            self._port_refresh_timer.stop()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._set_port_refresh_enabled(True)
+
+    def hideEvent(self, event):
+        self._set_port_refresh_enabled(False)
+        super().hideEvent(event)
+
+    def _on_connect_clicked(self):
+        if self.thread_manager and self.thread_manager.serial_manager:
+            if self.thread_manager.serial_manager.get_connection_status():
+                self.thread_manager.signal_disconnect.emit()
+                logger.info("Serial port disconnected.")
+                return
+
+        self._start_connect(self._get_serial_port_from_ui(), "正在连接...")
+
+    def _on_connection_timeout(self):
+        self._set_serial_status("连接超时", "#e74c3c")
+        self._set_serial_button_state(False)
+        self._pending_connection_port = None
+        logger.warning("Serial connection timed out.")
+
+    def _on_serial_status_changed(self, connected):
+        self._connection_timeout_timer.stop()
+
+        if connected:
+            port = ""
+            if self.serial_manager and getattr(self.serial_manager, "serial_port", None):
+                port = self.serial_manager.serial_port.portName()
+
+            self._set_serial_button_state(True)
+
+            com_port = str(port or self._pending_connection_port or self._get_serial_port_from_ui()).strip().strip('"')
+            self._save_serial_port(com_port)
+            self._set_serial_status("已连接", "#27ae60")
+
+            if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
+                self.thread_manager.serial_command.enable_position_query_timer()
+
+            logger.info(f"Serial connected: {com_port}")
+        else:
+            self._set_serial_button_state(False)
+
+            if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
+                self.thread_manager.serial_command.disable_position_query_timer()
+
+            self._set_serial_status("未连接", "#e74c3c")
+            logger.info("Serial disconnected.")
+
+        self._pending_connection_port = None
+
+    def auto_connect_from_config(self):
+        try:
+            com_port = get_config_manager().com_port
+            if not com_port:
+                logger.info("No COM port found in configuration.")
+                return False
+
+            ports = list(serial.tools.list_ports.comports())
+            available_ports = [port.device for port in ports]
+            if com_port not in available_ports:
+                logger.info(f"Configured serial port {com_port} is unavailable.")
+                return False
+
+            return self._start_connect(com_port, "自动连接中...")
+        except Exception as e:
+            logger.error(f"Auto connect failed: {e}")
+            return False
+
     def _connect_buttons(self):
         """连接按钮事件"""
+        connect_btn = self.findChild(QPushButton, "btnSuccess")
+        if connect_btn:
+            connect_btn.clicked.connect(self._on_connect_clicked)
+
         # 快捷操作按钮
         self.findChild(QPushButton, "btn_start_rotation").clicked.connect(self._start_rotation_button_clicked)
         self.findChild(QPushButton, "btn_stop_rotation").clicked.connect(self._stop_rotation_button_clicked)
@@ -399,33 +616,9 @@ class MeasurePanel(QWidget):
 
         status_label = self.findChild(QLabel, "status_label")
         if status_label:
-            status_label.setText("")
+            status_label.setText("状态提示信息")
             status_label.setToolTip("")
-            status_label.setStyleSheet("")
-
-    def _on_serial_clicked(self):
-        """跳转到串口设置"""
-        from PyQt5.QtWidgets import QApplication
-        for widget in QApplication.topLevelWidgets():
-            if hasattr(widget, '_switch_panel'):
-                widget._switch_panel("serial")
-                break
-
-    def _on_history_clicked(self):
-        """跳转到历史数据"""
-        from PyQt5.QtWidgets import QApplication
-        for widget in QApplication.topLevelWidgets():
-            if hasattr(widget, '_switch_panel'):
-                widget._switch_panel("history")
-                break
-
-    def _on_compare_clicked(self):
-        """跳转到数据比对"""
-        from PyQt5.QtWidgets import QApplication
-        for widget in QApplication.topLevelWidgets():
-            if hasattr(widget, '_switch_panel'):
-                widget._switch_panel("compare")
-                break
+            status_label.setStyleSheet("color: #b0b0b0; font-style: italic;")
 
     def _start_rotation_button_clicked(self):
         """开始测量"""
@@ -660,21 +853,23 @@ class MeasurePanel(QWidget):
 
     def _disable_function_buttons(self):
         """禁用功能按钮"""
-        self.findChild(QPushButton, "btn_start_rotation").setEnabled(False)
-        self.findChild(QPushButton, "btn_zeroing").setEnabled(False)
-        self.findChild(QPushButton, "btn_test_position").setEnabled(False)
+        self._set_measurement_locked_buttons_enabled(False)
         raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
         if raw_checkbox:
             raw_checkbox.setEnabled(False)
 
     def _enable_function_buttons(self):
         """启用所有功能按钮"""
-        self.findChild(QPushButton, "btn_start_rotation").setEnabled(True)
-        self.findChild(QPushButton, "btn_zeroing").setEnabled(True)
-        self.findChild(QPushButton, "btn_test_position").setEnabled(True)
+        self._set_measurement_locked_buttons_enabled(True)
         raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
         if raw_checkbox:
             raw_checkbox.setEnabled(True)
+
+    def _set_measurement_locked_buttons_enabled(self, enabled):
+        for button_name in MEASUREMENT_LOCKED_BUTTONS:
+            button = self.findChild(QPushButton, button_name)
+            if button:
+                button.setEnabled(enabled)
 
     def _end_test(self):
         """结束测试"""
@@ -817,6 +1012,12 @@ class MeasurePanel(QWidget):
         if hasattr(tm.data_process, "signal_offset_data_process_finished"):
             tm.data_process.signal_offset_data_process_finished.connect(
                 self._on_offset_calibration_finished,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(self.serial_manager, "signal_connection_status_changed"):
+            self.serial_manager.signal_connection_status_changed.connect(
+                self._on_serial_status_changed,
                 Qt.QueuedConnection,
             )
 

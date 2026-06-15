@@ -15,24 +15,20 @@
   </property>
   <layout class="QGridLayout" name="main_layout">
    <property name="leftMargin">
-    <number>20</number>
+    <number>10</number>
    </property>
    <property name="topMargin">
-    <number>20</number>
+    <number>10</number>
    </property>
    <property name="rightMargin">
-    <number>20</number>
+    <number>10</number>
    </property>
    <property name="bottomMargin">
-    <number>20</number>
+    <number>10</number>
    </property>
-   <property name="horizontalSpacing">
-    <number>16</number>
+   <property name="spacing">
+    <number>10</number>
    </property>
-   <property name="verticalSpacing">
-    <number>16</number>
-   </property>
-   <!-- 标题区域 -->
    <item row="0" column="0">
     <widget class="QLabel" name="panel_title">
      <property name="text">
@@ -40,177 +36,156 @@
      </property>
     </widget>
    </item>
-   <!-- 搜索条件区域 -->
-   <item row="1" column="0">
-    <widget class="QWidget" name="search_section">
-     <layout class="QVBoxLayout" name="search_section_layout">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
-      <item>
-       <widget class="QGroupBox" name="search_group">
-        <property name="title">
-         <string>搜索条件</string>
-        </property>
-        <layout class="QGridLayout" name="search_layout">
-         <item row="0" column="0">
-          <widget class="QLabel" name="label_sample_name">
-           <property name="text">
-            <string>样品名称:</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QLineEdit" name="sample_name_edit"/>
-         </item>
-         <item row="0" column="2">
-          <widget class="QLabel" name="label_tester">
-           <property name="text">
-            <string>测试人员:</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="3">
-          <widget class="QLineEdit" name="tester_edit"/>
-         </item>
-         <item row="1" column="0">
-          <widget class="QLabel" name="label_polar_num">
-           <property name="text">
-            <string>极数:</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QLineEdit" name="polar_num_edit"/>
-         </item>
-         <item row="1" column="2">
-          <widget class="QLabel" name="label_airgap">
-           <property name="text">
-            <string>气隙:</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="3">
-          <widget class="QLineEdit" name="airgap_edit"/>
-         </item>
-        </layout>
-       </widget>
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <!-- 数据列表区域 -->
-   <item row="2" column="0">
-    <widget class="QWidget" name="table_section">
-     <layout class="QVBoxLayout" name="table_section_layout">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
-      <item>
-       <widget class="QTableWidget" name="data_table">
-        <property name="columnCount">
-         <number>6</number>
-        </property>
-        <column>
-         <property name="text">
-          <string>样品名称</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>测试时间</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>测试人员</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>极数</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>气隙</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>备注</string>
-         </property>
-        </column>
-        <attribute name="selectionBehavior">
-         <enum>QAbstractItemView::SelectRows</enum>
-        </attribute>
-        <attribute name="editTriggers">
-         <set>QAbstractItemView::NoEditTriggers</set>
-        </attribute>
-       </widget>
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <!-- 按钮行区域 -->
    <item row="3" column="0">
-    <widget class="QWidget" name="btn_section">
-     <layout class="QVBoxLayout" name="btn_section_layout">
-      <property name="leftMargin">
-       <number>0</number>
+    <widget class="QTableWidget" name="data_table">
+     <property name="columnCount">
+      <number>6</number>
+     </property>
+     <column>
+      <property name="text">
+       <string>样品名称</string>
       </property>
-      <property name="topMargin">
-       <number>0</number>
+     </column>
+     <column>
+      <property name="text">
+       <string>测试时间</string>
       </property>
-      <property name="rightMargin">
-       <number>0</number>
+     </column>
+     <column>
+      <property name="text">
+       <string>测试人员</string>
       </property>
-      <property name="bottomMargin">
-       <number>0</number>
+     </column>
+     <column>
+      <property name="text">
+       <string>极数</string>
       </property>
-      <item>
-       <layout class="QHBoxLayout" name="btn_row">
-        <item>
-         <widget class="QPushButton" name="btn_refresh">
-          <property name="text">
-           <string>刷新列表</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer name="btn_spacer">
-          <property name="orientation">
-           <enum>Qt::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>40</width>
-            <height>20</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
-       </layout>
+     </column>
+     <column>
+      <property name="text">
+       <string>气隙</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>备注</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item row="1" column="0">
+    <widget class="QGroupBox" name="search_group">
+     <property name="title">
+      <string>搜索条件</string>
+     </property>
+     <layout class="QGridLayout" name="search_layout">
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_polar_num">
+        <property name="text">
+         <string>极数:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="sample_name_edit">
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="3">
+       <widget class="QLineEdit" name="airgap_edit">
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="polar_num_edit">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_sample_name">
+        <property name="text">
+         <string>样品名称:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="3">
+       <widget class="QLineEdit" name="tester_edit">
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="QLabel" name="label_airgap">
+        <property name="text">
+         <string>气隙:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_tester">
+        <property name="text">
+         <string>测试人员:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="4" rowspan="3">
+       <spacer name="btn_spacer">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
       </item>
      </layout>
+    </widget>
+   </item>
+   <item row="2" column="0">
+    <widget class="QPushButton" name="btn_refresh">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>120</width>
+       <height>30</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>刷新列表</string>
+     </property>
     </widget>
    </item>
   </layout>
