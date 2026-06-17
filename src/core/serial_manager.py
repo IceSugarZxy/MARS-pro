@@ -387,7 +387,7 @@ class SerialManager(QObject):
                     drain_wait_result = self.serial_port.waitForBytesWritten(SERIAL_WRITE_DRAIN_TIMEOUT_MS)
                 bytes_to_write_after_wait = self.serial_port.bytesToWrite()
                 latency_text = f"{latency_ms:.1f}ms" if latency_ms is not None else "n/a"
-                tx_log = logger.debug if data.startswith(b"?XZ") else logger.info
+                tx_log = logger.debug
                 tx_log(
                     "Serial TX write: "
                     f"id={tx_id}, source={source}, bytes={written}, "

@@ -530,7 +530,7 @@ class SerialCommand(QObject):
             }
             queue_before = self.thread_manager.write_queue.qsize()
             self.thread_manager.write_queue.put(tx_item)
-            enqueue_log = logger.debug if is_position_query else logger.info
+            enqueue_log = logger.debug
             enqueue_log(
                 "Serial TX enqueue: "
                 f"id={self._tx_sequence}, source={tx_item['source']}, command={command}, "

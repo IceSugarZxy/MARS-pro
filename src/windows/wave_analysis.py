@@ -59,7 +59,7 @@ class WaveAnalysis:
             boundary_gap = (normalized[0] - x[0]) + (x[-1] - normalized[-1])
             if 0 <= boundary_gap <= merge_tolerance:
                 removed = normalized.pop()
-                logger.info(
+                logger.debug(
                     "  首尾过零点合并: "
                     f"first={normalized[0]:.6f}, removed_last={removed:.6f}, "
                     f"boundary_gap={boundary_gap:.6f}, tolerance={merge_tolerance:.6f}"
@@ -181,7 +181,7 @@ class WaveAnalysis:
                             if x[0] <= zero_angle <= x[-1]:
                                 zero_angles.append(zero_angle)
                 except Exception as e:
-                    logger.info(f"  过零点{zero_idx}计算失败: {e}")
+                    logger.debug(f"  过零点{zero_idx}计算失败: {e}")
                     continue
 
             zero_angles = self._normalize_zero_angles(zero_angles, x)
@@ -221,7 +221,7 @@ class WaveAnalysis:
                     original_indices = np.where(mask)[0]
                     
                     if len(y_interval) < 2:
-                        logger.info(f"  区间 {i+1} ({start_angle:.2f}°-{end_angle:.2f}°): 数据点不足")
+                        logger.debug(f"  区间 {i+1} ({start_angle:.2f}°-{end_angle:.2f}°): 数据点不足")
                         continue
                     
                     # 判断极性：取区间中点的磁场值
@@ -237,7 +237,7 @@ class WaveAnalysis:
                         max_value = float(y[max_idx_global])
                         max_angle = float(x[max_idx_global])
                         
-                        logger.info(
+                        logger.debug(
                             f"  N极：过零点 {start_angle:.2f}° → {end_angle:.2f}° 中的极值 = "
                             f"{max_angle:.2f}°, 幅值 {max_value:.2f} mT"
                         )
@@ -252,7 +252,7 @@ class WaveAnalysis:
                         min_value = float(y[min_idx_global])
                         min_angle = float(x[min_idx_global])
                         
-                        logger.info(
+                        logger.debug(
                             f"  S极：过零点 {start_angle:.2f}° → {end_angle:.2f}° 中的极值 = "
                             f"{min_angle:.2f}°, 幅值 {-min_value:.2f} mT"
                         )
@@ -261,13 +261,13 @@ class WaveAnalysis:
                         S_peak_source_indices = np.concatenate((S_peak_source_indices, [min_idx_global]))
                         S_peak_values = np.concatenate((S_peak_values, [-min_value]))
                 
-                logger.info(
+                logger.debug(
                     f"  极值检测完成：共检测到 {len(zero_angles)} 个区间，"
                     f"N极极值 {len(N_peak_values)} 个，S极极值 {len(S_peak_values)} 个"
                 )
             else:
                 # 当过零点数量不足时，降级为全局检测
-                logger.info("  过零点数量不足，降级为全局极值检测")
+                logger.debug("  过零点数量不足，降级为全局极值检测")
                 N_part = y[y >= 0]
                 S_part = abs(y[y <= 0])
 
@@ -308,10 +308,10 @@ class WaveAnalysis:
             elif len(N_peak_values) == 1:
                 N_max = N_min = N_mean = round(float(N_peak_values[0]), 2)
                 N_se = float('nan')
-                logger.info(f"  N极只有1个峰值: {N_max}")
+                logger.debug(f"  N极只有1个峰值: {N_max}")
             else:
                 N_max = N_min = N_mean = N_se = float('nan')
-                logger.info("  N极无有效峰值")
+                logger.debug("  N极无有效峰值")
 
             # 计算S极统计
             if len(S_peak_values) > 1:
@@ -322,10 +322,10 @@ class WaveAnalysis:
             elif len(S_peak_values) == 1:
                 S_max = S_min = S_mean = round(float(S_peak_values[0]), 2)
                 S_se = float('nan')
-                logger.info(f"  S极只有1个峰值: {S_max}")
+                logger.debug(f"  S极只有1个峰值: {S_max}")
             else:
                 S_max = S_min = S_mean = S_se = float('nan')
-                logger.info("  S极无有效峰值")
+                logger.debug("  S极无有效峰值")
 
             for item in peak_details:
                 if item['pole'] == 'N' and np.isfinite(N_mean) and N_mean != 0:
@@ -352,9 +352,9 @@ class WaveAnalysis:
 
                 # 验证间隔数量一致性
                 if len(N_interval) > 0 and len(S_interval) > 0:
-                    logger.info(f"  N极间隔数量: {len(N_interval)}, S极间隔数量: {len(S_interval)}")
+                    logger.debug(f"  N极间隔数量: {len(N_interval)}, S极间隔数量: {len(S_interval)}")
                 if len(N_interval) != len(S_interval):
-                    logger.info(
+                    logger.debug(
                         f"  N/S极间隔数量不一致: N={len(N_interval)}, S={len(S_interval)}"
                     )
 
@@ -386,7 +386,7 @@ class WaveAnalysis:
                         y_amplitude = (np.max(y_original) - np.min(y_original)) / 2
 
                         if y_amplitude <= 1e-12:
-                            logger.info("  单极误差波动过小，跳过正弦拟合")
+                            logger.debug("  单极误差波动过小，跳过正弦拟合")
                         else:
                             # 尝试不同的初始参数
                             initial_guess = [y_amplitude, 2*np.pi/len(x_fit), 0, y_mean]
@@ -408,9 +408,9 @@ class WaveAnalysis:
                             SinglePolarError = y_adjusted.tolist()
 
                     except Exception as e:
-                        logger.info(f"  单极误差正弦拟合失败，使用原始单极误差: {e}")
+                        logger.debug(f"  单极误差正弦拟合失败，使用原始单极误差: {e}")
                 else:
-                    logger.info("  单极误差数据点不足，跳过正弦拟合")
+                    logger.debug("  单极误差数据点不足，跳过正弦拟合")
 
                 # 误差和：基于当前单极误差列表逐项累加，包含起点0以保持累计范围定义完整
                 errorSum = 0
@@ -419,7 +419,7 @@ class WaveAnalysis:
                     errorSum += SinglePolarError[i]
                     PolarErrorSumList.append(errorSum)
             else:
-                logger.info("过零点数量不足，无法计算极间隔")
+                logger.debug("过零点数量不足，无法计算极间隔")
 
             zero_crossing_details = []
             if len(zero_angles) >= 2:
@@ -462,10 +462,10 @@ class WaveAnalysis:
             elif len(N_interval) == 1:
                 N_interval_max = N_interval_min = N_interval_mean = round(float(N_interval[0]), 2)
                 N_interval_std = float('nan')
-                logger.info(f"  N极间隔只有1个: {N_interval_max}")
+                logger.debug(f"  N极间隔只有1个: {N_interval_max}")
             else:
                 N_interval_max = N_interval_min = N_interval_mean = N_interval_std = float('nan')
-                logger.info("  N极间隔数据为空")
+                logger.debug("  N极间隔数据为空")
 
             # 计算S极间隔统计
             if len(S_interval) > 1:
@@ -476,10 +476,10 @@ class WaveAnalysis:
             elif len(S_interval) == 1:
                 S_interval_max = S_interval_min = S_interval_mean = round(float(S_interval[0]), 2)
                 S_interval_std = float('nan')
-                logger.info(f"  S极间隔只有1个: {S_interval_max}")
+                logger.debug(f"  S极间隔只有1个: {S_interval_max}")
             else:
                 S_interval_max = S_interval_min = S_interval_mean = S_interval_std = float('nan')
-                logger.info("  S极间隔数据为空")
+                logger.debug("  S极间隔数据为空")
 
             # Part 3: 面积计算
             try:
@@ -496,7 +496,7 @@ class WaveAnalysis:
                 NS_area = round(N_area + S_area, 2)
             except Exception as e:
                 N_area = S_area = NS_area = float('nan')
-                logger.info(f"  面积计算失败: {e}")
+                logger.debug(f"  面积计算失败: {e}")
 
             # 计算THD失真率
             try:
@@ -531,7 +531,7 @@ class WaveAnalysis:
 
             except Exception as e:
                 THD_error = float('nan')
-                logger.info(f"  THD计算失败: {e}")
+                logger.debug(f"  THD计算失败: {e}")
 
             # 计算极对数（使用FFT的基波频率索引）
             try:
@@ -540,10 +540,10 @@ class WaveAnalysis:
                     pole_num = int(fundamental_idx)
                 else:
                     pole_num = float('nan')
-                logger.info(f"  极对数: {pole_num}")
+                logger.debug(f"  极对数: {pole_num}")
             except Exception as e:
                 pole_num = float('nan')
-                logger.info(f"  极对数计算失败: {e}")
+                logger.debug(f"  极对数计算失败: {e}")
 
             # 计算单极统计
             if len(SinglePolarValue) > 1:
@@ -552,7 +552,7 @@ class WaveAnalysis:
                 PolarErrorSum = round(float(np.max(PolarErrorSumList)-np.min(PolarErrorSumList)), 5)
             else:
                 SinglePolarMean = SinglePolarErrorMax = PolarErrorSum = float('nan')
-                logger.info("  单极统计数据不足")
+                logger.debug("  单极统计数据不足")
 
             results = {
                 'N_max': N_max, 'N_min': N_min, 'N_mean': N_mean, 'N_se': N_se,
@@ -573,12 +573,12 @@ class WaveAnalysis:
 
             # 记录最终指标，便于追踪分析结果。
             for key, value in results.items():
-                logger.info(f"  {key}: {value}")
+                logger.debug(f"  {key}: {value}")
 
             logger.info("=== 波形分析完成 ===")
 
             return results
 
         except Exception as e:
-            logger.info(f"波形分析算法执行出错: {e}")
+            logger.debug(f"波形分析算法执行出错: {e}")
             return {}

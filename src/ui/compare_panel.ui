@@ -40,36 +40,27 @@
     </widget>
    </item>
    <item row="1" column="3" rowspan="2">
-    <widget class="QSplitter" name="result_splitter">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
+    <widget class="QTableWidget" name="result_table">
+     <property name="minimumSize">
+      <size>
+       <width>380</width>
+       <height>0</height>
+      </size>
      </property>
-     <widget class="QTextEdit" name="result1_text">
-      <property name="font">
-       <font>
-        <pointsize>20</pointsize>
-       </font>
-      </property>
-      <property name="readOnly">
-       <bool>true</bool>
-      </property>
-      <property name="placeholderText">
-       <string>文件1 分析结果</string>
-      </property>
-     </widget>
-     <widget class="QTextEdit" name="result2_text">
-      <property name="font">
-       <font>
-        <pointsize>20</pointsize>
-       </font>
-      </property>
-      <property name="readOnly">
-       <bool>true</bool>
-      </property>
-      <property name="placeholderText">
-       <string>文件2 分析结果</string>
-      </property>
-     </widget>
+     <property name="editTriggers">
+      <set>QAbstractItemView::NoEditTriggers</set>
+     </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectRows</enum>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <attribute name="horizontalHeaderVisible">
+      <bool>true</bool>
+     </attribute>
     </widget>
    </item>
    <item row="2" column="0" colspan="3">

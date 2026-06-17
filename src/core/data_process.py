@@ -1225,6 +1225,9 @@ class DataProcess(QObject):
                     writer.writerow(['S极面积', analysis_results.get('S_area', '')])
                     writer.writerow(['NS面积', analysis_results.get('NS_area', '')])
                     writer.writerow(['THD失真率', analysis_results.get('THD_error', '')])
+                    zero_details = analysis_results.get('zero_crossing_details')
+                    zero_count = len(zero_details) if isinstance(zero_details, list) else ''
+                    writer.writerow(['过零点个数', zero_count])
 
                 writer.writerow([])  # 空行分隔
 

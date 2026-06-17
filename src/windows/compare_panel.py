@@ -8,7 +8,8 @@ import csv
 import numpy as np
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QLineEdit,
                               QTextEdit, QSplitter, QGroupBox, QGridLayout,
-                              QFileDialog, QMessageBox, QDialog, QVBoxLayout)
+                              QFileDialog, QMessageBox, QDialog, QVBoxLayout,
+                              QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt5.QtCore import QObject, QEvent
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5 import uic
@@ -241,48 +242,64 @@ class ComparePanel(QWidget):
             logger.error(f"分析数据失败: {e}")
             return {}
 
-    def _format_results(self, results):
-        """格式化分析结果为文本"""
-        if not results:
-            return "无分析结果"
+    def _update_result_table(self, results1, results2, name1, name2):
+        """将比对结果填入表格"""
+        table = self.findChild(QTableWidget, "result_table")
+        if not table:
+            return
 
-        text = []
-        text.append("=== N极/S极基础值 ===")
-        text.append(f"N极最大值: {results.get('N_max', 0):.2f}")
-        text.append(f"N极最小值: {results.get('N_min', 0):.2f}")
-        text.append(f"N极均值: {results.get('N_mean', 0):.2f}")
-        text.append(f"N极误差%: {results.get('N_se', 0):.2f}")
-        text.append(f"S极最大值: {results.get('S_max', 0):.2f}")
-        text.append(f"S极最小值: {results.get('S_min', 0):.2f}")
-        text.append(f"S极均值: {results.get('S_mean', 0):.2f}")
-        text.append(f"S极误差%: {results.get('S_se', 0):.2f}")
-        text.append(f"NS/2: {results.get('NS_2', 0):.2f}")
-        text.append("")
-        text.append("=== N极间隔 ===")
-        text.append(f"N间隔最大值: {results.get('N_interval_max', 0):.2f}")
-        text.append(f"N间隔最小值: {results.get('N_interval_min', 0):.2f}")
-        text.append(f"N间隔均值: {results.get('N_interval_mean', 0):.2f}")
-        text.append(f"N间隔误差: {results.get('N_interval_std', 0):.2f}")
-        text.append("")
-        text.append("=== S极间隔 ===")
-        text.append(f"S间隔最大值: {results.get('S_interval_max', 0):.2f}")
-        text.append(f"S间隔最小值: {results.get('S_interval_min', 0):.2f}")
-        text.append(f"S间隔均值: {results.get('S_interval_mean', 0):.2f}")
-        text.append(f"S间隔误差: {results.get('S_interval_std', 0):.2f}")
-        text.append("")
-        text.append("=== 面积 ===")
-        text.append(f"N极面积: {results.get('N_area', 0):.2f}")
-        text.append(f"S极面积: {results.get('S_area', 0):.2f}")
-        text.append(f"NS总面积: {results.get('NS_area', 0):.2f}")
-        text.append("")
-        text.append("=== 其他 ===")
-        text.append(f"单极均值: {results.get('SinglePolarMean', 0):.2f}")
-        text.append(f"单极误差: {results.get('SinglePolarError', 0):.5f}")
-        text.append(f"累计误差: {results.get('PolarErrorSum', 0):.5f}")
-        text.append(f"THD失真率: {results.get('THD_error', 0):.5f}")
-        text.append(f"极对数: {results.get('pole_num', 'N/A')}")
+        rows = [
+            ("N极最大值", "N_max", ".2f"),
+            ("N极最小值", "N_min", ".2f"),
+            ("N极均值", "N_mean", ".2f"),
+            ("N极误差%", "N_se", ".2f"),
+            ("S极最大值", "S_max", ".2f"),
+            ("S极最小值", "S_min", ".2f"),
+            ("S极均值", "S_mean", ".2f"),
+            ("S极误差%", "S_se", ".2f"),
+            ("NS/2", "NS_2", ".2f"),
+            ("N间隔最大值", "N_interval_max", ".2f"),
+            ("N间隔最小值", "N_interval_min", ".2f"),
+            ("N间隔均值", "N_interval_mean", ".2f"),
+            ("N间隔误差", "N_interval_std", ".2f"),
+            ("S间隔最大值", "S_interval_max", ".2f"),
+            ("S间隔最小值", "S_interval_min", ".2f"),
+            ("S间隔均值", "S_interval_mean", ".2f"),
+            ("S间隔误差", "S_interval_std", ".2f"),
+            ("N极面积", "N_area", ".2f"),
+            ("S极面积", "S_area", ".2f"),
+            ("NS总面积", "NS_area", ".2f"),
+            ("单极均值", "SinglePolarMean", ".2f"),
+            ("单极误差", "SinglePolarError", ".5f"),
+            ("累计误差", "PolarErrorSum", ".5f"),
+            ("THD失真率", "THD_error", ".5f"),
+            ("极对数", "pole_num", ""),
+        ]
 
-        return "\n".join(text)
+        table.setRowCount(len(rows))
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["指标", name1, name2])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+
+        for row_idx, (label, key, fmt) in enumerate(rows):
+            table.setItem(row_idx, 0, QTableWidgetItem(label))
+
+            val1 = results1.get(key, "")
+            if fmt and isinstance(val1, (int, float)):
+                val1_str = format(val1, fmt) if not (isinstance(val1, float) and val1 != val1) else "-"
+            else:
+                val1_str = str(val1) if val1 != "" else "-"
+            table.setItem(row_idx, 1, QTableWidgetItem(val1_str))
+
+            val2 = results2.get(key, "")
+            if fmt and isinstance(val2, (int, float)):
+                val2_str = format(val2, fmt) if not (isinstance(val2, float) and val2 != val2) else "-"
+            else:
+                val2_str = str(val2) if val2 != "" else "-"
+            table.setItem(row_idx, 2, QTableWidgetItem(val2_str))
 
     def _on_compare(self):
         """开始比对"""
@@ -324,20 +341,9 @@ class ComparePanel(QWidget):
         # 更新绘图
         self._update_plot()
 
-        # 更新结果文本
-        result1_text = self.findChild(QTextEdit, "result1_text")
-        result2_text = self.findChild(QTextEdit, "result2_text")
-
-        sample1_name = self.data1['sample_info'].get('sample_name', os.path.basename(file1))
-        sample2_name = self.data2['sample_info'].get('sample_name', os.path.basename(file2))
-
-        if result1_text:
-            header1 = f"【{sample1_name}】\n"
-            result1_text.setPlainText(header1 + self._format_results(self.data1['results']))
-
-        if result2_text:
-            header2 = f"【{sample2_name}】\n"
-            result2_text.setPlainText(header2 + self._format_results(self.data2['results']))
+        # 更新结果表格（表头使用文件名）
+        self._update_result_table(self.data1['results'], self.data2['results'],
+                                  os.path.basename(file1), os.path.basename(file2))
 
         logger.info("比对完成")
 
