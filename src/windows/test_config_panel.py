@@ -257,6 +257,10 @@ class TestConfigPanel(QWidget):
         self._set_serial_status("未连接", "#e74c3c")
         self._set_serial_button_state(False)
 
+        port_combo = self.findChild(QComboBox, "port_combo")
+        if port_combo:
+            port_combo.currentTextChanged.connect(self._on_port_combo_changed)
+
     def _init_serial_rx_display(self) -> None:
         serial_rx_text = self.findChild(QPlainTextEdit, "serial_rx_text")
         if serial_rx_text:
@@ -310,6 +314,11 @@ class TestConfigPanel(QWidget):
         config = get_config_manager()
         config.com_port = com_port or config.com_port
 
+    def _on_port_combo_changed(self, text: str) -> None:
+        """下拉框选项变更时保存到配置"""
+        if text and text not in ("无可用串口", "刷新失败"):
+            self._save_serial_port(text)
+
     def _refresh_ports(self):
         port_combo = self.findChild(QComboBox, "port_combo")
         if port_combo is None:
@@ -317,6 +326,7 @@ class TestConfigPanel(QWidget):
             return
 
         current_port = port_combo.currentText() or get_config_manager().com_port
+        is_connected = bool(self.serial_manager and self.serial_manager.get_connection_status())
 
         port_combo.blockSignals(True)
         port_combo.clear()
@@ -334,7 +344,7 @@ class TestConfigPanel(QWidget):
                 port_combo.addItem("无可用串口")
                 port_combo.setEnabled(False)
             else:
-                port_combo.setEnabled(True)
+                port_combo.setEnabled(not is_connected)
         except Exception as e:
             logger.error(f"Refresh serial ports failed: {e}")
             port_combo.addItem("刷新失败")
@@ -378,6 +388,8 @@ class TestConfigPanel(QWidget):
         super().showEvent(event)
         self._serial_rx_update_enabled = True
         self._set_port_refresh_enabled(True)
+        self._refresh_ports()
+        self._apply_serial_port_to_ui(get_config_manager().com_port)
 
     def hideEvent(self, event):
         self._set_port_refresh_enabled(False)
@@ -425,7 +437,12 @@ class TestConfigPanel(QWidget):
 
             com_port = str(port or self._pending_connection_port or self._get_serial_port_from_ui()).strip().strip('"')
             self._save_serial_port(com_port)
+            self._apply_serial_port_to_ui(com_port)
             self._set_serial_status("已连接", "#27ae60")
+
+            port_combo = self.findChild(QComboBox, "port_combo")
+            if port_combo:
+                port_combo.setEnabled(False)
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.enable_position_query_timer()
@@ -436,6 +453,10 @@ class TestConfigPanel(QWidget):
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.disable_position_query_timer()
+
+            port_combo = self.findChild(QComboBox, "port_combo")
+            if port_combo and port_combo.count() > 0:
+                port_combo.setEnabled(True)
 
             self._set_serial_status("未连接", "#e74c3c")
             logger.info("Serial disconnected.")

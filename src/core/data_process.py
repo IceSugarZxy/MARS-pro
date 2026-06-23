@@ -151,16 +151,22 @@ class DataProcess(QObject):
         return SENSOR_RANGE_OPTIONS[self._get_sensor_range_index()]
 
     def _get_mag_conversion_factor(self) -> float:
+        """获取磁场转换系数（mT / ADC原始值）。
+
+        80mT量程：放大器增益较高，传感器灵敏度 0.1 mT/mV。
+        160mT量程：放大器增益减半，灵敏度降低一倍，系数需 ×2 补偿。
+        """
         factor = self.MAG_CONVERSION_FACTOR
         if self._get_sensor_range_index() == SENSOR_RANGE_160MT_INDEX:
-            return factor / 2.0
+            return factor * 2.0
         return factor
 
     def _get_default_offset(self) -> float:
-        default_offset = self.DEFAULT_OFFSET
-        if self._get_sensor_range_index() == SENSOR_RANGE_160MT_INDEX:
-            return default_offset / 2.0
-        return default_offset
+        """获取默认偏置值（mT）。
+
+        偏置来自传感器零场输出，不随放大器增益变化而改变。
+        """
+        return self.DEFAULT_OFFSET
 
     def set_sample_info(self, sample_info: dict) -> None:
         """

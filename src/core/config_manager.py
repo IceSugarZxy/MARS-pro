@@ -13,10 +13,9 @@ from .path_utils import get_config_path
 
 logger = logging.getLogger(__name__)
 
-# X轴实测标定：按脉冲-位移数据过原点线性拟合得到。
-X_AXIS_PULSES_PER_MM = 3179.8133141860703
-# Z轴实测标定：按脉冲-位移数据过原点线性拟合得到。
-Z_AXIS_PULSES_PER_MM = 3346.588448364109
+# X/Z轴统一标定：按脉冲-位移数据过原点线性拟合得到（2026-06-23 更新）。
+X_AXIS_PULSES_PER_MM = 6407.801478
+Z_AXIS_PULSES_PER_MM = 6407.801478
 
 
 # 动作类型定义
