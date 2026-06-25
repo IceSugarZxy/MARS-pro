@@ -543,7 +543,7 @@ class SerialCommand(QObject):
             logger.error(f"Failed to enqueue serial command: {e}", exc_info=True)
             return False
 
-    def enable_position_query_timer(self, interval: int = 500) -> None:
+    def enable_position_query_timer(self, interval: int = 300) -> None:
         if not self.position_query_timer:
             self.position_query_timer = QTimer(self)
             self.position_query_timer.timeout.connect(self._position_query_from_timer)
@@ -751,6 +751,7 @@ class SerialCommand(QObject):
                 f"in_flight={self._position_query_in_flight}, state={self._work_state.value}"
             )
             return
+        self.data_process.clear_data_queue()
         if self.send_data("?XZ~", source=source):
             self._position_query_in_flight = True
             self.data_process.signal_position_data_process.emit()

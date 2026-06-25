@@ -441,11 +441,11 @@ class DataProcess(QObject):
         # 清空之前的位置缓冲区
         DataProcess._position_buffer.clear()
 
-        # 总超时1.5秒，持续等待位置数据
+        # 短超时等待位置数据（队列已清空，硬件响应应在0.3s内到达）
         import time as time_module
         start_time = time_module.time()
 
-        while time_module.time() - start_time < 1.5:
+        while time_module.time() - start_time < 0.3:
             if self._self_detecting:
                 logger.debug("Adhesion flow: in-flight position processing stopped for self detect.")
                 self.signal_position_data_process_finished.emit((None, None))
