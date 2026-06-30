@@ -403,6 +403,12 @@ class SerialManager(QObject):
                     f"bytes_to_write_after={bytes_to_write_after_wait}, "
                     f"error={self.serial_port.errorString()}, preview={self._payload_preview(data)}"
                 )
+                if bytes_to_write_after_wait > 0:
+                    try:
+                        self.serial_port.clear(QSerialPort.Output)
+                        logger.warning("Serial TX output buffer force-cleared after drain failure")
+                    except Exception:
+                        pass
 
         except Exception as e:
             logger.error(f"处理写队列失败: {e}", exc_info=True)
@@ -454,6 +460,16 @@ class SerialManager(QObject):
             f"last_tx_id={meta.get('id')}, last_tx_source={meta.get('source')}, "
             f"bytes_to_write={bytes_to_write}, last_tx_preview={meta.get('preview')}"
         )
+
+        # 错误恢复：清空TX缓冲区，重置写状态，防止后续写入永久阻塞
+        try:
+            if self.serial_port and self.serial_port.bytesToWrite() > 0:
+                self.serial_port.clear(QSerialPort.Output)
+                logger.warning("Serial TX buffer cleared after error")
+        except Exception:
+            pass
+        self._active_tx_meta = None
+        self._pending_write_item = None
 
     def _on_ready_read(self) -> None:
         """串口数据到达（高频接收）"""

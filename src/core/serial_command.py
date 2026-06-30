@@ -454,6 +454,21 @@ class SerialCommand(QObject):
             f"retract_axis={retract_axis}, retract_distance={self.config.retract_distance:.3f}mm, "
             f"queue_before_clear={self.data_process.data_queue.qsize()}"
         )
+        # 先发送S~终止硬件上可能残留的自检状态
+        self.send_data("S~", source="self_detect_pre_stop")
+        # 清空Python级读队列和底层串口读缓冲区，防止上一次操作的残留响应
+        self.data_process.clear_data_queue()
+        if hasattr(self.data_process, "clear_self_detect_buffer"):
+            self.data_process.clear_self_detect_buffer()
+        try:
+            if self.serial_manager and self.serial_manager.serial_port:
+                self.serial_manager.serial_port.readAll()
+        except Exception:
+            pass
+        logger.debug(
+            "Adhesion flow: queue, buffer and hardware RX flushed before self detect, "
+            f"queue_after_clear={self.data_process.data_queue.qsize()}"
+        )
         self._pending_retract_axis = retract_axis
         self._self_detect_axis = detect_axis
         self._self_detect_completed = False
@@ -461,13 +476,6 @@ class SerialCommand(QObject):
         self._work_state = WorkState.SELF_DETECTING
         if hasattr(self.data_process, "_self_detecting"):
             self.data_process._self_detecting = True
-        self.data_process.clear_data_queue()
-        if hasattr(self.data_process, "clear_self_detect_buffer"):
-            self.data_process.clear_self_detect_buffer()
-        logger.debug(
-            "Adhesion flow: queue and parser buffer cleared before self detect, "
-            f"queue_after_clear={self.data_process.data_queue.qsize()}"
-        )
         self._begin_async_command_lock(allow_position_query=True)
         dropped_writes = self._drop_pending_position_query_writes(
             reason=f"before self detect {detect_axis}"
@@ -751,7 +759,6 @@ class SerialCommand(QObject):
                 f"in_flight={self._position_query_in_flight}, state={self._work_state.value}"
             )
             return
-        self.data_process.clear_data_queue()
         if self.send_data("?XZ~", source=source):
             self._position_query_in_flight = True
             self.data_process.signal_position_data_process.emit()
