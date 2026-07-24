@@ -31,16 +31,6 @@
     </widget>
    </item>
    <item>
-    <widget class="QProgressBar" name="progress_bar">
-     <property name="value">
-      <number>0</number>
-     </property>
-     <property name="maximum">
-      <number>0</number>
-     </property>
-    </widget>
-   </item>
-   <item>
     <widget class="QLabel" name="label_status">
      <property name="text">
       <string>正在测量偏置数据，请等待...</string>

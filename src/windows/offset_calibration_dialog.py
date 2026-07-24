@@ -52,45 +52,28 @@ class OffsetCalibrationDialog(QDialog):
             self.dragging = False
 
     def start_progress(self, duration=OFFSET_PROGRESS_SECONDS):
-        """开始进度更新（基于时间估算）"""
+        """开始偏置校准"""
         self.CALIBRATION_DURATION = duration
-        self._progress_start_time = 0
-        self.progress_bar.setMaximum(100)
-        self.progress_bar.setValue(0)
-        self._progress_timer.start(100)  # 每100ms更新一次
+        self.label_status.setText("偏置校准进行中...")
 
     def _update_progress_by_time(self):
-        """基于时间更新进度"""
-        if self._progress_start_time is None:
-            self._progress_start_time = 0
-        self._progress_start_time += 0.1
-        progress = int((self._progress_start_time / self.CALIBRATION_DURATION) * 100)
-        if progress > 98:
-            progress = 98  # 保留最后2%给完成阶段
-        self.progress_bar.setValue(progress)
-        self.label_status.setText("正在测量偏置数据...")
+        """保持状态文本"""
+        pass
 
     def stop_progress(self):
-        """停止进度更新"""
-        self._progress_timer.stop()
+        """停止状态"""
+        pass
 
     def set_progress(self, value, text=""):
-        """设置进度条和状态文本"""
-        self._progress_timer.stop()
-        if value >= 0:
-            self.progress_bar.setMaximum(100)
-            self.progress_bar.setValue(value)
+        """设置状态文本"""
         if text:
             self.label_status.setText(text)
 
     def show_result(self, success, offset_value=None):
         """显示校准结果"""
-        self._progress_timer.stop()
         if success:
             self.label_title.setText("偏置校准完成")
             self.label_title.setStyleSheet("color: #27ae60; font-size: 18px; font-weight: bold;")
-            self.progress_bar.setMaximum(100)
-            self.progress_bar.setValue(100)
             if offset_value is not None:
                 self.label_status.setText(f"偏置值: {offset_value:.4f} mT")
             else:
@@ -98,6 +81,6 @@ class OffsetCalibrationDialog(QDialog):
         else:
             self.label_title.setText("偏置校准失败")
             self.label_title.setStyleSheet("color: #e74c3c; font-size: 18px; font-weight: bold;")
-            self.label_status.setText("未能获取有效数据，请检查传感器连接")
+            self.label_status.setText("未能获取有效偏置数据")
 
         self.btn_cancel.setText("确定")
