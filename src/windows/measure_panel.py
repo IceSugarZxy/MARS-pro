@@ -848,7 +848,7 @@ class MeasurePanel(QWidget):
                 btn.setText("")
 
         style = (
-            "QPushButton { border:1px solid #2c3e50; border-radius:4px; background:rgba(255,255,255,51); }"
+            "QPushButton { border:1px solid #999; border-radius:4px; background:rgba(255,255,255,51); }"
             "QPushButton:hover { background:#3498db; }"
         )
         for name in icons:
