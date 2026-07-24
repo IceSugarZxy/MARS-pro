@@ -676,7 +676,6 @@ class MeasurePanel(QWidget):
         self.test_progress_dialog = TestProgressDialog(self)
         self.test_progress_dialog.btn_cancel.clicked.connect(self._on_test_cancel)
         self.test_progress_dialog.show()
-        self.test_progress_dialog.set_progress(0, "正在采集数据...")
 
         self._update_status("正在测量...")
 
@@ -1038,12 +1037,6 @@ class MeasurePanel(QWidget):
                 Qt.QueuedConnection,
             )
 
-        if hasattr(self.data_process, "signal_measure_data_progress"):
-            self.data_process.signal_measure_data_progress.connect(
-                self._on_measure_progress,
-                Qt.QueuedConnection,
-            )
-
         if hasattr(tm.data_process, "signal_position_data_process_finished"):
             tm.data_process.signal_position_data_process_finished.connect(
                 self._on_position_data_updated,
@@ -1065,13 +1058,6 @@ class MeasurePanel(QWidget):
     def _on_position_data_updated(self, position_data):
         """保留位置数据槽函数，测量配置区不再显示当前位置。"""
         return
-
-    def _on_measure_progress(self, current, total):
-        """Update measurement progress."""
-        if self.test_progress_dialog:
-            progress = int((current / total) * 100) if total > 0 else 0
-            status_text = "正在处理数据..." if total > 0 and current >= total else "正在采集数据..."
-            self.test_progress_dialog.set_progress(progress, status_text)
 
     def _on_measure_data_processed_legacy(self, angle_data, mag_data):
         analysis_results = None

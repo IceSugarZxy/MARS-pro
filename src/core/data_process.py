@@ -56,7 +56,6 @@ CLOSURE_MAX_DIRECTION_SPAN_POINTS = 1000
 CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO = 0.002  # 峰/谷端点判定容差，占整体幅值比例
 CLOSURE_COARSE_CANDIDATE_COUNT = 5000
 CLOSURE_FINE_RADIUS_POINTS = 120
-PROGRESS_EMIT_INTERVAL_SECONDS = 1.0 / 16.0
 OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 1.5
 OFFSET_NO_DATA_TIMEOUT_SECONDS = 0.5
 OFFSET_QUEUE_POLL_SECONDS = 0.02
@@ -485,9 +484,8 @@ class DataProcess(QObject):
             temp_buffer = bytearray()
             measure_list: List[float] = []
             no_data_count = 0
-            last_progress_emit_time = 0.0
 
-            max_empty_count = 4
+            max_empty_count = 1
             while True:
                 if self._stop_measure_processing:
                     logger.info("Measurement processing stopped by request")
@@ -508,14 +506,6 @@ class DataProcess(QObject):
                         measure_list.append(mag_value)
 
                     del temp_buffer[0:batch_size * 2]
-
-                    current_time = time.time()
-                    if current_time - last_progress_emit_time >= PROGRESS_EMIT_INTERVAL_SECONDS:
-                        self.signal_measure_data_progress.emit(
-                            len(measure_list),
-                            FULL_ROTATION_DATA_POINTS,
-                        )
-                        last_progress_emit_time = current_time
 
                 if len(temp_buffer) < 2:
                     try:
