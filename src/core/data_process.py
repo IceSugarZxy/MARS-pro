@@ -228,11 +228,11 @@ class DataProcess(QObject):
             analysis_results = None
             logger.info(f"垂直测量：原始 {len(measure_list)} 点 → 角度/磁场各 {len(angle_data)} 点")
         else:
-            # 旋转测量：全部原始数据绘制（0-540° 一圈半），波形分析单独运行
+            # 旋转测量：全部原始数据映射到 0-360°，波形分析单独运行
             n = len(measure_list)
-            angle_data = [i * 540.0 / n for i in range(n)] if n > 0 else []
+            angle_data = [i * 360.0 / n for i in range(n)] if n > 0 else []
             mag_data = measure_list
-            logger.info(f"旋转测量：原始 {len(measure_list)} 点 → 0-540° 全部绘制")
+            logger.info(f"旋转测量：原始 {n} 点 → 0-360° 全部绘制")
             try:
                 alg_angle, alg_mag = self._process_measure_algorithm(measure_list)
                 logger.info(
