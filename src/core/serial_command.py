@@ -27,6 +27,7 @@ MOTION_DONE_TIMEOUT_MS = 5000
 MOTION_DONE_POLL_INTERVAL_MS = 80
 POSITION_WAIT_TIMEOUT_MS = 60000  # 单步最长等待 60s
 MAX_RELATIVE_STEPS = 500000  # 固件单次最大相对步数
+MAX_TIMEOUT_RESTARTS = 3      # 超时后若电机已启动(收到START)，最多重新计时次数
 
 
 class WorkState(Enum):
@@ -193,6 +194,8 @@ class SerialCommand(QObject):
             "callback": callback,
             "timeout_ms": timeout_ms,
             "done_received": False,
+            "start_received": False,
+            "restart_count": 0,
         }
         self._work_state = WorkState.WAITING_POSITION
         logger.info(
@@ -202,12 +205,21 @@ class SerialCommand(QObject):
         self._position_wait_poll_timer.start()
 
     def _poll_motion_done(self) -> None:
-        """Poll for X/Y/Z DONE text from serial data queue."""
+        """Poll for X/Y/Z DONE/START feedback from serial data queue."""
         if not self._active_position_wait:
             return
-        result = self.data_process.check_motion_done()
-        if result:
-            self._on_motion_done_detected(result)
+        result = self.data_process.check_motion_feedback()
+        if not result:
+            return
+        axis, event = result
+        if event == "DONE":
+            self._on_motion_done_detected(axis)
+        elif event == "START":
+            if axis == self._active_position_wait["axis"] and not self._active_position_wait["start_received"]:
+                self._active_position_wait["start_received"] = True
+                logger.info(
+                    f"{axis} START received, motor confirmed running — timeout will auto-extend if needed"
+                )
 
     def _on_motion_done_detected(self, axis: str) -> None:
         if not self._active_position_wait:
@@ -228,23 +240,53 @@ class SerialCommand(QObject):
         if not wait_state:
             return
 
-        # 超时前最后检查一次
-        result = self.data_process.check_motion_done()
-        if result and result == wait_state["axis"]:
-            self._on_motion_done_detected(result)
-            return
+        # 超时前最后检查一次 DONE
+        result = self.data_process.check_motion_feedback()
+        if result:
+            axis, event = result
+            if axis == wait_state["axis"]:
+                if event == "DONE":
+                    self._on_motion_done_detected(axis)
+                    return
+                elif event == "START" and not wait_state["start_received"]:
+                    wait_state["start_received"] = True
+                    logger.info(f"{axis} START received at timeout check, motor is running")
 
         axis = wait_state["axis"]
+        start_received = wait_state["start_received"]
+        restart_count = wait_state.get("restart_count", 0)
+
+        # 如果电机已确认启动(收到START)，说明正在运动中，重新计时而非判定失败
+        if start_received and restart_count < MAX_TIMEOUT_RESTARTS:
+            wait_state["restart_count"] = restart_count + 1
+            total_wait = (restart_count + 1) * POSITION_WAIT_TIMEOUT_MS / 1000.0
+            logger.info(
+                f"{axis} 运动超时但电机已启动(START已收到)，第{restart_count + 1}次重新计时 "
+                f"(已等待约{total_wait:.0f}s, 剩余重试{MAX_TIMEOUT_RESTARTS - restart_count - 1}次)"
+            )
+            self._position_wait_timeout_timer.start(POSITION_WAIT_TIMEOUT_MS)
+            return
+
+        # 电机从未启动 或 重试次数耗尽 → 判定失败
         delta = wait_state.get("delta")
         target = wait_state.get("target")
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
-        logger.warning(
-            f"{axis} DONE wait timeout ({POSITION_WAIT_TIMEOUT_MS}ms), no DONE received. "
-            f"delta={delta}, target={target}, "
-            f"cached_pos=({self._current_x},{self._current_y},{self._current_z}), "
-            f"queue_size={self.data_process.data_queue.qsize()}"
-        )
+        if start_received:
+            logger.warning(
+                f"{axis} DONE wait exhausted after {MAX_TIMEOUT_RESTARTS + 1} cycles "
+                f"({(MAX_TIMEOUT_RESTARTS + 1) * POSITION_WAIT_TIMEOUT_MS / 1000:.0f}s total). "
+                f"Motor started but DONE never received. "
+                f"delta={delta}, target={target}, "
+                f"cached_pos=({self._current_x},{self._current_y},{self._current_z})"
+            )
+        else:
+            logger.warning(
+                f"{axis} DONE wait timeout ({POSITION_WAIT_TIMEOUT_MS}ms), motor never acknowledged (no START). "
+                f"delta={delta}, target={target}, "
+                f"cached_pos=({self._current_x},{self._current_y},{self._current_z}), "
+                f"queue_size={self.data_process.data_queue.qsize()}"
+            )
         wait_state["callback"](False)
 
     def _get_current(self, axis: str) -> Optional[int]:

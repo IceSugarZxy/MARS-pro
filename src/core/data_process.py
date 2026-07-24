@@ -65,6 +65,8 @@ OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
 M_POS_PATTERN = re.compile(r"([XYZ]):\s*\w+\s+pos\s*=\s*(-?\d+)")
 # 运动完成检测正则
 MOTION_DONE_PATTERN = re.compile(r"([XYZ])\s+DONE")
+# 运动启动确认正则（固件收到指令后立即回）
+MOTION_START_PATTERN = re.compile(r"([XYZ])\s+START")
 
 
 class DataProcess(QObject):
@@ -317,7 +319,7 @@ class DataProcess(QObject):
                     break
 
                 text = data.decode('utf-8', errors='ignore')
-                # 先检测 DONE
+                # 优先检测 DONE（可能在 START 之后但先被读到）
                 match = MOTION_DONE_PATTERN.search(text)
                 if match:
                     axis = match.group(1)
@@ -330,6 +332,47 @@ class DataProcess(QObject):
 
         except Exception as e:
             logger.error(f"检测运动完成消息失败: {e}")
+
+        return None
+
+    def check_motion_feedback(self) -> Optional[tuple]:
+        """
+        检测运动反馈消息（START 确认 + DONE 完成）
+
+        固件收到运动指令后立即返回 "X START 1000" 表示已启动，
+        运动结束后返回 "X DONE"。
+
+        Returns:
+            (axis: str, event: str) 其中 event 为 "DONE" 或 "START"；
+            未检测到返回 None
+        """
+        try:
+            while True:
+                try:
+                    data = self.data_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                text = data.decode('utf-8', errors='ignore')
+                # 优先检测 DONE（同一行可能同时有 START 和 DONE）
+                match = MOTION_DONE_PATTERN.search(text)
+                if match:
+                    axis = match.group(1)
+                    logger.info(f"Motion feedback: {axis} DONE")
+                    return (axis, "DONE")
+                # 检测 START 确认
+                match = MOTION_START_PATTERN.search(text)
+                if match:
+                    axis = match.group(1)
+                    logger.info(f"Motion feedback: {axis} START (motor running)")
+                    return (axis, "START")
+                # 其他回信记录 DEBUG
+                text_stripped = text.strip()
+                if text_stripped and logger.isEnabledFor(10):
+                    logger.debug(f"Serial RX (motion poll): {text_stripped}")
+
+        except Exception as e:
+            logger.error(f"检测运动反馈失败: {e}")
 
         return None
 
