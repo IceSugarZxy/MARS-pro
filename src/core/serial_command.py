@@ -25,7 +25,8 @@ logger = get_logger("SerialCommand")
 
 MOTION_DONE_TIMEOUT_MS = 5000
 MOTION_DONE_POLL_INTERVAL_MS = 80
-POSITION_WAIT_TIMEOUT_MS = 60000  # 单步最长等待 60s（绝对兜底）
+POSITION_WAIT_TIMEOUT_MS = 60000  # 收到 START 后的绝对兜底超时 60s
+NO_START_TIMEOUT_MS = 3000       # 未收到 START 则 3s 快速失败
 MAX_RELATIVE_STEPS = 500000  # 固件单次最大相对步数
 POSITION_CHECK_INTERVAL_MS = 3000  # 收到 START 后每 3s 查询一次位置
 MAX_STALE_CHECKS = 2            # 连续 2 次位置无变化 → 判定堵转超时
@@ -204,7 +205,7 @@ class SerialCommand(QObject):
         logger.info(
             f"Start position-tracked wait for {axis}: delta={delta:+d}, target={target}"
         )
-        self._position_wait_timeout_timer.start(timeout_ms)  # 绝对兜底超时
+        self._position_wait_timeout_timer.start(NO_START_TIMEOUT_MS)  # 3s 内必须收到 START
         self._position_wait_poll_timer.start()
 
     def _poll_motion_done(self) -> None:
@@ -249,6 +250,8 @@ class SerialCommand(QObject):
                     # 立即发送 M~ 查询当前位置
                     self.send_data("M~", source="motion_start_check")
                     wait_state["last_m_query_time"] = now
+                    # START 已收到，将超时计时器重置为 60s 绝对兜底
+                    self._position_wait_timeout_timer.start(POSITION_WAIT_TIMEOUT_MS)
 
             elif event == "POSITION":
                 pos = result[2]
@@ -313,7 +316,7 @@ class SerialCommand(QObject):
         wait_state["callback"](True)
 
     def _on_position_wait_timeout(self) -> None:
-        """绝对兜底超时：60s 仍未收到 DONE，最后检查一次队列。"""
+        """超时回调：3s 未收到 START 或 60s 绝对兜底。"""
         wait_state = self._active_position_wait
         if not wait_state:
             return
@@ -333,14 +336,20 @@ class SerialCommand(QObject):
 
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
-        logger.warning(
-            f"{axis} 绝对超时 ({POSITION_WAIT_TIMEOUT_MS}ms): "
-            f"START={'已收到' if start_received else '未收到'}, "
-            f"最后位置={last_pos}, 堵转计数={stale}/{MAX_STALE_CHECKS}, "
-            f"delta={delta}, target={target}, "
-            f"cached_pos=({self._current_x},{self._current_y},{self._current_z}), "
-            f"queue_size={self.data_process.data_queue.qsize()}"
-        )
+        if start_received:
+            logger.warning(
+                f"{axis} 绝对兜底超时 ({POSITION_WAIT_TIMEOUT_MS}ms): START 已收到但始终未 DONE, "
+                f"最后位置={last_pos}, 堵转计数={stale}/{MAX_STALE_CHECKS}, "
+                f"delta={delta}, target={target}, "
+                f"cached_pos=({self._current_x},{self._current_y},{self._current_z})"
+            )
+        else:
+            logger.warning(
+                f"{axis} 无响应超时 ({NO_START_TIMEOUT_MS}ms): 未收到 START, 电机无应答. "
+                f"delta={delta}, target={target}, "
+                f"cached_pos=({self._current_x},{self._current_y},{self._current_z}), "
+                f"queue_size={self.data_process.data_queue.qsize()}"
+            )
         wait_state["callback"](False)
 
     def _get_current(self, axis: str) -> Optional[int]:
