@@ -41,13 +41,11 @@ logger = get_logger('DataProcess')
 # ============================================================================
 # 常量定义
 # ============================================================================
-FULL_ROTATION_DATA_POINTS = 407040  # 一圈半采集数据点数
-POINTS_FOR_360 = 271_360  # 初步按一圈数据量截取
-FULL_ROTATION_ANGLE = 540.0  # 一圈半角度，仅用于记录旧采集定义
-ANGLE_RESOLUTION = 360.0 / POINTS_FOR_360  # 理论角度分辨率，闭合校准失败时使用
-START_OFFSET = (FULL_ROTATION_DATA_POINTS - POINTS_FOR_360) // 2  # 中段截取起点 = 67840
-CLOSURE_ROUGH_START_FRACTION = 1.0 / 6.0  # rawdata 一圈半数据中的一圈起点
-CLOSURE_ROUGH_END_FRACTION = 5.0 / 6.0  # rawdata 一圈半数据中的一圈粗尾点
+# v1.x 固件：B~ 采集 = 精确 1 圈 (360°)，数据量取决于 MODE
+FULL_ROTATION_ANGLE = 360.0
+# 闭合校准：v1.x 数据已是精确一圈，首尾即为闭合边界
+CLOSURE_ROUGH_START_FRACTION = 0.0
+CLOSURE_ROUGH_END_FRACTION = 1.0
 CLOSURE_SEARCH_PERIOD_FRACTION = 0.25  # 在粗截取尾点前后各1/4磁周期内寻找闭合点
 CLOSURE_MIN_PERIOD_POINTS = 4.0
 CLOSURE_DIRECTION_PERIOD_FRACTION = 1.0 / 32.0
@@ -1122,25 +1120,19 @@ class DataProcess(QObject):
 
         logger.info(f"提取数据: 索引 {start_index} - {end_index}，共 {data_length} 个数据点")
 
-        # Step 3: 用实际闭合点数重新计算角度分辨率（从0度开始）
+        # Step 3: 用实际闭合点数计算角度分辨率（0-360°）
         if data_length > 1:
-            actual_points_for_360 = end_index - start_index
-            actual_angle_resolution = 360.0 / actual_points_for_360
+            actual_angle_resolution = 360.0 / data_length
             extracted_angles = [i * actual_angle_resolution for i in range(data_length)]
             logger.info(
                 "截取角度自校准完成: "
-                f"理论一圈点数={POINTS_FOR_360}, 实际一圈点数={actual_points_for_360}, "
-                f"理论分辨率={ANGLE_RESOLUTION:.9f}°/点, "
-                f"实际分辨率={actual_angle_resolution:.9f}°/点, "
-                f"闭合点偏移={actual_points_for_360 - POINTS_FOR_360}, "
+                f"一圈点数={data_length}, "
+                f"分辨率={actual_angle_resolution:.9f}°/点, "
                 f"closure_found={closure_found}, score={closure_score:.6f}"
             )
         else:
-            extracted_angles = [i * ANGLE_RESOLUTION for i in range(data_length)]
-            logger.warning(
-                "闭合点自校准未启用，使用理论角度分辨率: "
-                f"理论分辨率={ANGLE_RESOLUTION:.9f}°/点"
-            )
+            extracted_angles = [i * (360.0 / max(data_length, 1)) for i in range(data_length)]
+            logger.warning(f"闭合点自校准未启用，数据长度={data_length}")
 
         # 保留6位小数精度
         angle_data_for_plot = [round(v, 6) for v in extracted_angles]
