@@ -16,10 +16,6 @@ from .config_manager import (
     get_config_manager,
 )
 from .logger import get_logger
-from .offset_calibration_config import (
-    OFFSET_COLLECTION_COMMAND_SECONDS,
-    OFFSET_STOP_GUARD_DELAY_MS,
-)
 
 if TYPE_CHECKING:
     from .thread_manager import ThreadManager
@@ -27,16 +23,13 @@ if TYPE_CHECKING:
 
 logger = get_logger("SerialCommand")
 
-POSITION_TOLERANCE_MM = 0.2
-POSITION_WAIT_TIMEOUT_MS = 3000
-POSITION_WAIT_POLL_INTERVAL_MS = 150
-SELF_DETECT_TIMEOUT_MS = 10000
-SELF_DETECT_POLL_INTERVAL_MS = 50
+MOTION_DONE_TIMEOUT_MS = 5000
+MOTION_DONE_POLL_INTERVAL_MS = 80
+POSITION_WAIT_TIMEOUT_MS = 5000
 
 
 class WorkState(Enum):
     IDLE = "idle"
-    SELF_DETECTING = "self_detecting"
     WAITING_POSITION = "waiting_position"
 
 
@@ -55,15 +48,13 @@ class SerialCommand(QObject):
         self._allow_position_query = False
         self._work_state = WorkState.IDLE
 
-        self._pending_retract_axis: Optional[str] = None
-        self._self_detect_axis: Optional[str] = None
-        self._self_detect_completed = False
         self._pending_move_task: Optional[tuple] = None
 
         self._offset_calibrating = False
         self._is_measuring = False
 
         self._current_x: Optional[int] = None
+        self._current_y: Optional[int] = None
         self._current_z: Optional[int] = None
 
         self._position_query_retry_count = 0
@@ -74,6 +65,8 @@ class SerialCommand(QObject):
         self._active_position_wait: Optional[dict] = None
         self._async_command_lock_state: Optional[dict] = None
         self._tx_sequence = 0
+
+        self._pending_deltas: dict = {}  # 记录各轴本次移动的 delta，DONE 时用于更新位置缓存
 
         self._setup_async_timers()
         logger.info("SerialCommand initialized.")
@@ -100,20 +93,12 @@ class SerialCommand(QObject):
 
     def _setup_async_timers(self) -> None:
         self._position_wait_poll_timer = QTimer(self)
-        self._position_wait_poll_timer.setInterval(POSITION_WAIT_POLL_INTERVAL_MS)
-        self._position_wait_poll_timer.timeout.connect(self._poll_position_wait)
+        self._position_wait_poll_timer.setInterval(MOTION_DONE_POLL_INTERVAL_MS)
+        self._position_wait_poll_timer.timeout.connect(self._poll_motion_done)
 
         self._position_wait_timeout_timer = QTimer(self)
         self._position_wait_timeout_timer.setSingleShot(True)
         self._position_wait_timeout_timer.timeout.connect(self._on_position_wait_timeout)
-
-        self._self_detect_poll_timer = QTimer(self)
-        self._self_detect_poll_timer.setInterval(SELF_DETECT_POLL_INTERVAL_MS)
-        self._self_detect_poll_timer.timeout.connect(self._poll_self_detect)
-
-        self._self_detect_timeout_timer = QTimer(self)
-        self._self_detect_timeout_timer.setSingleShot(True)
-        self._self_detect_timeout_timer.timeout.connect(self._on_self_detect_timeout)
 
     def _begin_async_command_lock(self, allow_position_query: bool = False) -> None:
         if self._async_command_lock_state is not None:
@@ -156,8 +141,6 @@ class SerialCommand(QObject):
         if (
             self._movement_sequence
             or self._active_position_wait
-            or self._self_detect_axis
-            or self._pending_retract_axis
             or self._command_lock
         ):
             logger.warning(
@@ -165,8 +148,6 @@ class SerialCommand(QObject):
                 f"state={self._work_state.value}, command_lock={self._command_lock}, "
                 f"movement={bool(self._movement_sequence)}, "
                 f"active_position_wait={bool(self._active_position_wait)}, "
-                f"self_detect_axis={self._self_detect_axis}, "
-                f"pending_retract_axis={self._pending_retract_axis}, "
                 f"write_queue_size={self.thread_manager.write_queue.qsize()}"
             )
             return False
@@ -186,7 +167,7 @@ class SerialCommand(QObject):
 
     @staticmethod
     def _get_axis_pulses_per_mm(axis: str) -> float:
-        if axis == "X":
+        if axis in ("X", "Y"):
             return X_AXIS_PULSES_PER_MM
         if axis == "Z":
             return Z_AXIS_PULSES_PER_MM
@@ -200,117 +181,81 @@ class SerialCommand(QObject):
         self,
         axis: str,
         target: int,
+        delta: int,
         callback: Callable[[bool], None],
         timeout_ms: int = POSITION_WAIT_TIMEOUT_MS,
     ) -> None:
-        current_position = self._current_x if axis == "X" else self._current_z
         self._active_position_wait = {
             "axis": axis,
             "target": target,
+            "delta": delta,
             "callback": callback,
-            "start_position": current_position,
-            "last_position": current_position,
             "timeout_ms": timeout_ms,
-            "motion_confirmed": False,
+            "done_received": False,
         }
         self._work_state = WorkState.WAITING_POSITION
         logger.info(
-            f"Check {axis} axis motion: start={current_position}, target={target}, timeout_ms={timeout_ms}"
+            f"Start DONE-based wait for {axis} axis: delta={delta:+d}, target={target}, timeout_ms={timeout_ms}"
         )
         self._position_wait_timeout_timer.start(timeout_ms)
         self._position_wait_poll_timer.start()
-        self.position_query(source="position_wait_start")
 
-    def _poll_position_wait(self) -> None:
-        if self._active_position_wait:
-            self.position_query(source="position_wait_poll")
-
-    def _handle_position_wait_update(self, position_data: tuple) -> None:
+    def _poll_motion_done(self) -> None:
+        """Poll for X/Y/Z DONE text from serial data queue."""
         if not self._active_position_wait:
             return
-        if position_data[0] is None or position_data[1] is None:
+        result = self.data_process.check_motion_done()
+        if result:
+            self._on_motion_done_detected(result)
+
+    def _on_motion_done_detected(self, axis: str) -> None:
+        if not self._active_position_wait:
+            return
+        if self._active_position_wait["axis"] != axis:
+            logger.debug(f"Ignore DONE for {axis}, waiting for {self._active_position_wait['axis']}")
             return
 
-        wait_state = self._active_position_wait
-        axis = wait_state["axis"]
-        target = wait_state["target"]
-        current = self._current_x if axis == "X" else self._current_z
-        tolerance = self._get_position_tolerance_pulse(axis)
-        diff = abs(current - target) if current is not None else None
-
-        if current is None:
-            return
-
-        if diff is not None and diff <= tolerance:
-            wait_state = self._clear_position_wait()
-            self._work_state = WorkState.IDLE
-            logger.info(
-                f"{axis} axis reached target: current={current}, target={target}, diff={diff}, tolerance={tolerance}"
-            )
-            if wait_state:
-                wait_state["callback"](True)
-            return
-
-        start_position = wait_state.get("start_position")
-        if start_position is None:
-            wait_state["start_position"] = current
-            wait_state["last_position"] = current
-            return
-
-        if current != start_position:
-            if not wait_state.get("motion_confirmed", False):
-                wait_state["motion_confirmed"] = True
-                self._position_wait_timeout_timer.stop()
-                logger.info(
-                    f"{axis} axis motion detected, wait until target: start={start_position}, "
-                    f"current={current}, target={target}, diff={diff}, tolerance={tolerance}"
-                )
-            wait_state["last_position"] = current
-            return
-
-        wait_state["last_position"] = current
+        wait_state = self._clear_position_wait()
+        self._work_state = WorkState.IDLE
+        delta = wait_state["delta"]
+        self._apply_delta(axis, delta)
+        logger.info(f"{axis} DONE received, delta={delta:+d}, new position={self._get_current(axis)}")
+        wait_state["callback"](True)
 
     def _on_position_wait_timeout(self) -> None:
         wait_state = self._active_position_wait
         if not wait_state:
             return
 
+        # 超时前最后检查一次
+        result = self.data_process.check_motion_done()
+        if result and result == wait_state["axis"]:
+            self._on_motion_done_detected(result)
+            return
+
         axis = wait_state["axis"]
-        target = wait_state["target"]
-        current = self._current_x if axis == "X" else self._current_z
-        tolerance = self._get_position_tolerance_pulse(axis)
-        diff = abs(current - target) if current is not None else None
-        start_position = wait_state.get("start_position")
-
-        if current is not None and diff <= tolerance:
-            wait_state = self._clear_position_wait()
-            self._work_state = WorkState.IDLE
-            logger.info(
-                f"{axis} axis accepted after motion check timeout: current={current}, target={target}, "
-                f"diff={diff}, tolerance={tolerance}"
-            )
-            wait_state["callback"](True)
-            return
-
-        if current is not None and start_position is not None and current != start_position:
-            wait_state["motion_confirmed"] = True
-            self._position_wait_timeout_timer.stop()
-            logger.info(
-                f"{axis} axis motion detected at timeout, continue waiting target: "
-                f"start={start_position}, current={current}, target={target}, diff={diff}, tolerance={tolerance}"
-            )
-            return
-
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
-        if current is None:
-            logger.warning(f"{axis} axis motion check failed: no valid position feedback within {POSITION_WAIT_TIMEOUT_MS}ms.")
-        else:
-            logger.warning(
-                f"{axis} axis motion check failed: start={start_position}, current={current}, "
-                f"target={target}, diff={diff}, tolerance={tolerance}, timeout_ms={POSITION_WAIT_TIMEOUT_MS}"
-            )
+        logger.warning(f"{axis} DONE wait timeout ({POSITION_WAIT_TIMEOUT_MS}ms), no DONE received")
         wait_state["callback"](False)
+
+    def _get_current(self, axis: str) -> Optional[int]:
+        if axis == "X":
+            return self._current_x
+        if axis == "Y":
+            return self._current_y
+        if axis == "Z":
+            return self._current_z
+        return None
+
+    def _apply_delta(self, axis: str, delta: int) -> None:
+        """Apply a movement delta to the cached position."""
+        if axis == "X" and self._current_x is not None:
+            self._current_x += delta
+        elif axis == "Y" and self._current_y is not None:
+            self._current_y += delta
+        elif axis == "Z" and self._current_z is not None:
+            self._current_z += delta
 
     def _resolve_step_target(self, step: str, target_x: int, target_z: int) -> Optional[tuple]:
         x_offset_pulse = self.config.get_inner_x_offset_pulse()
@@ -384,12 +329,23 @@ class SerialCommand(QObject):
         logger.info(
             f"{self._movement_sequence['name']} step {step_index + 1}/{len(steps)}: {step} -> {target_position}"
         )
-        move_sent = self.move_x(target_position) if axis == "X" else self.move_z(target_position)
-        if not move_sent:
+
+        if axis == "X":
+            delta = self.move_x(target_position)
+        elif axis == "Y":
+            delta = self.move_y(target_position)
+        elif axis == "Z":
+            delta = self.move_z(target_position)
+        else:
+            logger.warning(f"Unknown axis: {axis}")
             self._finish_movement_sequence(False)
             return
 
-        self._start_position_wait(axis, target_position, self._on_movement_step_finished)
+        if delta is None:
+            self._finish_movement_sequence(False)
+            return
+
+        self._start_position_wait(axis, target_position, delta, self._on_movement_step_finished)
 
     def _start_movement_sequence(self, name: str, steps: list, target_x: int, target_z: int) -> bool:
         if not self._can_start_async_operation(name):
@@ -406,109 +362,13 @@ class SerialCommand(QObject):
         self._run_next_movement_step()
         return True
 
-    def _stop_self_detect(self) -> None:
-        self._self_detect_poll_timer.stop()
-        self._self_detect_timeout_timer.stop()
-        self._self_detect_axis = None
-        if hasattr(self.data_process, "_self_detecting"):
-            self.data_process._self_detecting = False
-
-    def _poll_self_detect(self) -> None:
-        if self._self_detect_axis:
-            self.data_process.signal_self_detect_process.emit()
-
-    def _on_self_detect_timeout(self) -> None:
-        if not self._self_detect_axis:
-            return
-
-        logger.warning(
-            "Adhesion flow: self detect timed out, "
-            f"detect_axis={self._self_detect_axis}, "
-            f"pending_retract_axis={self._pending_retract_axis}, "
-            f"queue_size={self.data_process.data_queue.qsize()}, "
-            f"parser_buffer_chars={len(getattr(self.data_process, '_self_detect_text_buffer', ''))}, "
-            f"parser_buffer_preview={self.data_process.get_self_detect_buffer_preview() if hasattr(self.data_process, 'get_self_detect_buffer_preview') else ''}"
-        )
-        stop_result = self.send_data("S~", source="self_detect_timeout_stop")
-        logger.warning(
-            "Adhesion flow: stop command queued after self detect timeout, "
-            f"result={stop_result}, write_queue_size={self.thread_manager.write_queue.qsize()}"
-        )
-        self._stop_self_detect()
-        if hasattr(self.data_process, "clear_self_detect_buffer"):
-            self.data_process.clear_self_detect_buffer()
-        self._pending_retract_axis = None
-        self._self_detect_completed = False
-        self._position_query_retry_count = 0
-        self._work_state = WorkState.IDLE
-        self._end_async_command_lock()
-
-    def _start_self_detect(self, command: str, retract_axis: str, detect_axis: str) -> bool:
-        operation_name = f"self detect {detect_axis}"
-        if not self._can_start_async_operation(operation_name):
-            return False
-
-        logger.info(
-            "Adhesion flow: self detect start, "
-            f"command={command}, detect_axis={detect_axis}, "
-            f"retract_axis={retract_axis}, retract_distance={self.config.retract_distance:.3f}mm, "
-            f"queue_before_clear={self.data_process.data_queue.qsize()}"
-        )
-        # 先发送S~终止硬件上可能残留的自检状态
-        self.send_data("S~", source="self_detect_pre_stop")
-        # 清空Python级读队列和底层串口读缓冲区，防止上一次操作的残留响应
-        self.data_process.clear_data_queue()
-        if hasattr(self.data_process, "clear_self_detect_buffer"):
-            self.data_process.clear_self_detect_buffer()
-        try:
-            if self.serial_manager and self.serial_manager.serial_port:
-                self.serial_manager.serial_port.readAll()
-        except Exception:
-            pass
-        logger.debug(
-            "Adhesion flow: queue, buffer and hardware RX flushed before self detect, "
-            f"queue_after_clear={self.data_process.data_queue.qsize()}"
-        )
-        self._pending_retract_axis = retract_axis
-        self._self_detect_axis = detect_axis
-        self._self_detect_completed = False
-        self._position_query_retry_count = 0
-        self._work_state = WorkState.SELF_DETECTING
-        if hasattr(self.data_process, "_self_detecting"):
-            self.data_process._self_detecting = True
-        self._begin_async_command_lock(allow_position_query=True)
-        dropped_writes = self._drop_pending_position_query_writes(
-            reason=f"before self detect {detect_axis}"
-        )
-        if dropped_writes:
-            logger.info(
-                "Adhesion flow: pending position query writes dropped before self detect, "
-                f"dropped={dropped_writes}, write_queue_size={self.thread_manager.write_queue.qsize()}"
-            )
-
-        if not self.send_data(command, source=f"self_detect_{detect_axis}"):
-            logger.warning(
-                "Adhesion flow: self detect command not queued, "
-                f"command={command}, detect_axis={detect_axis}"
-            )
-            self._stop_self_detect()
-            self._pending_retract_axis = None
-            self._work_state = WorkState.IDLE
-            self._end_async_command_lock()
-            return False
-
-        logger.debug(
-            "Adhesion flow: self detect command queued, "
-            f"command={command}, timeout_ms={SELF_DETECT_TIMEOUT_MS}"
-        )
-        self._self_detect_timeout_timer.start(SELF_DETECT_TIMEOUT_MS)
-        self._self_detect_poll_timer.start()
-        self.data_process.signal_self_detect_process.emit()
-        return True
+    # ========================================================================
+    # 命令发送
+    # ========================================================================
 
     def send_data(self, data: str, source: str = "") -> bool:
         command = str(data)
-        is_position_query = command.startswith("?XZ")
+        is_position_query = command.startswith("M~")
         if self._command_lock and is_position_query and not self._allow_position_query:
             logger.debug(
                 "Serial TX blocked: "
@@ -551,7 +411,7 @@ class SerialCommand(QObject):
             logger.error(f"Failed to enqueue serial command: {e}", exc_info=True)
             return False
 
-    def enable_position_query_timer(self, interval: int = 300) -> None:
+    def enable_position_query_timer(self, interval: int = 1500) -> None:
         if not self.position_query_timer:
             self.position_query_timer = QTimer(self)
             self.position_query_timer.timeout.connect(self._position_query_from_timer)
@@ -568,154 +428,31 @@ class SerialCommand(QObject):
     def _position_query_from_timer(self) -> None:
         if self._offset_calibrating or self._is_measuring:
             return
-        if self._active_position_wait or self._self_detect_axis or self._pending_retract_axis:
+        if self._active_position_wait:
             return
         self.position_query(source="position_timer")
 
+    # ========================================================================
+    # 旋转采集 / 停止
+    # ========================================================================
+
     def claw_rotate(self) -> None:
-        round_pulse = 542720
-        self.send_data(f"B{int(round_pulse * 1.5)}~", source="claw_rotate")
+        """开始一圈旋转采集 (B~ 无参数)。"""
+        self.send_data("B~", source="claw_rotate")
 
     def claw_stop(self) -> None:
         with self.command_lock():
             self.send_data("S~", source="claw_stop")
 
-    def vertical_move(self, distance: int) -> None:
-        with self.command_lock():
-            self.send_data(f"N{distance}~", source="vertical_move")
+    # ========================================================================
+    # 手动移动
+    # ========================================================================
 
-    def auto_press(self) -> bool:
-        logger.info("Adhesion flow: Z press requested.")
-        return self._start_self_detect("P~", "Z", "Z")
-
-    def auto_press_left(self) -> bool:
-        logger.info("Adhesion flow: X left press requested.")
-        return self._start_self_detect("Y~", "X", "X")
-
-    def _on_self_detect_finished(self, axis: str) -> None:
-        if not self._pending_retract_axis:
-            logger.debug("No pending retract task.")
+    def set_move_task(self, axis: str, direction: int, distance_mm: float) -> None:
+        if self._movement_sequence or self._active_position_wait:
+            logger.warning("Manual move skipped: another serial operation is running.")
             return
-        if self._self_detect_axis and axis != self._self_detect_axis:
-            logger.debug(f"Ignore self detect signal: {axis}")
-            return
-
-        logger.info(
-            "Adhesion flow: self detect finished, "
-            f"detect_axis={axis}, pending_retract_axis={self._pending_retract_axis}, "
-            f"position_query_in_flight={self._position_query_in_flight}"
-        )
-        self._stop_self_detect()
-        self._self_detect_completed = True
-        self._work_state = WorkState.WAITING_POSITION
-        self._position_query_in_flight = False
-        queue_before_position_query = self.data_process.data_queue.qsize()
-        self.data_process.clear_data_queue()
-        logger.debug(
-            "Adhesion flow: queue cleared before retract position query, "
-            f"queue_before_clear={queue_before_position_query}, "
-            f"queue_after_clear={self.data_process.data_queue.qsize()}"
-        )
-        logger.debug("Adhesion flow: querying position for retract target.")
-        self.position_query(source="retract_position_query")
-
-    def _on_position_data_processed(self, position_data: tuple) -> None:
-        self._position_query_in_flight = False
-
-        if position_data[0] is not None:
-            self._current_x = int(position_data[0])
-        if position_data[1] is not None:
-            self._current_z = int(position_data[1])
-
-        if self._pending_retract_axis:
-            if not self._self_detect_completed:
-                return
-
-            if position_data[0] is None or position_data[1] is None:
-                self._position_query_retry_count += 1
-                logger.warning(
-                    "Adhesion flow: invalid position for retract, "
-                    f"position={position_data}, retry={self._position_query_retry_count}/"
-                    f"{self._max_position_query_retries}, "
-                    f"pending_retract_axis={self._pending_retract_axis}"
-                )
-                if self._position_query_retry_count >= self._max_position_query_retries:
-                    logger.error(
-                        f"Invalid retract position data after {self._max_position_query_retries} retries."
-                    )
-                    self._pending_retract_axis = None
-                    self._self_detect_completed = False
-                    self._position_query_retry_count = 0
-                    self._work_state = WorkState.IDLE
-                    self._end_async_command_lock()
-                else:
-                    self.position_query(source="retract_position_retry")
-                return
-
-            self._position_query_retry_count = 0
-            logger.info(
-                "Adhesion flow: position ready for retract, "
-                f"position={position_data}, pending_retract_axis={self._pending_retract_axis}"
-            )
-            self._execute_retract(position_data)
-            return
-
-        if self._active_position_wait:
-            self._handle_position_wait_update(position_data)
-            return
-
-        if self._pending_move_task:
-            self._execute_move_task(position_data)
-
-    def _execute_retract(self, position_data: tuple) -> None:
-        axis = self._pending_retract_axis
-        if not axis:
-            return
-
-        self._pending_retract_axis = None
-        self._self_detect_completed = False
-
-        retract_mm = max(0.0, self.config.retract_distance)
-        if axis in {"X", "X-"}:
-            retract_pulse = int(round(retract_mm * X_AXIS_PULSES_PER_MM))
-        elif axis == "Z":
-            retract_pulse = int(round(retract_mm * Z_AXIS_PULSES_PER_MM))
-        else:
-            self._work_state = WorkState.IDLE
-            self._end_async_command_lock()
-            return
-
-        if axis == "X":
-            current_x = int(position_data[0])
-            target = current_x - retract_pulse
-            result = self.move_x(target)
-            logger.info(
-                "Adhesion flow: retract command queued, "
-                f"axis=X, current={current_x}, target={target}, "
-                f"retract_pulse={retract_pulse}, retract_mm={retract_mm:.3f}, result={result}"
-            )
-        elif axis == "X-":
-            current_x = int(position_data[0])
-            target = current_x + retract_pulse
-            result = self.move_x(target)
-            logger.info(
-                "Adhesion flow: retract command queued, "
-                f"axis=X-, current={current_x}, target={target}, "
-                f"retract_pulse={retract_pulse}, retract_mm={retract_mm:.3f}, result={result}"
-            )
-        elif axis == "Z":
-            current_z = int(position_data[1])
-            target = current_z - retract_pulse
-            result = self.move_z(target)
-            logger.info(
-                "Adhesion flow: retract command queued, "
-                f"axis=Z, current={current_z}, target={target}, "
-                f"retract_pulse={retract_pulse}, retract_mm={retract_mm:.3f}, result={result}"
-            )
-
-        self._work_state = WorkState.IDLE
-        self._end_async_command_lock()
-        logger.info(f"Adhesion flow: retract flow finished, axis={axis}")
+        self._pending_move_task = (axis, direction, distance_mm)
 
     def _execute_move_task(self, position_data: tuple) -> None:
         if not self._pending_move_task:
@@ -731,7 +468,7 @@ class SerialCommand(QObject):
 
         if axis == "Z":
             distance_pulse = int(round(distance_mm * Z_AXIS_PULSES_PER_MM))
-        elif axis == "X":
+        elif axis in ("X", "Y"):
             distance_pulse = int(round(distance_mm * X_AXIS_PULSES_PER_MM))
         else:
             logger.error(f"Unknown axis: {axis}")
@@ -741,15 +478,16 @@ class SerialCommand(QObject):
             if axis == "X":
                 current_x = int(position_data[0])
                 self.move_x(current_x + direction * distance_pulse)
+            elif axis == "Y":
+                current_y = int(position_data[1])
+                self.move_y(current_y + direction * distance_pulse)
             elif axis == "Z":
-                current_z = int(position_data[1])
+                current_z = int(position_data[2])
                 self.move_z(current_z + direction * distance_pulse)
 
-    def set_move_task(self, axis: str, direction: int, distance_mm: float) -> None:
-        if self._movement_sequence or self._self_detect_axis or self._pending_retract_axis or self._active_position_wait:
-            logger.warning("Manual move skipped: another serial operation is running.")
-            return
-        self._pending_move_task = (axis, direction, distance_mm)
+    # ========================================================================
+    # 位置查询
+    # ========================================================================
 
     def position_query(self, source: str = "position_query") -> None:
         if self._offset_calibrating or self._position_query_in_flight:
@@ -759,33 +497,50 @@ class SerialCommand(QObject):
                 f"in_flight={self._position_query_in_flight}, state={self._work_state.value}"
             )
             return
-        if self.send_data("?XZ~", source=source):
+        if self.send_data("M~", source=source):
             self._position_query_in_flight = True
             self.data_process.signal_position_data_process.emit()
+
+    def _on_position_data_processed(self, position_data: tuple) -> None:
+        self._position_query_in_flight = False
+
+        if position_data[0] is not None:
+            self._current_x = int(position_data[0])
+        if len(position_data) > 1 and position_data[1] is not None:
+            self._current_y = int(position_data[1])
+        if len(position_data) > 2 and position_data[2] is not None:
+            self._current_z = int(position_data[2])
+
+        if self._active_position_wait:
+            return  # DONE-based wait, position updates are handled separately
+
+        if self._pending_move_task:
+            self._execute_move_task(position_data)
+
+    # ========================================================================
+    # 偏置校准
+    # ========================================================================
 
     def counter_measurer(self) -> None:
         logger.debug("=" * 60)
         queue_before_clear = self.data_process.data_queue.qsize()
         logger.info(
-            "Offset flow: counter measurement start, "
+            "Offset flow: counter measurement start via B~, "
             f"queue_before_clear={queue_before_clear}, connected={self.serial_manager.get_connection_status()}"
         )
         self.data_process.clear_data_queue()
         logger.debug(
-            "Offset flow: data queue cleared before offset command, "
+            "Offset flow: data queue cleared before B~ command, "
             f"queue_after_clear={self.data_process.data_queue.qsize()}"
         )
-        command = f"K{OFFSET_COLLECTION_COMMAND_SECONDS}~"
-        result = self.send_data(command, source="offset_collection")
+        result = self.send_data("B~", source="offset_collection")
         logger.info(
-            "Offset flow: collection command queued, "
-            f"command={command}, result={result}, "
-            f"process_delay_ms=200, stop_guard_ms={OFFSET_STOP_GUARD_DELAY_MS}"
+            "Offset flow: B~ collection command queued, result={result}, "
+            f"process_delay_ms=200"
         )
         if not result:
-            logger.warning("Offset flow: collection command was not queued successfully")
+            logger.warning("Offset flow: B~ command was not queued successfully")
         QTimer.singleShot(200, self._emit_offset_process_signal)
-        QTimer.singleShot(OFFSET_STOP_GUARD_DELAY_MS, self._stop_offset_collection_if_needed)
 
     def _emit_offset_process_signal(self) -> None:
         logger.debug(
@@ -795,25 +550,49 @@ class SerialCommand(QObject):
         )
         self.data_process.signal_offset_data_process.emit()
 
-    def _stop_offset_collection_if_needed(self) -> None:
-        if not self._offset_calibrating:
-            logger.debug("Offset flow: stop guard skipped, calibration already finished")
-            return
-
-        result = self.send_data("S~", source="offset_stop_guard")
-        logger.info(
-            "Offset flow: stop guard sent stop command, "
-            f"result={result}, queue_size={self.data_process.data_queue.qsize()}"
-        )
-
     def slider_reset(self) -> None:
         self.send_data("I~", source="slider_reset")
 
-    def move_x(self, position: int) -> bool:
-        return self.send_data(f"X{position}~", source="move_x")
+    # ========================================================================
+    # 轴运动（绝对目标 → 内部自动换算相对步数）
+    # ========================================================================
 
-    def move_z(self, position: int) -> bool:
-        return self.send_data(f"Z{position}~", source="move_z")
+    def move_x(self, position: int) -> Optional[int]:
+        """X轴移动到绝对位置（内部换算为带符号相对步数）。"""
+        if self._current_x is None:
+            logger.warning("move_x: current X position unknown")
+            return None
+        delta = position - self._current_x
+        sign = "+" if delta >= 0 else "-"
+        if not self.send_data(f"X{sign}{abs(delta)}~", source="move_x"):
+            return None
+        return delta
+
+    def move_y(self, position: int) -> Optional[int]:
+        """Y轴移动到绝对位置（内部换算为带符号相对步数）。"""
+        if self._current_y is None:
+            logger.warning("move_y: current Y position unknown")
+            return None
+        delta = position - self._current_y
+        sign = "+" if delta >= 0 else "-"
+        if not self.send_data(f"Y{sign}{abs(delta)}~", source="move_y"):
+            return None
+        return delta
+
+    def move_z(self, position: int) -> Optional[int]:
+        """Z轴移动到绝对位置（内部换算为带符号相对步数）。"""
+        if self._current_z is None:
+            logger.warning("move_z: current Z position unknown")
+            return None
+        delta = position - self._current_z
+        sign = "+" if delta >= 0 else "-"
+        if not self.send_data(f"Z{sign}{abs(delta)}~", source="move_z"):
+            return None
+        return delta
+
+    # ========================================================================
+    # 测试位置 / 挂起位置 移动方案
+    # ========================================================================
 
     def execute_movement_scheme(self, steps: list, target_x: int, target_z: int) -> bool:
         return self._start_movement_sequence("movement scheme", steps, target_x, target_z)
@@ -834,6 +613,10 @@ class SerialCommand(QObject):
         target_z = self.config.test_z
         self._start_movement_sequence("test position", scheme["steps"], target_x, target_z)
 
+    # ========================================================================
+    # 偏置校准流程控制
+    # ========================================================================
+
     def offset_calibration(self) -> None:
         logger.info(
             "Offset flow: calibration requested, "
@@ -848,6 +631,9 @@ class SerialCommand(QObject):
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
         if self._offset_calibrating:
+            self._offset_calibrating = False
+            self.data_process._offset_calibrating = False
+            logger.info(f"Offset flow: calibration finished, success={success}")
             stop_result = self.send_data("S~", source="offset_finish_stop")
             logger.info(
                 "Offset flow: finish handler sent stop command, "

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>TestConfigPanel</class>
- <widget class="QWidget" name="TestConfigPanel">
+ <class>ConfigPanel</class>
+ <widget class="QWidget" name="ConfigPanel">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -11,13 +11,13 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>测试配置</string>
+   <string>配置面板</string>
   </property>
   <layout class="QGridLayout" name="gridLayout_2">
    <item row="0" column="0">
     <widget class="QLabel" name="panel_title">
      <property name="text">
-      <string>测试配置</string>
+      <string>配置面板</string>
      </property>
     </widget>
    </item>
@@ -41,19 +41,19 @@
      </property>
      <layout class="QGridLayout" name="gridLayout">
       <property name="leftMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="topMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="rightMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="bottomMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="spacing">
-         <number>10</number>
+       <number>10</number>
       </property>
       <item row="0" column="0">
        <widget class="QLabel" name="label_port">
@@ -175,19 +175,19 @@
      </property>
      <layout class="QGridLayout" name="pos_layout">
       <property name="leftMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="topMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="rightMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="bottomMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="spacing">
-         <number>10</number>
+       <number>10</number>
       </property>
       <item row="0" column="0">
        <widget class="QLabel" name="label_x">
@@ -198,7 +198,7 @@
          </size>
         </property>
         <property name="text">
-         <string>当前位置 X：</string>
+         <string>水平位置：</string>
         </property>
        </widget>
       </item>
@@ -219,7 +219,7 @@
        </widget>
       </item>
       <item row="0" column="2">
-       <widget class="QLabel" name="label_z">
+       <widget class="QLabel" name="label_y">
         <property name="minimumSize">
          <size>
           <width>0</width>
@@ -227,12 +227,12 @@
          </size>
         </property>
         <property name="text">
-         <string>Z：</string>
+         <string>竖直位置：</string>
         </property>
        </widget>
       </item>
       <item row="0" column="3">
-       <widget class="QLineEdit" name="position_z">
+       <widget class="QLineEdit" name="position_y">
         <property name="minimumSize">
          <size>
           <width>0</width>
@@ -256,7 +256,7 @@
          </size>
         </property>
         <property name="text">
-         <string>测试位置 X：</string>
+         <string>测试 水平：</string>
         </property>
        </widget>
       </item>
@@ -285,12 +285,12 @@
          </size>
         </property>
         <property name="text">
-         <string>Z：</string>
+         <string>测试 竖直：</string>
         </property>
        </widget>
       </item>
       <item row="1" column="3">
-       <widget class="QLineEdit" name="test_z_value">
+       <widget class="QLineEdit" name="test_y_value">
         <property name="minimumSize">
          <size>
           <width>0</width>
@@ -314,7 +314,7 @@
          </size>
         </property>
         <property name="text">
-         <string>挂起位置 X：</string>
+         <string>挂起 水平：</string>
         </property>
        </widget>
       </item>
@@ -343,12 +343,12 @@
          </size>
         </property>
         <property name="text">
-         <string>Z：</string>
+         <string>挂起 竖直：</string>
         </property>
        </widget>
       </item>
       <item row="2" column="3">
-       <widget class="QLineEdit" name="suspend_z_value">
+       <widget class="QLineEdit" name="suspend_y_value">
         <property name="minimumSize">
          <size>
           <width>0</width>
@@ -373,45 +373,20 @@
      </property>
      <layout class="QGridLayout" name="action_layout">
       <property name="leftMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="topMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="rightMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="bottomMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="spacing">
-         <number>10</number>
+       <number>10</number>
       </property>
-      <item row="0" column="1">
-       <widget class="QPushButton" name="btn_offset">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>偏置校准</string>
-        </property>
-       </widget>
-      </item>
       <item row="0" column="0">
        <widget class="QPushButton" name="btn_zeroing">
         <property name="sizePolicy">
@@ -433,209 +408,7 @@
          </size>
         </property>
         <property name="text">
-         <string>滑台复位/零位校准</string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="2">
-       <widget class="QWidget" name="widget" native="true">
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <layout class="QHBoxLayout" name="horizontalLayout">
-         <property name="spacing">
-         <number>10</number>
-         </property>
-         <property name="leftMargin">
-         <number>10</number>
-         </property>
-         <property name="topMargin">
-         <number>10</number>
-         </property>
-         <property name="rightMargin">
-         <number>10</number>
-         </property>
-         <property name="bottomMargin">
-         <number>10</number>
-         </property>
-         <item>
-          <widget class="QLabel" name="label_retract_distance">
-           <property name="minimumSize">
-            <size>
-             <width>150</width>
-             <height>30</height>
-            </size>
-           </property>
-           <property name="text">
-            <string>贴靠回弹距离(mm)：</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QDoubleSpinBox" name="spin_retract_distance">
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>30</height>
-            </size>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
-           <property name="suffix">
-            <string notr="true"/>
-           </property>
-           <property name="decimals">
-            <number>2</number>
-           </property>
-           <property name="maximum">
-            <double>10.000000000000000</double>
-           </property>
-           <property name="singleStep">
-            <double>0.050000000000000</double>
-           </property>
-           <property name="value">
-            <double>0.250000000000000</double>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </widget>
-      </item>
-      <item row="0" column="2">
-       <widget class="QPushButton" name="btn_press_z">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>向下贴靠</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="2">
-       <widget class="QPushButton" name="btn_left_x">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>左贴向靠</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QPushButton" name="btn_suspend">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>挂起位置</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="0">
-       <widget class="QPushButton" name="btn_test_pos">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>测试位置</string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="0">
-       <widget class="QPushButton" name="btn_test_pos_save">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>250</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>250</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>保存测试位置</string>
+         <string>滑台零位校准</string>
         </property>
        </widget>
       </item>
@@ -664,6 +437,106 @@
         </property>
        </widget>
       </item>
+      <item row="1" column="0">
+       <widget class="QPushButton" name="btn_test_pos">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>250</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>测试位置</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QPushButton" name="btn_suspend">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>250</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>挂起位置</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QPushButton" name="btn_test_pos_save">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>250</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>保存测试位置</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QPushButton" name="btn_offset">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>250</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>偏置校准</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
@@ -674,19 +547,19 @@
      </property>
      <layout class="QGridLayout" name="action_layout_2">
       <property name="leftMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="topMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="rightMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="bottomMargin">
-         <number>10</number>
+       <number>10</number>
       </property>
       <property name="spacing">
-         <number>10</number>
+       <number>10</number>
       </property>
       <item row="2" column="17">
        <widget class="QToolButton" name="btn_test_edit_scheme">

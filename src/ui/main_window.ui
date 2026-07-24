@@ -121,7 +121,7 @@
              <item>
               <widget class="QLabel" name="nav_text_position">
                <property name="text">
-                <string>测试配置</string>
+                <string>配置面板</string>
                </property>
                <property name="alignment">
                 <set>Qt::AlignCenter</set>

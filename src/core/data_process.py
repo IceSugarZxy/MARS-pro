@@ -3,10 +3,10 @@
 数据处理模块
 
 负责处理串口接收的各种数据，包括：
-- 位置数据：解析X/Z轴位置信息
+- 位置数据：解析 M~ 响应的 X/Y/Z 轴位置信息
 - 测量数据：解析磁场强度数据并进行算法处理
 - 偏置数据：计算磁场偏置值
-- 自检消息：检测设备自检完成状态
+- 运动完成：检测 X/Y/Z DONE 消息
 
 数据流程：
 1. SerialManager 从串口接收数据，放入共享队列
@@ -61,12 +61,10 @@ OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 1.5
 OFFSET_NO_DATA_TIMEOUT_SECONDS = 0.5
 OFFSET_QUEUE_POLL_SECONDS = 0.02
 OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
-SELF_DETECT_BUFFER_LIMIT = 4096
-SELF_DETECT_LOG_PREVIEW_LIMIT = 220
-SELF_DETECT_FINISH_PATTERNS = {
-    "Z": re.compile(r"Z\s*(?:Axis\s*)?Self\s*Detect\s*Finished", re.IGNORECASE),
-    "X": re.compile(r"X\s*(?:Axis\s*)?Self\s*Detect\s*Finished", re.IGNORECASE),
-}
+# M~ 响应轴位置解析正则（兼容 pos= 和 pos = 两种格式）
+M_POS_PATTERN = re.compile(r"([XYZ]):\s*\w+\s+pos\s*=\s*(-?\d+)")
+# 运动完成检测正则
+MOTION_DONE_PATTERN = re.compile(r"([XYZ])\s+DONE")
 
 
 class DataProcess(QObject):
@@ -85,14 +83,13 @@ class DataProcess(QObject):
     # 信号定义
     # ========================================================================
     signal_position_data_process = pyqtSignal()                         # 位置数据处理信号
-    signal_position_data_process_finished = pyqtSignal(tuple)           # 位置数据处理完成信号
+    signal_position_data_process_finished = pyqtSignal(tuple)           # 位置数据处理完成信号 (x, y, z)
     signal_offset_data_process = pyqtSignal()                           # 偏置数据处理信号
     signal_offset_data_process_finished = pyqtSignal(bool)              # 偏置数据处理完成信号
     signal_measure_data_process = pyqtSignal()                          # 测量数据处理信号
     signal_measure_data_process_finished = pyqtSignal(object, object)   # 测量数据处理完成信号
     signal_measure_data_progress = pyqtSignal(int, int)                 # 测量数据处理进度信号 (当前数据量, 总数据量)
-    signal_self_detect_process = pyqtSignal()                           # 自检消息处理信号
-    signal_self_detect_finished = pyqtSignal(str)                       # 自检完成信号，参数为轴 ('X'/'Z')
+    signal_motion_done = pyqtSignal(str)                                # 运动完成信号，参数为轴 ('X'/'Y'/'Z')
     # ========================================================================
     # 类属性（转换系数）
     # ========================================================================
@@ -129,8 +126,6 @@ class DataProcess(QObject):
 
         # 偏置校准期间暂停位置数据处理，避免串口回信互相干扰。
         self._offset_calibrating: bool = False
-        self._self_detecting: bool = False
-        self._self_detect_text_buffer: str = ""
 
         # 测量停止标志：用于中途停止测量时立即处理已采集的数据
         self._stop_measure_processing: bool = False
@@ -300,182 +295,117 @@ class DataProcess(QObject):
             except queue.Empty:
                 break
 
-    def clear_self_detect_buffer(self) -> None:
-        """Clear buffered self-detect text fragments."""
-        self._self_detect_text_buffer = ""
-
-    def _append_self_detect_text(self, text: str) -> str:
-        self._self_detect_text_buffer = (
-            self._self_detect_text_buffer + text
-        )[-SELF_DETECT_BUFFER_LIMIT:]
-        return self._self_detect_text_buffer
-
-    @staticmethod
-    def _text_preview(text: str, limit: int = SELF_DETECT_LOG_PREVIEW_LIMIT) -> str:
-        preview = text.replace("\r", "\\r").replace("\n", "\\n")
-        if len(preview) > limit:
-            return preview[:limit] + "..."
-        return preview
-
-    def get_self_detect_buffer_preview(self) -> str:
-        return self._text_preview(self._self_detect_text_buffer)
-
     # ========================================================================
-    # 自检消息检测
+    # 运动完成检测
     # ========================================================================
 
-    # 类变量，用于累积位置数据（避免数据被意外覆盖）
-    _position_buffer = bytearray()
-
-    def check_self_detect(self) -> bool:
+    def check_motion_done(self) -> Optional[str]:
         """
-        检测自检完成消息
+        检测运动完成消息
 
-        从队列中读取串口数据，检测是否包含自检完成消息。
-        自检完成消息格式：
-        - "X Axis Self Detect Finished" - X轴自检完成
-        - "Z Axis Self Detect Finished" - Z轴自检完成
-
-        使用非阻塞方式持续读取队列，直到找到自检完成消息或队列为空。
+        从队列中读取串口数据，检测是否包含 "X DONE" / "Y DONE" / "Z DONE"。
+        使用非阻塞方式持续读取队列，直到找到完成消息或队列为空。
 
         Returns:
-            是否检测到自检完成消息
+            完成运动的轴名 ('X'/'Y'/'Z')，未检测到返回 None
         """
-        start_time = time.time()
-        item_count = 0
-        ignored_position_packets = 0
         try:
             while True:
-                # 非阻塞读取队列数据
                 try:
                     data = self.data_queue.get_nowait()
-                    item_count += 1
                 except queue.Empty:
                     break
 
                 text = data.decode('utf-8', errors='ignore')
-                buffered_text = self._append_self_detect_text(text)
-                if logger.isEnabledFor(10):
-                    logger.debug(
-                        "Adhesion flow: self detect RX chunk, "
-                        f"item={item_count}, bytes={len(data)}, queue_remaining={self.data_queue.qsize()}, "
-                        f"preview={self._text_preview(text)}"
-                    )
-
-                # 自检期间丢弃旧位置包，避免误判自检完成回信。
-                if re.search(r'X:-?\d+,Z:-?\d+', text):
-                    ignored_position_packets += 1
-
-                # 检测Z轴自检完成
-                if SELF_DETECT_FINISH_PATTERNS["Z"].search(buffered_text):
-                    logger.debug("Z axis self detect finished.")
-                    logger.info(
-                        "Adhesion flow: Z self detect finish detected, "
-                        f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
-                        f"queue_remaining={self.data_queue.qsize()}, "
-                        f"elapsed={time.time() - start_time:.2f}s"
-                    )
-                    self.clear_self_detect_buffer()
-                    self.signal_self_detect_finished.emit('Z')
-                    return True
-                # 检测X轴自检完成
-                elif SELF_DETECT_FINISH_PATTERNS["X"].search(buffered_text):
-                    logger.debug("X axis self detect finished.")
-                    logger.info(
-                        "Adhesion flow: X self detect finish detected, "
-                        f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
-                        f"queue_remaining={self.data_queue.qsize()}, "
-                        f"elapsed={time.time() - start_time:.2f}s"
-                    )
-                    self.clear_self_detect_buffer()
-                    self.signal_self_detect_finished.emit('X')
-                    return True
-
-            if item_count and ignored_position_packets and logger.isEnabledFor(10):
-                logger.debug(
-                    "Adhesion flow: ignored stale position packets during self detect, "
-                    f"items={item_count}, ignored_position_packets={ignored_position_packets}, "
-                    f"queue_remaining={self.data_queue.qsize()}"
-                )
-            if item_count and logger.isEnabledFor(10):
-                logger.debug(
-                    "Adhesion flow: self detect scan ended without finish, "
-                    f"items={item_count}, buffer_chars={len(self._self_detect_text_buffer)}, "
-                    f"buffer_preview={self.get_self_detect_buffer_preview()}"
-                )
+                match = MOTION_DONE_PATTERN.search(text)
+                if match:
+                    axis = match.group(1)
+                    logger.info(f"Motion done detected: {axis} DONE")
+                    return axis
 
         except Exception as e:
-            logger.error(f"检测自检完成消息失败: {e}")
+            logger.error(f"检测运动完成消息失败: {e}")
 
-        return False
+        return None
 
     # ========================================================================
     # 位置数据处理
     # ========================================================================
 
+    # 类变量，用于累积位置数据
+    _position_buffer = bytearray()
+
     def process_position_data(self) -> None:
         """
         处理位置数据
 
-        从队列中读取串口返回的位置数据，解析X轴和Z轴的当前位置。
-        数据格式示例："X:****,Z:****"
-
-        解析流程：
-        1. 持续等待数据（最常1.5秒），直到解析到位置数据
-        2. 尝试解码为UTF-8文本
-        3. 解析X和Z的位置值
-        4. 发出完成信号
+        从队列中读取 M~ 响应的多行文本，解析 X/Y/Z 轴位置。
+        M~ 轴状态行格式: "X: IDLE pos=466101 cnt=0/0 dir=+ stop=1"
+        M~ 响应约 30+ 行，可能跨多个 USB 包到达，需分批读取。
         """
-        # 如果正在偏置校准，跳过位置数据处理，避免干扰
         if self._offset_calibrating:
-            self.signal_position_data_process_finished.emit((None, None))
-            return
-        if self._self_detecting:
-            logger.debug("Adhesion flow: position processing skipped during self detect.")
-            self.signal_position_data_process_finished.emit((None, None))
+            self.signal_position_data_process_finished.emit((None, None, None))
             return
 
         x_position: Optional[str] = None
+        y_position: Optional[str] = None
         z_position: Optional[str] = None
 
-        # 清空之前的位置缓冲区
         DataProcess._position_buffer.clear()
 
-        # 短超时等待位置数据（队列已清空，硬件响应应在0.3s内到达）
         import time as time_module
-        start_time = time_module.time()
+        deadline = time_module.time() + 1.0
+        batch_wait = 0.08
 
-        while time_module.time() - start_time < 0.3:
-            if self._self_detecting:
-                logger.debug("Adhesion flow: in-flight position processing stopped for self detect.")
-                self.signal_position_data_process_finished.emit((None, None))
-                return
-            # 使用非阻塞get_nowait() +短暂sleep，让Qt事件循环处理其他信号
-            try:
-                data = self.data_queue.get_nowait()
-                DataProcess._position_buffer.extend(data)
-
-                # 尝试解码
+        while time_module.time() < deadline:
+            # 尽量一次性读完队列中的所有数据
+            got_data = False
+            while True:
                 try:
-                    text = DataProcess._position_buffer.decode('utf-8')
-                    # 查找最后一个完整的 X:数字,Z:数字 模式（支持负数）
-                    import re
-                    pattern = r'X:(-?\d+),Z:(-?\d+)'
-                    matches = re.findall(pattern, text)
-                    if matches:
-                        last_match = matches[-1]
-                        x_position = last_match[0]
-                        z_position = last_match[1]
-                        break  # 解析成功，退出循环
+                    data = self.data_queue.get_nowait()
+                    DataProcess._position_buffer.extend(data)
+                    got_data = True
+                except queue.Empty:
+                    break
+
+            if got_data:
+                try:
+                    text = DataProcess._position_buffer.decode('utf-8', errors='ignore')
+                    matches = M_POS_PATTERN.findall(text)
+                    for axis, pos in matches:
+                        if axis == 'X':
+                            x_position = pos
+                        elif axis == 'Y':
+                            y_position = pos
+                        elif axis == 'Z':
+                            z_position = pos
+
+                    if x_position is not None and y_position is not None and z_position is not None:
+                        logger.info(
+                            f"M~ position OK: X={x_position}, Y={y_position}, Z={z_position}, "
+                            f"elapsed={time_module.time() - (deadline - 1.0):.3f}s"
+                        )
+                        break
                 except UnicodeDecodeError:
                     pass
 
-            except queue.Empty:
-                # 队列为空，短暂等待后重试（让出CPU给Qt事件循环处理其他信号）
-                time_module.sleep(0.05)
+            time_module.sleep(batch_wait)
 
-        # 保存位置数据（即使解析失败也发送信号）
-        self.signal_position_data_process_finished.emit((x_position, z_position))
+        # 打印原始回信尾部，方便排查解析问题
+        raw_tail = DataProcess._position_buffer.decode('utf-8', errors='replace')[-300:]
+        if x_position is None or y_position is None or z_position is None:
+            logger.warning(
+                f"M~ position INCOMPLETE: X={x_position}, Y={y_position}, Z={z_position}, "
+                f"buffer_bytes={len(DataProcess._position_buffer)}, "
+                f"raw_tail={raw_tail}"
+            )
+        else:
+            logger.debug(
+                f"M~ raw tail: bytes={len(DataProcess._position_buffer)}, "
+                f"text={raw_tail}"
+            )
+
+        self.signal_position_data_process_finished.emit((x_position, y_position, z_position))
 
     # ========================================================================
     # 测量数据处理

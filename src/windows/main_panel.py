@@ -41,7 +41,7 @@ class MainPanel(QMainWindow):
     def _init_nav_buttons(self):
         self._nav_button_map = {
             "nav_button_measure": "measure",
-            "nav_button_position": "test_config",
+            "nav_button_position": "config",
             "nav_button_history": "history",
             "nav_button_compare": "compare",
         }
@@ -89,13 +89,13 @@ class MainPanel(QMainWindow):
         from windows.compare_panel import ComparePanel
         from windows.history_panel import HistoryPanel
         from windows.measure_panel import MeasurePanel
-        from windows.test_config_panel import TestConfigPanel
+        from windows.config_panel import ConfigPanel
 
         content_stacked = self.findChild(QStackedWidget, "content_stacked")
 
         panels = [
             ("measure", MeasurePanel()),
-            ("test_config", TestConfigPanel()),
+            ("config", ConfigPanel()),
             ("history", HistoryPanel()),
             ("compare", ComparePanel()),
         ]
@@ -112,7 +112,7 @@ class MainPanel(QMainWindow):
         self._footer_serial_indicator = self.findChild(QLabel, "serial_status_indicator")
         self._footer_serial_label = self.findChild(QLabel, "serial_status_label")
 
-        pos_label = QLabel("位置: X=-- Z=--")
+        pos_label = QLabel("位置: X=-- Y=-- Z=--")
         pos_label.setObjectName("status_position_label")
         statusbar.addPermanentWidget(pos_label)
         self._status_position_label = pos_label
@@ -134,13 +134,13 @@ class MainPanel(QMainWindow):
             self._footer_serial_label.setText("未连接")
 
     def update_position_from_tuple(self, position_data):
-        """Update the footer position label from a `(x, z)` payload."""
-        if not position_data or len(position_data) < 2:
+        """Update the footer position label from a `(x, y, z)` payload."""
+        if not position_data or len(position_data) < 3:
             return
-        self.update_position(position_data[0], position_data[1])
+        self.update_position(position_data[0], position_data[1], position_data[2])
 
-    def update_position(self, x, z):
-        self._status_position_label.setText(f"位置: X={x} Z={z}")
+    def update_position(self, x, y, z):
+        self._status_position_label.setText(f"位置: X={x} Y={y} Z={z}")
 
     def get_panel(self, panel_id):
         return self._panels.get(panel_id)

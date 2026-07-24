@@ -63,8 +63,6 @@ MEASUREMENT_LOCKED_BUTTONS = (
     "btn_offset",
     "btn_test_position",
     "btn_suspend_position",
-    "btn_press_z",
-    "btn_left_x",
 )
 
 
@@ -563,9 +561,6 @@ class MeasurePanel(QWidget):
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._offset_button_clicked)
         self.findChild(QPushButton, "btn_test_position").clicked.connect(self._test_position_button_clicked)
         self.findChild(QPushButton, "btn_suspend_position").clicked.connect(self._suspend_position_button_clicked)
-        self.findChild(QPushButton, "btn_press_z").clicked.connect(self._press_z_button_clicked)
-        self.findChild(QPushButton, "btn_left_x").clicked.connect(self._left_x_button_clicked)
-
         # 方向控制按钮
         self.findChild(QPushButton, "btn_up").clicked.connect(self._up_button_clicked)
         self.findChild(QPushButton, "btn_down").clicked.connect(self._down_button_clicked)
@@ -771,19 +766,7 @@ class MeasurePanel(QWidget):
         if self.serial_command:
             self.serial_command.suspend_position()
 
-    def _press_z_button_clicked(self):
-        """Z轴下压贴靠"""
-        logger.info("向下贴靠按钮被点击")
-        if self.serial_command:
-            accepted = self.serial_command.auto_press()
-            logger.info(f"向下贴靠操作已执行，接受状态: {accepted}")
 
-    def _left_x_button_clicked(self):
-        """X轴左贴靠"""
-        logger.info("左贴向靠按钮被点击")
-        if self.serial_command:
-            accepted = self.serial_command.auto_press_left()
-            logger.info(f"左贴向靠操作已执行，接受状态: {accepted}")
 
     def _up_button_clicked(self):
         """上"""

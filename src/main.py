@@ -70,17 +70,10 @@ class MainApplication:
                 self.thread_manager.data_process.process_position_data,
                 Qt.QueuedConnection
             )
-            self.thread_manager.data_process.signal_self_detect_process.connect(
-                self.thread_manager.data_process.check_self_detect,
-                Qt.QueuedConnection
-            )
             # Keep SerialCommand's cached position aligned with parsed feedback.
             self.thread_manager.data_process.signal_position_data_process_finished.connect(
                 self.thread_manager.serial_command._on_position_data_processed,
                 Qt.QueuedConnection
-            )
-            self.thread_manager.data_process.signal_self_detect_finished.connect(
-                self.thread_manager.serial_command._on_self_detect_finished
             )
             self.thread_manager.data_process.signal_offset_data_process.connect(
                 self.thread_manager.data_process.process_offset_data,
@@ -104,7 +97,7 @@ class MainApplication:
 
             # 将线程管理器传递给各面板
             self.main_panel.get_panel("measure").set_thread_manager(self.thread_manager)
-            self.main_panel.get_panel("test_config").set_thread_manager(self.thread_manager)
+            self.main_panel.get_panel("config").set_thread_manager(self.thread_manager)
             self.logger.info("面板线程管理器设置完成")
 
             # 启动线程

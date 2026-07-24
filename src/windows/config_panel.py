@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-测试配置面板 - 从 test_config_panel.ui 加载
+配置面板 - 从 config_panel.ui 加载
 """
 
 import os
@@ -16,17 +16,17 @@ from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
 
-logger = get_logger('TestConfigPanel')
+logger = get_logger('ConfigPanel')
 
 
-class TestConfigPanel(QWidget):
-    """测试配置面板 - 从 test_config_panel.ui 加载"""
+class ConfigPanel(QWidget):
+    """配置面板 - 从 config_panel.ui 加载"""
 
     def __init__(self):
         super().__init__()
 
         # 加载 UI
-        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "test_config_panel.ui")
+        ui_file_path = os.path.join(os.path.dirname(__file__), "..", "ui", "config_panel.ui")
         uic.loadUi(ui_file_path, self)
 
         # 线程管理器引用
@@ -55,7 +55,7 @@ class TestConfigPanel(QWidget):
         # 偏置校准对话框
         self._offset_dialog = None
 
-        logger.info("TestConfigPanel 初始化完成")
+        logger.info("ConfigPanel 初始化完成")
 
     def set_thread_manager(self, tm):
         """设置线程管理器"""
@@ -232,21 +232,21 @@ class TestConfigPanel(QWidget):
             config = get_config_manager()
             # 更新测试位置显示
             test_x_display = self.findChild(QLineEdit, "test_x_value")
-            test_z_display = self.findChild(QLineEdit, "test_z_value")
+            test_y_display = self.findChild(QLineEdit, "test_y_value")
             if test_x_display:
                 test_x_display.setText(str(config.test_x))
-            if test_z_display:
-                test_z_display.setText(str(config.test_z))
+            if test_y_display:
+                test_y_display.setText(str(config.test_z))
 
             # 更新挂起位置显示
             suspend_x_display = self.findChild(QLineEdit, "suspend_x_value")
-            suspend_z_display = self.findChild(QLineEdit, "suspend_z_value")
+            suspend_y_display = self.findChild(QLineEdit, "suspend_y_value")
             if suspend_x_display:
                 suspend_x_display.setText(str(config.suspend_x))
-            if suspend_z_display:
-                suspend_z_display.setText(str(config.suspend_z))
+            if suspend_y_display:
+                suspend_y_display.setText(str(config.suspend_z))
 
-            logger.info(f"已加载保存的位置: 测试位置({config.test_x}, {config.test_z}), 挂起位置({config.suspend_x}, {config.suspend_z})")
+            logger.info(f"已加载保存的位置: 水平({config.test_x}, {config.test_z}), 挂起({config.suspend_x}, {config.suspend_z})")
         except Exception as e:
             logger.error(f"加载保存位置失败: {e}")
 
@@ -472,8 +472,6 @@ class TestConfigPanel(QWidget):
         # 快捷操作
         self.findChild(QPushButton, "btn_zeroing").clicked.connect(self._on_zeroing)
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._on_offset)
-        self.findChild(QPushButton, "btn_press_z").clicked.connect(self._on_press_z)
-        self.findChild(QPushButton, "btn_left_x").clicked.connect(self._on_left_x)
         self.findChild(QPushButton, "btn_test_pos").clicked.connect(self._on_test_pos)
         self.findChild(QPushButton, "btn_suspend").clicked.connect(self._on_suspend)
         self.findChild(QPushButton, "btn_test_pos_save").clicked.connect(self._on_test_pos_save)
@@ -486,11 +484,6 @@ class TestConfigPanel(QWidget):
         """初始化快捷操作配置"""
         config = get_config_manager()
 
-        self._bind_double_spin(
-            "spin_retract_distance",
-            config.retract_distance,
-            self._on_retract_distance_changed,
-        )
         self._bind_double_spin(
             "spin_x_offset",
             config.inner_x_offset,
@@ -514,12 +507,6 @@ class TestConfigPanel(QWidget):
         spin.blockSignals(False)
         spin.valueChanged.connect(handler)
 
-    def _on_retract_distance_changed(self, value):
-        """更新贴靠回弹距离"""
-        config = get_config_manager()
-        config.retract_distance = value
-        logger.info(f"贴靠回弹距离已更新: {value:.2f} mm")
-
     def _on_x_offset_changed(self, value):
         """更新X轴偏移量"""
         config = get_config_manager()
@@ -533,12 +520,21 @@ class TestConfigPanel(QWidget):
         logger.info(f"Z轴偏移量已更新: {value:.2f} mm")
 
     def _on_position_data_updated(self, position_data):
-        """位置数据更新"""
+        """位置数据更新（M~ 响应解析后的 (x, y, z) 三元组）"""
         if not self.isVisible():
             return
-        if position_data and len(position_data) >= 2:
-            x, z = position_data[0], position_data[1]
-            self.update_position(x, z)
+        if position_data and len(position_data) >= 3:
+            x, y, z = position_data[0], position_data[1], position_data[2]
+            self.update_position(x, y, z)
+
+    def update_position(self, x, y, z):
+        """更新位置显示（水平=X, 竖直=Y）"""
+        x_display = self.findChild(QLineEdit, "position_x")
+        y_display = self.findChild(QLineEdit, "position_y")
+        if x_display:
+            x_display.setText(str(x) if x is not None else "--")
+        if y_display:
+            y_display.setText(str(y) if y is not None else "--")
 
     def _on_zeroing(self):
         """零位校准"""
@@ -553,79 +549,46 @@ class TestConfigPanel(QWidget):
         if self.serial_command:
             self._sync_sensor_range_from_ui()
             logger.info(
-                "Offset flow: TestConfigPanel request received, "
+                "Offset flow: ConfigPanel request received, "
                 f"dialog_present={self._offset_dialog is not None}"
             )
             # 停止位置查询定时器，防止干扰偏置校准
             self.serial_command.disable_position_query_timer()
-            logger.info("Offset flow: TestConfigPanel disabled position query timer")
+            logger.info("Offset flow: ConfigPanel disabled position query timer")
 
             # 显示校准对话框
             self._offset_dialog = OffsetCalibrationDialog(self)
             self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
             self._offset_dialog.show()
-            logger.info("Offset flow: TestConfigPanel progress dialog shown")
+            logger.info("Offset flow: ConfigPanel progress dialog shown")
             self.serial_command.offset_calibration()
-            logger.info("Offset flow: TestConfigPanel command dispatched")
+            logger.info("Offset flow: ConfigPanel command dispatched")
         else:
             logger.warning("串口命令未初始化")
 
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
         logger.info(
-            "Offset flow: TestConfigPanel finished callback, "
+            "Offset flow: ConfigPanel finished callback, "
             f"success={success}, dialog_present={self._offset_dialog is not None}"
         )
         # 重新启动位置查询定时器
         if self.serial_command:
             self.serial_command.enable_position_query_timer()
-        logger.info("Offset flow: TestConfigPanel re-enabled position query timer")
+        logger.info("Offset flow: ConfigPanel re-enabled position query timer")
         if self._offset_dialog:
             config = get_config_manager()
             offset_value = getattr(config, 'offset', None)
-            logger.info(f"Offset flow: TestConfigPanel showing result, offset={offset_value}")
+            logger.info(f"Offset flow: ConfigPanel showing result, offset={offset_value}")
             self._offset_dialog.show_result(success, offset_value)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
 
     def _close_offset_dialog(self):
         """关闭偏置校准对话框"""
         if self._offset_dialog:
-            logger.info("Offset flow: TestConfigPanel offset dialog closed")
+            logger.info("Offset flow: ConfigPanel offset dialog closed")
             self._offset_dialog.close()
             self._offset_dialog = None
-
-    def _log_adhesion_button(self, action: str) -> None:
-        serial_manager = getattr(self.thread_manager, "serial_manager", None) if self.thread_manager else None
-        connected = serial_manager.get_connection_status() if serial_manager else False
-        write_queue_size = (
-            self.thread_manager.write_queue.qsize()
-            if self.thread_manager and getattr(self.thread_manager, "write_queue", None)
-            else None
-        )
-        state = getattr(getattr(self.serial_command, "_work_state", None), "value", None)
-        logger.info(
-            "Adhesion flow: UI button clicked, "
-            f"action={action}, connected={connected}, state={state}, "
-            f"write_queue_size={write_queue_size}, serial_command_present={self.serial_command is not None}"
-        )
-
-    def _on_press_z(self):
-        """Z轴下压贴靠"""
-        self._log_adhesion_button("press_z")
-        if self.serial_command:
-            accepted = self.serial_command.auto_press()
-            logger.info(f"Adhesion flow: UI command result, action=press_z, accepted={accepted}")
-        else:
-            logger.warning("串口命令未初始化")
-
-    def _on_left_x(self):
-        """X轴左贴靠"""
-        self._log_adhesion_button("left_x")
-        if self.serial_command:
-            accepted = self.serial_command.auto_press_left()
-            logger.info(f"Adhesion flow: UI command result, action=left_x, accepted={accepted}")
-        else:
-            logger.warning("串口命令未初始化")
 
     def _on_test_pos(self):
         """移动到测试位置"""
@@ -644,56 +607,45 @@ class TestConfigPanel(QWidget):
             logger.warning("串口命令未初始化")
 
     def _on_test_pos_save(self):
-        """保存当前测试位置"""
+        """保存当前测试位置（水平=X, 竖直=Y）"""
         try:
             x_display = self.findChild(QLineEdit, "position_x")
-            z_display = self.findChild(QLineEdit, "position_z")
-            if x_display and z_display:
+            y_display = self.findChild(QLineEdit, "position_y")
+            if x_display and y_display:
                 x = int(x_display.text())
-                z = int(z_display.text())
+                y = int(y_display.text())
                 config = get_config_manager()
                 config.test_x = x
-                config.test_z = z
-                logger.info(f"保存测试位置: X={x}, Z={z}")
+                config.test_z = y   # 竖直位置存入 test_z 键
+                logger.info(f"保存测试位置: 水平={x}, 竖直={y}")
 
-                # 更新测试位置显示
                 test_x_display = self.findChild(QLineEdit, "test_x_value")
-                test_z_display = self.findChild(QLineEdit, "test_z_value")
+                test_y_display = self.findChild(QLineEdit, "test_y_value")
                 if test_x_display:
                     test_x_display.setText(str(x))
-                if test_z_display:
-                    test_z_display.setText(str(z))
+                if test_y_display:
+                    test_y_display.setText(str(y))
         except ValueError:
             logger.warning("无效的位置数据，无法保存")
 
     def _on_suspend_save(self):
-        """保存当前挂起位置"""
+        """保存当前挂起位置（水平=X, 竖直=Y）"""
         try:
             x_display = self.findChild(QLineEdit, "position_x")
-            z_display = self.findChild(QLineEdit, "position_z")
-            if x_display and z_display:
+            y_display = self.findChild(QLineEdit, "position_y")
+            if x_display and y_display:
                 x = int(x_display.text())
-                z = int(z_display.text())
+                y = int(y_display.text())
                 config = get_config_manager()
                 config.suspend_x = x
-                config.suspend_z = z
-                logger.info(f"保存挂起位置: X={x}, Z={z}")
+                config.suspend_z = y   # 竖直位置存入 suspend_z 键
+                logger.info(f"保存挂起位置: 水平={x}, 竖直={y}")
 
-                # 更新挂起位置显示
                 suspend_x_display = self.findChild(QLineEdit, "suspend_x_value")
-                suspend_z_display = self.findChild(QLineEdit, "suspend_z_value")
+                suspend_y_display = self.findChild(QLineEdit, "suspend_y_value")
                 if suspend_x_display:
                     suspend_x_display.setText(str(x))
-                if suspend_z_display:
-                    suspend_z_display.setText(str(z))
+                if suspend_y_display:
+                    suspend_y_display.setText(str(y))
         except ValueError:
             logger.warning("无效的位置数据，无法保存")
-
-    def update_position(self, x, z):
-        """更新位置显示"""
-        x_display = self.findChild(QLineEdit, "position_x")
-        z_display = self.findChild(QLineEdit, "position_z")
-        if x_display:
-            x_display.setText(str(x))
-        if z_display:
-            z_display.setText(str(z))
