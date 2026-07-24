@@ -685,20 +685,25 @@ class MeasurePanel(QWidget):
         # 先清空数据队列
         self.data_process.clear_data_queue()
 
-        # 先启动设备旋转，让设备开始发数据
-        if self.serial_command and self.serial_manager.get_connection_status():
-            self.serial_command.claw_rotate()
-            logger.info("B~ 采集指令已发送")
-        else:
-            logger.error(
-                f"无法发送 B~: serial_command={self.serial_command is not None}, "
-                f"connected={self.serial_manager.get_connection_status() if self.serial_manager else False}"
-            )
+        # 延迟 300ms 确保 MODE 切换等指令已被固件处理完毕
+        QTimer.singleShot(300, self._send_rotate_command)
 
         # 再发送处理信号，启动数据处理流程
         logger.info("正在发送 signal_measure_data_process 信号...")
         self.data_process.signal_measure_data_process.emit()
         logger.info("signal_measure_data_process 信号已发送")
+
+    def _send_rotate_command(self):
+        """延迟发送 B~，确保 MODE 等配置指令已被固件处理。"""
+        if self.serial_command and self.serial_manager.get_connection_status():
+            self.data_process.clear_data_queue()  # B~ 发送前最后清一次队列
+            self.serial_command.claw_rotate()
+            logger.info("B~ 采集指令已发送（延迟 300ms）")
+        else:
+            logger.error(
+                f"无法发送 B~: serial_command={self.serial_command is not None}, "
+                f"connected={self.serial_manager.get_connection_status() if self.serial_manager else False}"
+            )
 
     def _on_test_cancel(self):
         """测试取消"""
