@@ -55,7 +55,7 @@ CLOSURE_MAX_DIRECTION_SPAN_POINTS = 1000
 CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO = 0.002  # 峰/谷端点判定容差，占整体幅值比例
 CLOSURE_COARSE_CANDIDATE_COUNT = 5000
 CLOSURE_FINE_RADIUS_POINTS = 120
-OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 3.0   # 首数据超时 3s（匹配固件 B~ 启动延迟）
+OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 5.0   # 首数据超时 5s
 OFFSET_NO_DATA_TIMEOUT_SECONDS = 2.0        # 数据中断 2s 判定结束
 OFFSET_QUEUE_POLL_SECONDS = 0.02
 OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
@@ -512,8 +512,8 @@ class DataProcess(QObject):
             total_bytes_read = 0
             data_started = False
 
-            # 两段超时均为 2s (4 × 0.5s)
-            max_empty_start = 4
+            # 两段超时：启动 5s (10×0.5s)，中断 2s (4×0.5s)
+            max_empty_start = 10
             max_empty_done = 4
             max_empty_count = max_empty_start
             logger.info(
