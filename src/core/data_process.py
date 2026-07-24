@@ -56,8 +56,8 @@ CLOSURE_MAX_DIRECTION_SPAN_POINTS = 1000
 CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO = 0.002  # 峰/谷端点判定容差，占整体幅值比例
 CLOSURE_COARSE_CANDIDATE_COUNT = 5000
 CLOSURE_FINE_RADIUS_POINTS = 120
-OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 1.5
-OFFSET_NO_DATA_TIMEOUT_SECONDS = 0.5
+OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 3.0   # 首数据超时 3s（匹配固件 B~ 启动延迟）
+OFFSET_NO_DATA_TIMEOUT_SECONDS = 2.0        # 数据中断 2s 判定结束
 OFFSET_QUEUE_POLL_SECONDS = 0.02
 OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
 # M~ 响应轴位置解析正则（兼容 pos= 和 pos = 两种格式）
@@ -697,7 +697,11 @@ class DataProcess(QObject):
                 if not got_data and elapsed >= OFFSET_INITIAL_DATA_TIMEOUT_SECONDS:
                     logger.warning(
                         "Offset flow: initial data timeout, "
-                        f"queue_size={self.data_queue.qsize()}, elapsed={elapsed:.2f}s"
+                        f"queue_size={self.data_queue.qsize()}, "
+                        f"elapsed={elapsed:.2f}s, "
+                        f"raw_bytes={raw_bytes_received}, "
+                        f"measurement_active={self._measurement_active}, "
+                        f"offset_calibrating={self._offset_calibrating}"
                     )
                     break
 
