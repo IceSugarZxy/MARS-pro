@@ -78,10 +78,6 @@ class ConfigPanel(QWidget):
                 def eventFilter(self, obj, event):
                     if event.type() == QEvent.Resize:
                         bg.setGeometry(0, 0, obj.width(), obj.height())
-                        # 保持正方形：宽度跟随高度
-                        h = obj.height()
-                        if obj.width() != h:
-                            obj.setFixedWidth(h)
                     return False
             pic.installEventFilter(_PicResizer(pic))
 
@@ -128,6 +124,14 @@ class ConfigPanel(QWidget):
             btn = self.findChild(QPushButton, name)
             if btn:
                 btn.setStyleSheet(style)
+
+        # 居中六向按钮：空行列设置拉伸
+        layout = pic.layout()
+        if layout:
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(2, 1)
+            layout.setRowStretch(0, 1)
+            layout.setRowStretch(2, 1)
 
     def set_thread_manager(self, tm):
         """设置线程管理器"""
