@@ -161,7 +161,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(icon_path))
 
     # 设置应用程序信息
-    app.setApplicationName("旋转体表磁测量分析系统")
+    app.setApplicationName("旋转体表磁测量分析系统 PRO")
     app.setApplicationVersion("2.0.0")
 
     # 设置应用程序样式
