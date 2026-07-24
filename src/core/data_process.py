@@ -496,9 +496,16 @@ class DataProcess(QObject):
             measure_list: List[float] = []
             no_data_count = 0
             total_bytes_read = 0
+            data_started = False
 
-            max_empty_count = 1
-            logger.info(f"Measurement loop started, max_empty_count={max_empty_count}, queue_size={self.data_queue.qsize()}")
+            # 两段超时：启动阶段宽容(5s)，收到首批数据后收紧(1s)
+            max_empty_start = 10   # 启动阶段最多等 10×0.5s = 5s
+            max_empty_done = 2     # 数据流中断 2×0.5s = 1s 判定结束
+            max_empty_count = max_empty_start
+            logger.info(
+                f"Measurement loop started, start_timeout={max_empty_start * 0.5}s, "
+                f"done_timeout={max_empty_done * 0.5}s, queue_size={self.data_queue.qsize()}"
+            )
             while True:
                 if self._stop_measure_processing:
                     logger.info("Measurement processing stopped by request")
@@ -525,6 +532,13 @@ class DataProcess(QObject):
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
                         total_bytes_read += len(data)
+                        if not data_started:
+                            data_started = True
+                            max_empty_count = max_empty_done
+                            logger.info(
+                                f"First data received ({len(data)} bytes), "
+                                f"switching timeout to {max_empty_done * 0.5}s"
+                            )
                         logger.debug(
                             f"Measure RX: +{len(data)} bytes (total {total_bytes_read}), "
                             f"buffer={len(temp_buffer)}, points={len(measure_list)}, "
@@ -537,7 +551,7 @@ class DataProcess(QObject):
                         logger.debug(
                             f"Measure empty poll #{no_data_count}/{max_empty_count}, "
                             f"points={len(measure_list)}, buffer={len(temp_buffer)}, "
-                            f"total_bytes={total_bytes_read}"
+                            f"total_bytes={total_bytes_read}, data_started={data_started}"
                         )
                         time.sleep(0.5)
 
@@ -549,6 +563,22 @@ class DataProcess(QObject):
                             break
 
                         if no_data_count >= max_empty_count:
+                            # 超时前最后捞一次队列，避免数据恰好在这 0.5s 内到达
+                            try:
+                                while True:
+                                    tail = self.data_queue.get_nowait()
+                                    temp_buffer.extend(tail)
+                                    total_bytes_read += len(tail)
+                                    logger.info(f"Measure final drain: +{len(tail)} bytes from queue")
+                            except queue.Empty:
+                                pass
+
+                            if len(temp_buffer) >= 2:
+                                # 捞到数据了，处理掉并继续等待
+                                logger.info(f"Measure recovered {len(temp_buffer)} bytes at timeout boundary, continuing")
+                                no_data_count = 0
+                                continue
+
                             logger.warning(
                                 f"Measurement receive timeout: {no_data_count} empty polls, "
                                 f"points={len(measure_list)}, buffer_remain={len(temp_buffer)}, "
