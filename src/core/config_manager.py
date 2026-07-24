@@ -13,8 +13,9 @@ from .path_utils import get_config_path
 
 logger = logging.getLogger(__name__)
 
-# X/Z轴统一标定：按脉冲-位移数据过原点线性拟合得到（2026-06-23 更新）。
-X_AXIS_PULSES_PER_MM = 6407.801478
+# X/Y 滑台标定：100000 脉冲 = 156.12 mm → 640.53 脉冲/mm（2026-07-24 更新）
+X_AXIS_PULSES_PER_MM = 640.53
+# Z 轴保留旧标定
 Z_AXIS_PULSES_PER_MM = 6407.801478
 
 
