@@ -131,6 +131,9 @@ class DataProcess(QObject):
         # 测量停止标志：用于中途停止测量时立即处理已采集的数据
         self._stop_measure_processing: bool = False
 
+        # 测量进行中标志：阻止文本解析器误消费二进制测量数据
+        self._measurement_active: bool = False
+
         # 样品信息：用于保存测量数据时写入文件
         self._sample_info: dict = {}
         self._wave_analyzer = WaveAnalysis()
@@ -310,6 +313,8 @@ class DataProcess(QObject):
         Returns:
             完成运动的轴名 ('X'/'Y'/'Z')，未检测到返回 None
         """
+        if self._measurement_active:
+            return None
         try:
             while True:
                 try:
@@ -346,6 +351,8 @@ class DataProcess(QObject):
             ("DONE", axis) 或 ("START", axis) 或 ("POSITION", axis, position_int)；
             未检测到返回 None
         """
+        if self._measurement_active:
+            return None
         try:
             while True:
                 try:
@@ -400,6 +407,10 @@ class DataProcess(QObject):
         """
         if self._offset_calibrating:
             self.signal_position_data_process_finished.emit((None, None, None))
+            return
+
+        # 测量期间禁止位置查询，避免抽干二进制测量数据
+        if self._measurement_active:
             return
 
         x_position: Optional[str] = None

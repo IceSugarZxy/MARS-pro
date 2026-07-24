@@ -628,10 +628,11 @@ class SerialCommand(QObject):
     # ========================================================================
 
     def position_query(self, source: str = "position_query") -> None:
-        if self._offset_calibrating or self._position_query_in_flight:
+        if self._offset_calibrating or self._is_measuring or self._position_query_in_flight:
             logger.debug(
                 "Position query skipped: "
                 f"source={source}, offset_calibrating={self._offset_calibrating}, "
+                f"is_measuring={self._is_measuring}, "
                 f"in_flight={self._position_query_in_flight}, state={self._work_state.value}"
             )
             return

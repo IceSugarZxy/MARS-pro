@@ -671,6 +671,8 @@ class MeasurePanel(QWidget):
             self.serial_command._is_measuring = True
             self.serial_command.disable_position_query_timer()
             logger.info("已停止位置查询定时器")
+        if self.data_process:
+            self.data_process._measurement_active = True
 
         # 显示进度对话框
         self.test_progress_dialog = TestProgressDialog(self)
@@ -926,6 +928,8 @@ class MeasurePanel(QWidget):
             self.serial_command._is_measuring = False
             self.serial_command.enable_position_query_timer()
             logger.info("已恢复位置查询定时器")
+        if self.data_process:
+            self.data_process._measurement_active = False
 
     def _apply_status_message(self, message, is_error=False):
         status_label = self.findChild(QLabel, "status_label")
