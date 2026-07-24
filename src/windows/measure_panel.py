@@ -673,6 +673,7 @@ class MeasurePanel(QWidget):
             logger.info("已停止位置查询定时器")
         if self.data_process:
             self.data_process._measurement_active = True
+            logger.info("测量模式已激活，文本解析器已屏蔽")
 
         # 显示进度对话框
         self.test_progress_dialog = TestProgressDialog(self)
@@ -930,6 +931,7 @@ class MeasurePanel(QWidget):
             logger.info("已恢复位置查询定时器")
         if self.data_process:
             self.data_process._measurement_active = False
+            logger.info("测量模式已关闭，文本解析器已恢复")
 
     def _apply_status_message(self, message, is_error=False):
         status_label = self.findChild(QLabel, "status_label")

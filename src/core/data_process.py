@@ -495,8 +495,10 @@ class DataProcess(QObject):
             temp_buffer = bytearray()
             measure_list: List[float] = []
             no_data_count = 0
+            total_bytes_read = 0
 
             max_empty_count = 1
+            logger.info(f"Measurement loop started, max_empty_count={max_empty_count}, queue_size={self.data_queue.qsize()}")
             while True:
                 if self._stop_measure_processing:
                     logger.info("Measurement processing stopped by request")
@@ -522,10 +524,21 @@ class DataProcess(QObject):
                     try:
                         data = self.data_queue.get_nowait()
                         temp_buffer.extend(data)
+                        total_bytes_read += len(data)
+                        logger.debug(
+                            f"Measure RX: +{len(data)} bytes (total {total_bytes_read}), "
+                            f"buffer={len(temp_buffer)}, points={len(measure_list)}, "
+                            f"queue_remain={self.data_queue.qsize()}"
+                        )
                         no_data_count = 0
                         continue
                     except queue.Empty:
                         no_data_count += 1
+                        logger.debug(
+                            f"Measure empty poll #{no_data_count}/{max_empty_count}, "
+                            f"points={len(measure_list)}, buffer={len(temp_buffer)}, "
+                            f"total_bytes={total_bytes_read}"
+                        )
                         time.sleep(0.5)
 
                         if self._stop_measure_processing:
@@ -537,7 +550,9 @@ class DataProcess(QObject):
 
                         if no_data_count >= max_empty_count:
                             logger.warning(
-                                f"Measurement receive timeout after {no_data_count} empty polls"
+                                f"Measurement receive timeout: {no_data_count} empty polls, "
+                                f"points={len(measure_list)}, buffer_remain={len(temp_buffer)}, "
+                                f"total_bytes={total_bytes_read}, queue_size={self.data_queue.qsize()}"
                             )
                             if measure_list:
                                 logger.info(f"Measurement data collection completed: {len(measure_list)} points")
