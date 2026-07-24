@@ -552,6 +552,11 @@ class SerialCommand(QObject):
 
     def slider_reset(self) -> None:
         self.send_data("I~", source="slider_reset")
+        # 归零后各轴回到限位原点，缓存置零
+        self._current_x = 0
+        self._current_y = 0
+        self._current_z = 0
+        logger.info("Slider reset: position cache cleared to (0, 0, 0)")
 
     # ========================================================================
     # 轴运动（绝对目标 → 内部自动换算相对步数）
