@@ -1544,12 +1544,17 @@
         </property>
         <item>
          <property name="text">
-          <string>高速测量</string>
+          <string>高分辨率 (MODE0)</string>
          </property>
         </item>
         <item>
          <property name="text">
-          <string>高分辨率测量</string>
+          <string>平衡 (MODE1)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>高速 (MODE2)</string>
          </property>
         </item>
        </widget>
