@@ -125,14 +125,6 @@ class ConfigPanel(QWidget):
             if btn:
                 btn.setStyleSheet(style)
 
-        # 居中六向按钮：空行列设置拉伸
-        layout = pic.layout()
-        if layout:
-            layout.setColumnStretch(0, 1)
-            layout.setColumnStretch(2, 1)
-            layout.setRowStretch(0, 1)
-            layout.setRowStretch(2, 1)
-
     def set_thread_manager(self, tm):
         """设置线程管理器"""
         self.thread_manager = tm
