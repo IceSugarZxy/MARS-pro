@@ -264,7 +264,7 @@ class SerialCommand(QObject):
         if step == "X":
             return "X", target_x
         if step == "Z":
-            return "Z", target_z
+            return "Y", target_z           # 竖直方向 → Y 轴
         if step == "X+":
             current_x = self._current_x if self._current_x is not None else target_x
             return "X", current_x + x_offset_pulse
@@ -272,11 +272,11 @@ class SerialCommand(QObject):
             current_x = self._current_x if self._current_x is not None else target_x
             return "X", current_x - x_offset_pulse
         if step == "Z+":
-            current_z = self._current_z if self._current_z is not None else target_z
-            return "Z", current_z + z_offset_pulse
+            current_y = self._current_y if self._current_y is not None else target_z
+            return "Y", current_y + z_offset_pulse  # 竖直偏移 → Y 轴
         if step == "Z-":
-            current_z = self._current_z if self._current_z is not None else target_z
-            return "Z", current_z - z_offset_pulse
+            current_y = self._current_y if self._current_y is not None else target_z
+            return "Y", current_y - z_offset_pulse  # 竖直偏移 → Y 轴
         return None
 
     def _finish_movement_sequence(self, success: bool) -> None:
