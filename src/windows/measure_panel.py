@@ -688,6 +688,12 @@ class MeasurePanel(QWidget):
         # 先启动设备旋转，让设备开始发数据
         if self.serial_command and self.serial_manager.get_connection_status():
             self.serial_command.claw_rotate()
+            logger.info("B~ 采集指令已发送")
+        else:
+            logger.error(
+                f"无法发送 B~: serial_command={self.serial_command is not None}, "
+                f"connected={self.serial_manager.get_connection_status() if self.serial_manager else False}"
+            )
 
         # 再发送处理信号，启动数据处理流程
         logger.info("正在发送 signal_measure_data_process 信号...")
