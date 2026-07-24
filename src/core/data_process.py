@@ -228,11 +228,24 @@ class DataProcess(QObject):
             analysis_results = None
             logger.info(f"垂直测量：原始 {len(measure_list)} 点 → 角度/磁场各 {len(angle_data)} 点")
         else:
-            # 旋转测量：全部原始数据绘制，不做闭合校准/波形分析
+            # 旋转测量：全部原始数据绘制；波形分析单独运行，失败则显示 --
             angle_data = list(range(len(measure_list)))
             mag_data = measure_list
-            analysis_results = None
             logger.info(f"旋转测量：原始 {len(measure_list)} 点 → 全部绘制")
+            try:
+                alg_angle, alg_mag = self._process_measure_algorithm(measure_list)
+                logger.info(
+                    f"旋转测量算法处理：{len(measure_list)} 原始点 → "
+                    f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
+                )
+                analysis_results = self._wave_analyzer.analyze_waveform(
+                    alg_angle,
+                    alg_mag,
+                    self.enable_concentricity_calibration,
+                )
+            except Exception as e:
+                logger.warning(f"波形分析失败: {e}")
+                analysis_results = None
 
         self.signal_measure_analysis_finished.emit(angle_data, mag_data, analysis_results)
 
