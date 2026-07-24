@@ -664,18 +664,18 @@ class SerialCommand(QObject):
         logger.debug("=" * 60)
         queue_before_clear = self.data_process.data_queue.qsize()
         logger.info(
-            "Offset flow: counter measurement start via B~, "
+            "Offset flow: counter measurement start, "
             f"queue_before_clear={queue_before_clear}, connected={self.serial_manager.get_connection_status()}"
         )
         self.data_process.clear_data_queue()
-        logger.debug(
-            "Offset flow: data queue cleared before B~ command, "
-            f"queue_after_clear={self.data_process.data_queue.qsize()}"
-        )
+        # 延迟 300ms 确保固件准备就绪，与测量对齐
+        QTimer.singleShot(300, self._send_offset_b_command)
+
+    def _send_offset_b_command(self) -> None:
+        self.data_process.clear_data_queue()  # 发送前最后清一次队列
         result = self.send_data("B~", source="offset_collection")
         logger.info(
-            "Offset flow: B~ collection command queued, result={result}, "
-            f"process_delay_ms=200"
+            "Offset flow: B~ collection command queued, result={result}"
         )
         if not result:
             logger.warning("Offset flow: B~ command was not queued successfully")
