@@ -26,6 +26,7 @@ logger = get_logger("SerialCommand")
 MOTION_DONE_TIMEOUT_MS = 5000
 MOTION_DONE_POLL_INTERVAL_MS = 80
 POSITION_WAIT_TIMEOUT_MS = 5000
+MAX_RELATIVE_STEPS = 500000  # 固件单次最大相对步数
 
 
 class WorkState(Enum):
@@ -562,38 +563,40 @@ class SerialCommand(QObject):
     # 轴运动（绝对目标 → 内部自动换算相对步数）
     # ========================================================================
 
-    def move_x(self, position: int) -> Optional[int]:
-        """X轴移动到绝对位置（内部换算为带符号相对步数）。"""
-        if self._current_x is None:
-            logger.warning("move_x: current X position unknown")
+    def _capped_delta(self, current: Optional[int], target: int, axis: str) -> Optional[tuple]:
+        """计算裁剪后的 delta 和原始符号（超过 MAX_RELATIVE_STEPS 则裁剪）。"""
+        if current is None:
+            logger.warning(f"move_{axis.lower()}: current {axis} position unknown")
             return None
-        delta = position - self._current_x
+        delta = target - current
+        raw = abs(delta)
+        if raw > MAX_RELATIVE_STEPS:
+            logger.warning(f"move_{axis.lower()}: delta {raw} > {MAX_RELATIVE_STEPS}, capped")
+            raw = MAX_RELATIVE_STEPS
         sign = "+" if delta >= 0 else "-"
-        if not self.send_data(f"X{sign}{abs(delta)}~", source="move_x"):
-            return None
-        return delta
+        capped = raw if delta >= 0 else -raw
+        return sign, raw, capped
+
+    def move_x(self, position: int) -> Optional[int]:
+        r = self._capped_delta(self._current_x, position, "X")
+        if r is None: return None
+        sign, raw, capped = r
+        if not self.send_data(f"X{sign}{raw}~", source="move_x"): return None
+        return capped
 
     def move_y(self, position: int) -> Optional[int]:
-        """Y轴移动到绝对位置（内部换算为带符号相对步数）。"""
-        if self._current_y is None:
-            logger.warning("move_y: current Y position unknown")
-            return None
-        delta = position - self._current_y
-        sign = "+" if delta >= 0 else "-"
-        if not self.send_data(f"Y{sign}{abs(delta)}~", source="move_y"):
-            return None
-        return delta
+        r = self._capped_delta(self._current_y, position, "Y")
+        if r is None: return None
+        sign, raw, capped = r
+        if not self.send_data(f"Y{sign}{raw}~", source="move_y"): return None
+        return capped
 
     def move_z(self, position: int) -> Optional[int]:
-        """Z轴移动到绝对位置（内部换算为带符号相对步数）。"""
-        if self._current_z is None:
-            logger.warning("move_z: current Z position unknown")
-            return None
-        delta = position - self._current_z
-        sign = "+" if delta >= 0 else "-"
-        if not self.send_data(f"Z{sign}{abs(delta)}~", source="move_z"):
-            return None
-        return delta
+        r = self._capped_delta(self._current_z, position, "Z")
+        if r is None: return None
+        sign, raw, capped = r
+        if not self.send_data(f"Z{sign}{raw}~", source="move_z"): return None
+        return capped
 
     # ========================================================================
     # 测试位置 / 挂起位置 移动方案
