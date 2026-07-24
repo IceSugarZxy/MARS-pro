@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1715</width>
-    <height>918</height>
+    <height>843</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -17,7 +17,7 @@
    <item row="1" column="0">
     <widget class="QGroupBox" name="config_group">
      <property name="sizePolicy">
-      <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
@@ -313,14 +313,14 @@
       <item row="4" column="3">
        <widget class="QComboBox" name="combo_test_speed">
         <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
           <horstretch>0</horstretch>
           <verstretch>0</verstretch>
          </sizepolicy>
         </property>
         <property name="minimumSize">
          <size>
-          <width>130</width>
+          <width>160</width>
           <height>25</height>
          </size>
         </property>
