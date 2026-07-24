@@ -780,10 +780,21 @@ class SerialCommand(QObject):
         self.counter_measurer()
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
+        # 失败时自动重试（固件偶发 B~ 不响应，最多重试 2 次）
+        if not success:
+            retry = getattr(self, '_offset_retry_count', 0) + 1
+            if retry <= 2:
+                self._offset_retry_count = retry
+                logger.warning(f"Offset flow: retry {retry}/2 due to no data")
+                self.data_process.clear_data_queue()
+                self.counter_measurer()
+                return
+            self._offset_retry_count = 0
+
         if self._offset_calibrating:
             self._offset_calibrating = False
             self.data_process._offset_calibrating = False
-            self.data_process._measurement_active = False  # 恢复文本解析器
+            self.data_process._measurement_active = False
             logger.info(f"Offset flow: calibration finished, success={success}")
             stop_result = self.send_data("S~", source="offset_finish_stop")
             logger.info(
