@@ -555,6 +555,25 @@ class SerialCommand(QObject):
     # 旋转采集 / 停止
     # ========================================================================
 
+    # test_speed / MODE 一一对应（三档）
+    # 0=高分辨率 MODE0 (1200Hz, 131072 samples/rev)
+    # 1=平衡 MODE1   (2000Hz, 65536 samples/rev)
+    # 2=高速 MODE2   (3500Hz, 32768 samples/rev)
+    TEST_SPEED_TO_MODE = {0: 0, 1: 1, 2: 2}
+
+    def set_mode(self, mode: int) -> None:
+        """切换采集模式 (MODE0~MODE2~)。"""
+        if mode not in (0, 1, 2):
+            logger.warning(f"Invalid mode: {mode}, must be 0/1/2")
+            return
+        self.send_data(f"MODE{mode}~", source="set_mode")
+
+    def set_mode_from_test_speed(self, test_speed: int) -> None:
+        """根据 test_speed 配置索引发送对应 MODE 命令。"""
+        mode = self.TEST_SPEED_TO_MODE.get(test_speed)
+        if mode is not None:
+            self.set_mode(mode)
+
     def claw_rotate(self) -> None:
         """开始一圈旋转采集 (B~ 无参数)。"""
         self.send_data("B~", source="claw_rotate")

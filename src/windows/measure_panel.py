@@ -299,10 +299,12 @@ class MeasurePanel(QWidget):
         self._update_scheme_display(index)
 
     def _on_test_speed_changed(self, index):
-        """测试速度改变"""
+        """测试速度改变 → 同步发送 MODE 指令到固件"""
         config = get_config_manager()
         config.test_speed = index
         logger.info(f"测试速度已更改: {index}")
+        if self.serial_command and self.serial_manager and self.serial_manager.get_connection_status():
+            self.serial_command.set_mode_from_test_speed(index)
 
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
@@ -517,6 +519,10 @@ class MeasurePanel(QWidget):
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.enable_position_query_timer()
+
+            # 串口连接后同步当前采集模式
+            if self.serial_command:
+                self.serial_command.set_mode_from_test_speed(get_config_manager().test_speed)
 
             logger.info(f"Serial connected: {com_port}")
         else:
