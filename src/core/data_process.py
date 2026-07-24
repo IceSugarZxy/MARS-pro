@@ -337,13 +337,14 @@ class DataProcess(QObject):
 
     def check_motion_feedback(self) -> Optional[tuple]:
         """
-        检测运动反馈消息（START 确认 + DONE 完成）
+        检测运动反馈消息（START 确认 + DONE 完成 + 位置数据）
 
         固件收到运动指令后立即返回 "X START 1000" 表示已启动，
         运动结束后返回 "X DONE"。
+        M~ 查询返回 "X: IDLE pos=466101 ..." 格式的位置行。
 
         Returns:
-            (axis: str, event: str) 其中 event 为 "DONE" 或 "START"；
+            ("DONE", axis) 或 ("START", axis) 或 ("POSITION", axis, position_int)；
             未检测到返回 None
         """
         try:
@@ -354,18 +355,25 @@ class DataProcess(QObject):
                     break
 
                 text = data.decode('utf-8', errors='ignore')
-                # 优先检测 DONE（同一行可能同时有 START 和 DONE）
+                # 1) 优先检测 DONE
                 match = MOTION_DONE_PATTERN.search(text)
                 if match:
                     axis = match.group(1)
                     logger.info(f"Motion feedback: {axis} DONE")
-                    return (axis, "DONE")
-                # 检测 START 确认
+                    return ("DONE", axis)
+                # 2) 检测 START 确认
                 match = MOTION_START_PATTERN.search(text)
                 if match:
                     axis = match.group(1)
                     logger.info(f"Motion feedback: {axis} START (motor running)")
-                    return (axis, "START")
+                    return ("START", axis)
+                # 3) 检测 M~ 位置数据行
+                match = M_POS_PATTERN.search(text)
+                if match:
+                    axis = match.group(1)
+                    pos = int(match.group(2))
+                    logger.debug(f"Motion feedback: {axis} position={pos}")
+                    return ("POSITION", axis, pos)
                 # 其他回信记录 DEBUG
                 text_stripped = text.strip()
                 if text_stripped and logger.isEnabledFor(10):
