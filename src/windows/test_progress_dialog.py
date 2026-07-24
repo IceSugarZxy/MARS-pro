@@ -44,7 +44,10 @@ class TestProgressDialog(QDialog):
             self.dragging = False
 
     def set_progress(self, value, text=""):
-        """设置状态文本"""
+        """设置进度条和状态文本"""
+        if value >= 0:
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(value)
         if text:
             self.label_status.setText(text)
 
@@ -53,10 +56,14 @@ class TestProgressDialog(QDialog):
         if success:
             self.label_title.setText("测量完成")
             self.label_title.setStyleSheet("color: #27ae60; font-size: 18px; font-weight: bold;")
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(100)
             self.label_status.setText(message or "数据采集完成")
         else:
             self.label_title.setText("测量失败")
             self.label_title.setStyleSheet("color: #e74c3c; font-size: 18px; font-weight: bold;")
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(0)
             self.label_status.setText(message or "未能获取有效数据")
 
         self.btn_cancel.setText("确定")

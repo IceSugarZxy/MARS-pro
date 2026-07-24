@@ -43,6 +43,7 @@ logger = get_logger('DataProcess')
 # ============================================================================
 # v1.x 固件：B~ 采集 = 精确 1 圈 (360°)，数据量取决于 MODE
 FULL_ROTATION_ANGLE = 360.0
+MODE_EXPECTED_POINTS = {0: 131072, 1: 65536, 2: 32768}
 # 闭合校准：v1.x 数据已是精确一圈，首尾即为闭合边界
 CLOSURE_ROUGH_START_FRACTION = 0.0
 CLOSURE_ROUGH_END_FRACTION = 1.0
@@ -538,6 +539,10 @@ class DataProcess(QObject):
                         measure_list.append(mag_value)
 
                     del temp_buffer[0:batch_size * 2]
+
+                    # 进度更新（已知各 MODE 数据量）
+                    expected = MODE_EXPECTED_POINTS.get(self.config.test_speed, len(measure_list))
+                    self.signal_measure_data_progress.emit(len(measure_list), expected)
 
                 if len(temp_buffer) < 2:
                     try:

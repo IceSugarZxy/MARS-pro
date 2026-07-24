@@ -679,6 +679,7 @@ class MeasurePanel(QWidget):
         self.test_progress_dialog = TestProgressDialog(self)
         self.test_progress_dialog.btn_cancel.clicked.connect(self._on_test_cancel)
         self.test_progress_dialog.show()
+        self.test_progress_dialog.set_progress(0, "正在采集数据...")
 
         self._update_status("正在测量...")
 
@@ -1054,6 +1055,12 @@ class MeasurePanel(QWidget):
                 Qt.QueuedConnection,
             )
 
+        if hasattr(self.data_process, "signal_measure_data_progress"):
+            self.data_process.signal_measure_data_progress.connect(
+                self._on_measure_progress,
+                Qt.QueuedConnection,
+            )
+
         if hasattr(tm.data_process, "signal_position_data_process_finished"):
             tm.data_process.signal_position_data_process_finished.connect(
                 self._on_position_data_updated,
@@ -1087,6 +1094,12 @@ class MeasurePanel(QWidget):
                 enable_concentricity,
             )
         self._on_measure_data_processed(angle_data, mag_data, analysis_results)
+
+    def _on_measure_progress(self, current, total):
+        """更新测量进度条"""
+        if self.test_progress_dialog:
+            pct = int(current / total * 100) if total > 0 else 0
+            self.test_progress_dialog.set_progress(min(pct, 99), "正在采集数据...")
 
     @pyqtSlot(object, object, object)
     def _on_measure_data_processed(self, angle_data, mag_data, analysis_results):
