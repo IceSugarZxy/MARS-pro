@@ -38,7 +38,7 @@
              </font>
             </property>
             <property name="text">
-             <string>MARS</string>
+             <string>MARS PRO</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>

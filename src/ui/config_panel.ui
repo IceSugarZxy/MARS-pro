@@ -903,6 +903,25 @@
       <property name="spacing">
        <number>10</number>
       </property>
+      <item row="0" column="5">
+       <widget class="QPushButton" name="btnSuccess">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>120</width>
+          <height>30</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>连接</string>
+        </property>
+       </widget>
+      </item>
       <item row="0" column="0">
        <widget class="QLabel" name="label_port">
         <property name="sizePolicy">
@@ -931,7 +950,7 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="4" rowspan="2">
+      <item row="0" column="6" rowspan="2">
        <spacer name="serial_horizontal_spacer">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
@@ -944,7 +963,29 @@
         </property>
        </spacer>
       </item>
-      <item row="1" column="0" colspan="2">
+      <item row="0" column="1" colspan="3">
+       <widget class="QComboBox" name="port_combo">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>120</width>
+          <height>30</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>16777215</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="4">
        <widget class="QLabel" name="serial_status_label">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
@@ -969,47 +1010,6 @@
         </property>
         <property name="alignment">
          <set>Qt::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1" colspan="3">
-       <widget class="QComboBox" name="port_combo">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>30</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>16777215</width>
-          <height>16777215</height>
-         </size>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="3">
-       <widget class="QPushButton" name="btnSuccess">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>30</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>连接</string>
         </property>
        </widget>
       </item>
