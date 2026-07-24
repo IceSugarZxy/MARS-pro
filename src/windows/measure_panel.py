@@ -1116,14 +1116,10 @@ class MeasurePanel(QWidget):
 
             if self.is_testing:
                 self._end_test()
-            if self.test_progress_dialog:
-                QTimer.singleShot(1500, self._close_test_progress_dialog)
         else:
             self._update_status("警告：处理后的数据为空", is_error=True)
             if self.is_testing:
                 self._end_test()
-            if self.test_progress_dialog:
-                QTimer.singleShot(1500, self._close_test_progress_dialog)
 
     def _close_test_progress_dialog(self):
         """Close test progress dialog."""

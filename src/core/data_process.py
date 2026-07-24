@@ -215,7 +215,7 @@ class DataProcess(QObject):
         if not measure_list:
             return
 
-        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点（原始 16-bit 采样）")
         self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
         if self.save_raw_data_enabled:
             self.save_raw_measure_data(measure_list)
@@ -226,8 +226,13 @@ class DataProcess(QObject):
             angle_data = list(range(len(measure_list)))
             mag_data = measure_list
             analysis_results = None
+            logger.info(f"垂直测量：原始 {len(measure_list)} 点 → 角度/磁场各 {len(angle_data)} 点")
         else:
             angle_data, mag_data = self._process_measure_algorithm(measure_list)
+            logger.info(
+                f"旋转测量算法处理：原始 {len(measure_list)} 点 → "
+                f"角度 {len(angle_data)} 点, 磁场 {len(mag_data)} 点"
+            )
             analysis_results = self._wave_analyzer.analyze_waveform(
                 angle_data,
                 mag_data,
