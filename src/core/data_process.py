@@ -317,11 +317,16 @@ class DataProcess(QObject):
                     break
 
                 text = data.decode('utf-8', errors='ignore')
+                # 先检测 DONE
                 match = MOTION_DONE_PATTERN.search(text)
                 if match:
                     axis = match.group(1)
                     logger.info(f"Motion done detected: {axis} DONE")
                     return axis
+                # 检测可能出现的错误/状态回信
+                text_stripped = text.strip()
+                if text_stripped and logger.isEnabledFor(10):
+                    logger.debug(f"Serial RX (motion poll): {text_stripped}")
 
         except Exception as e:
             logger.error(f"检测运动完成消息失败: {e}")

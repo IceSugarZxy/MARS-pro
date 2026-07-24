@@ -235,9 +235,16 @@ class SerialCommand(QObject):
             return
 
         axis = wait_state["axis"]
+        delta = wait_state.get("delta")
+        target = wait_state.get("target")
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
-        logger.warning(f"{axis} DONE wait timeout ({POSITION_WAIT_TIMEOUT_MS}ms), no DONE received")
+        logger.warning(
+            f"{axis} DONE wait timeout ({POSITION_WAIT_TIMEOUT_MS}ms), no DONE received. "
+            f"delta={delta}, target={target}, "
+            f"cached_pos=({self._current_x},{self._current_y},{self._current_z}), "
+            f"queue_size={self.data_process.data_queue.qsize()}"
+        )
         wait_state["callback"](False)
 
     def _get_current(self, axis: str) -> Optional[int]:
@@ -328,7 +335,9 @@ class SerialCommand(QObject):
 
         axis, target_position = target
         logger.info(
-            f"{self._movement_sequence['name']} step {step_index + 1}/{len(steps)}: {step} -> {target_position}"
+            f"{self._movement_sequence['name']} step {step_index + 1}/{len(steps)}: "
+            f"step={step} axis={axis} target={target_position}, "
+            f"cached_pos=({self._current_x},{self._current_y},{self._current_z})"
         )
 
         if axis == "X":
@@ -343,6 +352,10 @@ class SerialCommand(QObject):
             return
 
         if delta is None:
+            logger.error(
+                f"{self._movement_sequence['name']}: move_{axis.lower()}({target_position}) returned None, "
+                f"sequence aborted"
+            )
             self._finish_movement_sequence(False)
             return
 
@@ -566,15 +579,18 @@ class SerialCommand(QObject):
     def _capped_delta(self, current: Optional[int], target: int, axis: str) -> Optional[tuple]:
         """计算裁剪后的 delta 和原始符号（超过 MAX_RELATIVE_STEPS 则裁剪）。"""
         if current is None:
-            logger.warning(f"move_{axis.lower()}: current {axis} position unknown")
+            logger.warning(f"move_{axis.lower()}: current {axis} position unknown, target={target}")
             return None
         delta = target - current
         raw = abs(delta)
+        capped_flag = False
         if raw > MAX_RELATIVE_STEPS:
-            logger.warning(f"move_{axis.lower()}: delta {raw} > {MAX_RELATIVE_STEPS}, capped")
+            logger.warning(f"move_{axis.lower()}: delta {raw} > {MAX_RELATIVE_STEPS}, capped; current={current}, target={target}")
             raw = MAX_RELATIVE_STEPS
+            capped_flag = True
         sign = "+" if delta >= 0 else "-"
         capped = raw if delta >= 0 else -raw
+        logger.info(f"move_{axis.lower()}: current={current} target={target} delta={capped:+d} (raw={abs(delta)}{', CAPPED' if capped_flag else ''}) cmd={axis}{sign}{raw}~")
         return sign, raw, capped
 
     def move_x(self, position: int) -> Optional[int]:
