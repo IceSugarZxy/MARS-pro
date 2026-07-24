@@ -498,9 +498,9 @@ class DataProcess(QObject):
             total_bytes_read = 0
             data_started = False
 
-            # 两段超时：启动阶段宽容(5s)，收到首批数据后收紧(1s)
-            max_empty_start = 10   # 启动阶段最多等 10×0.5s = 5s
-            max_empty_done = 2     # 数据流中断 2×0.5s = 1s 判定结束
+            # 两段超时均为 2s (4 × 0.5s)
+            max_empty_start = 4
+            max_empty_done = 4
             max_empty_count = max_empty_start
             logger.info(
                 f"Measurement loop started, start_timeout={max_empty_start * 0.5}s, "
