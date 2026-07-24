@@ -10,7 +10,8 @@ from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButt
                               QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
                               QMessageBox)
-from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot, QEvent, QPoint
+from PyQt5.QtGui import QPainter, QColor, QIcon, QPixmap, QPolygon, QTransform
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
@@ -99,6 +100,9 @@ class MeasurePanel(QWidget):
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
         self._analysis_detail_dialogs = []
+
+        self._init_stage_picture()
+        self._connect_stage_buttons()
 
         # 初始化波形分析器
         self.wave_analyzer = WaveAnalysis()
@@ -561,11 +565,6 @@ class MeasurePanel(QWidget):
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._offset_button_clicked)
         self.findChild(QPushButton, "btn_test_position").clicked.connect(self._test_position_button_clicked)
         self.findChild(QPushButton, "btn_suspend_position").clicked.connect(self._suspend_position_button_clicked)
-        # 方向控制按钮
-        self.findChild(QPushButton, "btn_up").clicked.connect(self._up_button_clicked)
-        self.findChild(QPushButton, "btn_down").clicked.connect(self._down_button_clicked)
-        self.findChild(QPushButton, "btn_left").clicked.connect(self._left_button_clicked)
-        self.findChild(QPushButton, "btn_right").clicked.connect(self._right_button_clicked)
 
         # 底部按钮
         self.findChild(QPushButton, "btn_save").clicked.connect(self._save_data_button_clicked)
@@ -766,66 +765,98 @@ class MeasurePanel(QWidget):
         if self.serial_command:
             self.serial_command.suspend_position()
 
+    # ========================================================================
+    # 台控按钮（QPainter 三角图标 + 按住移动/松手停止）
+    # ========================================================================
 
-
-    def _up_button_clicked(self):
-        """上"""
-        logger.info("上按钮被点击")
-        distance = self._get_distance_value()
-        if distance is None:
+    def _init_stage_picture(self):
+        """widget_control 背景图 + 6 个方向键用 QPainter 三角 Icon。"""
+        pic = self.findChild(QWidget, "widget_control")
+        if pic is None:
             return
-        self._update_status("向上移动...", auto_recover=True)
-        self.serial_command.set_move_task('Z', -1, distance)
-        self.serial_command.position_query(source="manual_move_up")
 
-    def _down_button_clicked(self):
-        """下"""
-        logger.info("下按钮被点击")
-        distance = self._get_distance_value()
-        if distance is None:
-            return
-        self._update_status("向下移动...", auto_recover=True)
-        self.serial_command.set_move_task('Z', 1, distance)
-        self.serial_command.position_query(source="manual_move_down")
+        img_path = os.path.join(os.path.dirname(__file__), "..", "ui", "stage.png")
+        if os.path.exists(img_path):
+            bg = QLabel(pic)
+            bg.setScaledContents(True)
+            bg.setPixmap(QPixmap(img_path))
+            bg.lower()
+            bg.setGeometry(0, 0, pic.width(), pic.height())
+            class _PicResizer(QObject):
+                def eventFilter(self, obj, event):
+                    if event.type() == QEvent.Resize:
+                        bg.setGeometry(0, 0, obj.width(), obj.height())
+                    return False
+            pic.installEventFilter(_PicResizer(pic))
 
-    def _left_button_clicked(self):
-        """左"""
-        logger.info("左按钮被点击")
-        distance = self._get_distance_value()
-        if distance is None:
-            return
-        self._update_status("向左移动...", auto_recover=True)
-        self.serial_command.set_move_task('X', 1, distance)
-        self.serial_command.position_query(source="manual_move_left")
+        size = 24
+        color = QColor("#2c3e50")
 
-    def _right_button_clicked(self):
-        """右"""
-        logger.info("右按钮被点击")
-        distance = self._get_distance_value()
-        if distance is None:
-            return
-        self._update_status("向右移动...", auto_recover=True)
-        self.serial_command.set_move_task('X', -1, distance)
-        self.serial_command.position_query(source="manual_move_right")
+        base = QPixmap(size, size)
+        base.fill(Qt.transparent)
+        p = QPainter(base)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(color)
+        p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygon([QPoint(12, 3), QPoint(3, 18), QPoint(21, 18)]))
+        p.end()
 
-    def _get_distance_value(self):
-        """获取距离值"""
-        distance_edit = self.findChild(QLineEdit, "distance_edit")
-        if not distance_edit:
-            return None
-        try:
-            text = distance_edit.text().strip()
-            if not text:
-                self._update_status("错误：距离值为空", is_error=True)
-                return None
-            value = float(text)
-            if value <= 0:
-                self._update_status("错误：距离值必须大于0", is_error=True)
-                return None
-            return value
-        except ValueError:
-            self._update_status("错误：距离值格式错误", is_error=True)
-            return None
+        def _icon(angle):
+            t = QTransform().rotate(angle)
+            return QIcon(base.transformed(t, Qt.SmoothTransformation))
+
+        icons = {
+            "stage_btn_up":      QIcon(base),
+            "stage_btn_down":    _icon(180),
+            "stage_btn_left":    _icon(-90),
+            "stage_btn_right":   _icon(90),
+            "stage_btn_forward": _icon(45),
+            "stage_btn_back":    _icon(-135),
+        }
+
+        for name, icon in icons.items():
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setIcon(icon)
+                btn.setIconSize(btn.size())
+                btn.setText("")
+
+        style = (
+            "QPushButton { border:2px solid #2c3e50; border-radius:6px; background:#fff; }"
+            "QPushButton:hover { background:#3498db; }"
+        )
+        for name in icons:
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setStyleSheet(style)
+
+    def _connect_stage_buttons(self):
+        """台控：按发送 ±25000 步，松停止。"""
+        moves = {
+            "stage_btn_up":      "Y-25000",
+            "stage_btn_down":    "Y+25000",
+            "stage_btn_left":    "X-25000",
+            "stage_btn_right":   "X+25000",
+            "stage_btn_forward": "Z-25000",
+            "stage_btn_back":    "Z+25000",
+        }
+        for name, cmd in moves.items():
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.pressed.connect(self._make_send(cmd))
+                btn.released.connect(self._make_stop())
+
+    def _make_send(self, cmd):
+        def handler():
+            if self.serial_command:
+                self.serial_command.send_data(f"{cmd}~", source="stage_press")
+        return handler
+
+    def _make_stop(self):
+        def handler():
+            if self.serial_command:
+                self.serial_command.send_data("O~", source="stage_release")
+        return handler
 
     def _reset_sample_inputs(self):
         """重置样品信息"""

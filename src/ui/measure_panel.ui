@@ -1882,8 +1882,11 @@
          </sizepolicy>
         </property>
         <layout class="QGridLayout" name="gridLayout_4">
+         <property name="spacing">
+          <number>6</number>
+         </property>
          <item row="0" column="1">
-          <widget class="QPushButton" name="btn_up">
+          <widget class="QPushButton" name="stage_btn_up">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
              <horstretch>0</horstretch>
@@ -1902,13 +1905,44 @@
              <height>50</height>
             </size>
            </property>
+           <property name="toolTip">
+            <string>Y+ 向上移动</string>
+           </property>
            <property name="text">
-            <string>↑</string>
+            <string>▲</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="2">
+          <widget class="QPushButton" name="stage_btn_forward">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>50</width>
+             <height>50</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>50</width>
+             <height>50</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Z- 向后移动</string>
+           </property>
+           <property name="text">
+            <string>◥</string>
            </property>
           </widget>
          </item>
          <item row="1" column="0">
-          <widget class="QPushButton" name="btn_left">
+          <widget class="QPushButton" name="stage_btn_left">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
              <horstretch>0</horstretch>
@@ -1927,41 +1961,16 @@
              <height>50</height>
             </size>
            </property>
-           <property name="text">
-            <string>←</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QLineEdit" name="distance_edit">
-           <property name="sizePolicy">
-            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-             <horstretch>0</horstretch>
-             <verstretch>0</verstretch>
-            </sizepolicy>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>50</width>
-             <height>50</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>50</width>
-             <height>50</height>
-            </size>
+           <property name="toolTip">
+            <string>X- 向左移动</string>
            </property>
            <property name="text">
-            <string>0.25</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
+            <string>◀</string>
            </property>
           </widget>
          </item>
          <item row="1" column="2">
-          <widget class="QPushButton" name="btn_right">
+          <widget class="QPushButton" name="stage_btn_right">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
              <horstretch>0</horstretch>
@@ -1980,13 +1989,44 @@
              <height>50</height>
             </size>
            </property>
+           <property name="toolTip">
+            <string>X+ 向右移动</string>
+           </property>
            <property name="text">
-            <string>→</string>
+            <string>▶</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QPushButton" name="stage_btn_back">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>50</width>
+             <height>50</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>50</width>
+             <height>50</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Z+ 向前移动</string>
+           </property>
+           <property name="text">
+            <string>◢</string>
            </property>
           </widget>
          </item>
          <item row="2" column="1">
-          <widget class="QPushButton" name="btn_down">
+          <widget class="QPushButton" name="stage_btn_down">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
              <horstretch>0</horstretch>
@@ -2005,8 +2045,11 @@
              <height>50</height>
             </size>
            </property>
+           <property name="toolTip">
+            <string>Y- 向下移动</string>
+           </property>
            <property name="text">
-            <string>↓</string>
+            <string>▼</string>
            </property>
           </widget>
          </item>
