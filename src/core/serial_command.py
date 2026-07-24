@@ -775,6 +775,7 @@ class SerialCommand(QObject):
         )
         self._offset_calibrating = True
         self.data_process._offset_calibrating = True
+        self.data_process._measurement_active = True   # 偏置校准同样产生二进制流，屏蔽文本解析器
         logger.debug("Offset flow: calibration flags enabled")
         self.counter_measurer()
 
@@ -782,6 +783,7 @@ class SerialCommand(QObject):
         if self._offset_calibrating:
             self._offset_calibrating = False
             self.data_process._offset_calibrating = False
+            self.data_process._measurement_active = False  # 恢复文本解析器
             logger.info(f"Offset flow: calibration finished, success={success}")
             stop_result = self.send_data("S~", source="offset_finish_stop")
             logger.info(
