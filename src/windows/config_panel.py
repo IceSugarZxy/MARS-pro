@@ -78,6 +78,10 @@ class ConfigPanel(QWidget):
                 def eventFilter(self, obj, event):
                     if event.type() == QEvent.Resize:
                         bg.setGeometry(0, 0, obj.width(), obj.height())
+                        # 保持正方形：宽度跟随高度
+                        h = obj.height()
+                        if obj.width() != h:
+                            obj.setFixedWidth(h)
                     return False
             pic.installEventFilter(_PicResizer(pic))
 
