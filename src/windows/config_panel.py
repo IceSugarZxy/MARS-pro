@@ -5,7 +5,7 @@
 
 import os
 import serial.tools.list_ports
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QObject, QEvent
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QComboBox, QToolButton, QDoubleSpinBox, QPlainTextEdit
 from PyQt5 import uic
@@ -55,7 +55,75 @@ class ConfigPanel(QWidget):
         # 偏置校准对话框
         self._offset_dialog = None
 
+        # 加载台控示意图
+        self._init_stage_picture()
+
         logger.info("ConfigPanel 初始化完成")
+
+    def _init_stage_picture(self):
+        """widget_picture 背景图 + 所有箭头按钮用 QPainter 三角 Icon。"""
+        pic = self.findChild(QWidget, "widget_picture")
+        if pic is None:
+            return
+
+        img_path = os.path.join(os.path.dirname(__file__), "..", "ui", "stage.png")
+        if os.path.exists(img_path):
+            from PyQt5.QtGui import QPixmap
+            bg = QLabel(pic)
+            bg.setScaledContents(True)
+            bg.setPixmap(QPixmap(img_path))
+            bg.lower()
+            bg.setGeometry(0, 0, pic.width(), pic.height())
+            class _PicResizer(QObject):
+                def eventFilter(self, obj, event):
+                    if event.type() == QEvent.Resize:
+                        bg.setGeometry(0, 0, obj.width(), obj.height())
+                    return False
+            pic.installEventFilter(_PicResizer(pic))
+
+        from PyQt5.QtGui import QPainter, QColor, QIcon, QPixmap, QPolygon, QTransform
+        from PyQt5.QtCore import QPoint
+        size = 32
+        color = QColor("#2c3e50")
+
+        # 只画朝上三角，其余方向旋转
+        base = QPixmap(size, size)
+        base.fill(Qt.transparent)
+        p = QPainter(base)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(color)
+        p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygon([QPoint(16,4), QPoint(4,24), QPoint(28,24)]))
+        p.end()
+
+        def _icon(angle):
+            t = QTransform().rotate(angle)
+            return QIcon(base.transformed(t, Qt.SmoothTransformation))
+
+        icons = {
+            "stage_btn_up":      QIcon(base),          # 0°
+            "stage_btn_down":    _icon(180),            # 180°
+            "stage_btn_left":    _icon(-90),            # ←
+            "stage_btn_right":   _icon(90),             # →
+            "stage_btn_forward": _icon(45),             # ↗
+            "stage_btn_back":    _icon(-135),            # ↙
+        }
+
+        for name, icon in icons.items():
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setIcon(icon)
+                btn.setIconSize(btn.size())
+                btn.setText("")
+
+        style = (
+            "QPushButton { border:2px solid #2c3e50; border-radius:6px; background:#fff; }"
+            "QPushButton:hover { background:#3498db; }"
+        )
+        for name in icons:
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setStyleSheet(style)
 
     def set_thread_manager(self, tm):
         """设置线程管理器"""
@@ -479,6 +547,36 @@ class ConfigPanel(QWidget):
         # 方案编辑
         self.findChild(QToolButton, "btn_test_edit_scheme").clicked.connect(self._on_edit_test_scheme)
         self.findChild(QToolButton, "btn_suspend_edit_scheme").clicked.connect(self._on_suspend_edit_scheme)
+        # 台控方向按钮
+        self._connect_stage_buttons()
+
+    def _connect_stage_buttons(self):
+        """台控：按发送 ±25000 步，松停止。"""
+        moves = {
+            "stage_btn_up":    "Y-25000",
+            "stage_btn_down":  "Y+25000",
+            "stage_btn_left":  "X-25000",
+            "stage_btn_right": "X+25000",
+            "stage_btn_forward": "Z-25000",
+            "stage_btn_back":    "Z+25000",
+        }
+        for name, cmd in moves.items():
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.pressed.connect(self._make_send(cmd))
+                btn.released.connect(self._make_stop())
+
+    def _make_send(self, cmd):
+        def handler():
+            if self.serial_command:
+                self.serial_command.send_data(f"{cmd}~", source="stage_press")
+        return handler
+
+    def _make_stop(self):
+        def handler():
+            if self.serial_command:
+                self.serial_command.send_data("O~", source="stage_release")
+        return handler
 
     def _init_quick_action_settings(self):
         """初始化快捷操作配置"""
