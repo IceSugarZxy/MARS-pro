@@ -54,18 +54,23 @@ class OffsetCalibrationDialog(QDialog):
     def start_progress(self, duration=OFFSET_PROGRESS_SECONDS):
         """开始偏置校准"""
         self.CALIBRATION_DURATION = duration
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
         self.label_status.setText("偏置校准进行中...")
 
     def _update_progress_by_time(self):
-        """保持状态文本"""
+        """基于时间估算进度"""
         pass
 
     def stop_progress(self):
-        """停止状态"""
+        """停止进度"""
         pass
 
     def set_progress(self, value, text=""):
-        """设置状态文本"""
+        """设置进度条和状态文本"""
+        if value >= 0:
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(value)
         if text:
             self.label_status.setText(text)
 
@@ -74,6 +79,8 @@ class OffsetCalibrationDialog(QDialog):
         if success:
             self.label_title.setText("偏置校准完成")
             self.label_title.setStyleSheet("color: #27ae60; font-size: 18px; font-weight: bold;")
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(100)
             if offset_value is not None:
                 self.label_status.setText(f"偏置值: {offset_value:.4f} mT")
             else:
@@ -81,6 +88,8 @@ class OffsetCalibrationDialog(QDialog):
         else:
             self.label_title.setText("偏置校准失败")
             self.label_title.setStyleSheet("color: #e74c3c; font-size: 18px; font-weight: bold;")
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(0)
             self.label_status.setText("未能获取有效偏置数据")
 
         self.btn_cancel.setText("确定")

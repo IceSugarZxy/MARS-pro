@@ -90,6 +90,7 @@ class DataProcess(QObject):
     signal_measure_data_process_finished = pyqtSignal(object, object)   # 测量数据处理完成信号
     signal_measure_data_progress = pyqtSignal(int, int)                 # 测量数据处理进度信号 (当前数据量, 总数据量)
     signal_motion_done = pyqtSignal(str)                                # 运动完成信号，参数为轴 ('X'/'Y'/'Z')
+    signal_offset_data_progress = pyqtSignal(int, int)                  # 偏置数据处理进度 (当前, 总量)
     # ========================================================================
     # 类属性（转换系数）
     # ========================================================================
@@ -677,6 +678,10 @@ class DataProcess(QObject):
                     mag_value = round(hex_value * mag_conversion_factor, 4)
                     offset_list.append(mag_value)
                     del temp_buffer[0:2]
+
+                # 进度更新
+                expected = MODE_EXPECTED_POINTS.get(self.config.test_speed, len(offset_list))
+                self.signal_offset_data_progress.emit(len(offset_list), expected)
 
                 current_time = time.time()
                 if current_time - last_collect_log_time >= OFFSET_COLLECT_LOG_INTERVAL_SECONDS:

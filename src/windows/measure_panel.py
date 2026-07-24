@@ -750,6 +750,12 @@ class MeasurePanel(QWidget):
             self.serial_command.offset_calibration()
             logger.info("Offset flow: MeasurePanel command dispatched")
 
+    def _on_offset_progress(self, current, total):
+        """更新偏置校准进度条"""
+        if self._offset_dialog:
+            pct = int(current / total * 100) if total > 0 else 0
+            self._offset_dialog.set_progress(min(pct, 99), "偏置校准进行中...")
+
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
         logger.info(
@@ -1070,6 +1076,12 @@ class MeasurePanel(QWidget):
         if hasattr(tm.data_process, "signal_offset_data_process_finished"):
             tm.data_process.signal_offset_data_process_finished.connect(
                 self._on_offset_calibration_finished,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(tm.data_process, "signal_offset_data_progress"):
+            tm.data_process.signal_offset_data_progress.connect(
+                self._on_offset_progress,
                 Qt.QueuedConnection,
             )
 
