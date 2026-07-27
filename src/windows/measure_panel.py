@@ -1119,6 +1119,16 @@ class MeasurePanel(QWidget):
         self.angle_data = angle_data or []
         self.mag_data = mag_data or []
 
+        # 无数据时自动重试 1 次
+        if not self.angle_data and self.is_testing:
+            retry = getattr(self, '_measure_retry_count', 0) + 1
+            if retry <= 1:
+                self._measure_retry_count = retry
+                logger.warning(f"测量无数据，自动重试 {retry}/1")
+                QTimer.singleShot(300, self._send_rotate_command)
+                return
+            self._measure_retry_count = 0
+
         if self.test_progress_dialog:
             if self.angle_data and self.mag_data:
                 self.test_progress_dialog.show_result(True, f"采集完成，共 {len(self.angle_data)} 个数据点")

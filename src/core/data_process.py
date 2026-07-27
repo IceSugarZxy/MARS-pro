@@ -521,8 +521,8 @@ class DataProcess(QObject):
             total_bytes_read = 0
             data_started = False
 
-            # 两段超时：启动 5s (10×0.5s)，中断 2s (4×0.5s)
-            max_empty_start = 10
+            # 两段超时：启动 3s (6×0.5s)，中断 2s (4×0.5s)
+            max_empty_start = 6
             max_empty_done = 4
             max_empty_count = max_empty_start
             logger.info(
