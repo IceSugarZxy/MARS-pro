@@ -28,7 +28,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import get_logger
-from .config_manager import SENSOR_RANGE_160MT_INDEX, SENSOR_RANGE_OPTIONS, get_config_manager
+from .config_manager import SENSOR_RANGE_160MT_INDEX, SENSOR_RANGE_600MT_INDEX, SENSOR_RANGE_OPTIONS, get_config_manager
 from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
