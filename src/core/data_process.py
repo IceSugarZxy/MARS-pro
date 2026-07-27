@@ -499,7 +499,12 @@ class DataProcess(QObject):
         """Collect raw measurement bytes and emit processed results."""
         logger.info("========== Start processing measurement data ==========")
         logger.info(f"Measurement type: {self.measure_type}")
-        mag_conversion_factor = self._get_mag_conversion_factor()
+        try:
+            mag_conversion_factor = self._get_mag_conversion_factor()
+        except Exception as e:
+            logger.error(f"获取转换系数失败: {e}", exc_info=True)
+            self.signal_measure_analysis_finished.emit([], [], None)
+            return
         self.mag_offset = self.config.offset or self._get_default_offset()
         logger.info(
             f"Current offset: {self.mag_offset}, "
