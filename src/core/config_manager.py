@@ -32,9 +32,10 @@ ACTION_TEXT = {
     'Z-': 'Z负偏移',
 }
 
-SENSOR_RANGE_OPTIONS = ("80mT量程", "160mT量程")
+SENSOR_RANGE_OPTIONS = ("80mT量程", "160mT量程", "600mT量程")
 SENSOR_RANGE_80MT_INDEX = 0
 SENSOR_RANGE_160MT_INDEX = 1
+SENSOR_RANGE_600MT_INDEX = 2
 
 # 动作类型到显示文本的映射
 def action_to_text(action: str) -> str:

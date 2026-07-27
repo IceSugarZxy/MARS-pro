@@ -152,12 +152,16 @@ class DataProcess(QObject):
     def _get_mag_conversion_factor(self) -> float:
         """获取磁场转换系数（mT / ADC原始值）。
 
-        80mT量程：放大器增益较高，传感器灵敏度 0.1 mT/mV。
-        160mT量程：放大器增益减半，灵敏度降低一倍，系数需 ×2 补偿。
+        80mT量程：放大器增益较高，系数 = 基准值。
+        160mT量程：增益减半，系数 ×2。
+        600mT量程：增益为 80mT 的 80/600，系数 ×7.5。
         """
         factor = self.MAG_CONVERSION_FACTOR
-        if self._get_sensor_range_index() == SENSOR_RANGE_160MT_INDEX:
+        idx = self._get_sensor_range_index()
+        if idx == SENSOR_RANGE_160MT_INDEX:
             return factor * 2.0
+        if idx == SENSOR_RANGE_600MT_INDEX:
+            return factor * 7.5
         return factor
 
     def _get_default_offset(self) -> float:
