@@ -104,20 +104,13 @@ class SerialManager(QObject):
         self.signal_data_received.emit(payload)
 
     def _log_rx_payload(self, payload: bytes) -> None:
-        if b"Light ADC:" in payload:
-            self._light_adc_rx_bytes += len(payload)
-            self._light_adc_rx_chunks += 1
-            now = time.time()
-            if now - self._last_light_adc_rx_log_time >= SERIAL_LIGHT_ADC_RX_SUMMARY_SECONDS:
-                logger.debug(
-                    "Serial RX Light ADC summary: "
-                    f"chunks={self._light_adc_rx_chunks}, bytes={self._light_adc_rx_bytes}, "
-                    f"queue_size={self.data_queue.qsize()}"
-                )
-                self._light_adc_rx_bytes = 0
-                self._light_adc_rx_chunks = 0
-                self._last_light_adc_rx_log_time = now
-            return
+        """记录串口接收数据：开头内容（hex）+ 长度"""
+        preview_len = min(16, len(payload))
+        hex_preview = payload[:preview_len].hex(' ')
+        ascii_preview = ''.join(chr(b) if 32 <= b < 127 else '.' for b in payload[:preview_len])
+        logger.debug(
+            f"Serial RX: {len(payload)}B | {hex_preview} | {ascii_preview}"
+        )
 
         if not self._is_mostly_printable(payload):
             self._binary_rx_bytes += len(payload)
