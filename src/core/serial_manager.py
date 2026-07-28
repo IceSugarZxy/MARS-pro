@@ -236,7 +236,7 @@ class SerialManager(QObject):
                 # 启动连接状态检查定时器
                 if not self.connection_check_timer:
                     self.connection_check_timer = QTimer()
-                    self.connection_check_timer.setInterval(1000)  # 每秒检查一次
+                    self.connection_check_timer.setInterval(500)  # 每 0.5s 检查
                     self.connection_check_timer.timeout.connect(self._check_connection_status)
                 self.connection_check_timer.start()
 
@@ -438,6 +438,12 @@ class SerialManager(QObject):
         if error == QSerialPort.NoError:
             return
 
+        # 硬件移除直接触发断连处理
+        if error in (QSerialPort.ResourceError,):
+            logger.warning(f"Serial resource error (device removed)")
+            self._handle_connection_lost()
+            return
+
         meta = self._active_tx_meta or {}
         error_code = error
         try:
@@ -509,13 +515,12 @@ class SerialManager(QObject):
                 self._handle_connection_lost()
                 return
 
-            # 尝试读取数据来检测连接是否还在
-            # 如果bytesAvailable可以读取且没有异常，说明连接正常
-            try:
-                self.serial_port.bytesAvailable()
-            except RuntimeError:
-                logger.warning("串口连接已断开（RuntimeError）")
+            # 检查端口错误状态（物理断开时 errorString 非空或 error 非 NoError）
+            if self.serial_port.error() != QSerialPort.NoError:
+                err_str = self.serial_port.errorString()
+                logger.warning(f"串口错误: {err_str}")
                 self._handle_connection_lost()
+                return
 
         except Exception as e:
             logger.warning(f"检查连接状态异常: {e}")
