@@ -186,11 +186,11 @@ class DataProcess(QObject):
         return self._sample_info.copy()
 
     def _emit_measurement_results(self, measure_list: List[float]) -> None:
-        """Persist measurement data and emit processed results."""
-        if not measure_list:
-            return
-
-        logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点（原始 16-bit 采样）")
+        """Persist measurement data and emit processed results (即使为空也 emit，用于触发重试)。"""
+        if measure_list:
+            logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
+        else:
+            logger.warning("测量数据为空，emit 空结果触发重试判断")
         self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
         if self.save_raw_data_enabled:
             self.save_raw_measure_data(measure_list)
@@ -205,23 +205,23 @@ class DataProcess(QObject):
         else:
             # 旋转测量：全部原始数据映射到 0-360°，波形分析单独运行
             n = len(measure_list)
-            angle_data = [i * 360.0 / n for i in range(n)] if n > 0 else []
-            mag_data = measure_list
-            logger.info(f"旋转测量：原始 {n} 点 → 0-360° 全部绘制")
-            try:
-                alg_angle, alg_mag = self._process_measure_algorithm(measure_list)
-                logger.info(
-                    f"旋转测量算法处理：{len(measure_list)} 原始点 → "
-                    f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
-                )
-                analysis_results = self._wave_analyzer.analyze_waveform(
-                    alg_angle,
-                    alg_mag,
-                    self.enable_concentricity_calibration,
-                )
-            except Exception as e:
-                logger.warning(f"波形分析失败: {e}")
-                analysis_results = None
+            if n > 0:
+                angle_data = [i * 360.0 / n for i in range(n)]
+                mag_data = measure_list
+                logger.info(f"旋转测量：原始 {n} 点 → 0-360° 全部绘制")
+                try:
+                    alg_angle, alg_mag = self._process_measure_algorithm(measure_list)
+                    logger.info(
+                        f"旋转测量算法处理：{n} 原始点 → "
+                        f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
+                    )
+                    analysis_results = self._wave_analyzer.analyze_waveform(
+                        alg_angle, alg_mag, self.enable_concentricity_calibration)
+                except Exception as e:
+                    logger.warning(f"波形分析失败: {e}")
+                    analysis_results = None
+            else:
+                angle_data, mag_data, analysis_results = [], [], None
 
         self.signal_measure_analysis_finished.emit(angle_data, mag_data, analysis_results)
 
