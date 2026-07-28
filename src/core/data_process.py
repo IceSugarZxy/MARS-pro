@@ -495,9 +495,7 @@ class DataProcess(QObject):
             while True:
                 if self._stop_measure_processing:
                     logger.info("Measurement processing stopped by request")
-                    if measure_list:
-                        logger.info(f"Measurement data collection completed: {len(measure_list)} points")
-                        self._emit_measurement_results(measure_list)
+                    self._emit_measurement_results(measure_list)
                     break
 
                 if len(temp_buffer) >= 2:
@@ -545,9 +543,7 @@ class DataProcess(QObject):
 
                         if self._stop_measure_processing:
                             logger.info("Measurement processing stopped by request while waiting for data")
-                            if measure_list:
-                                logger.info(f"Measurement data collection completed: {len(measure_list)} points")
-                                self._emit_measurement_results(measure_list)
+                            self._emit_measurement_results(measure_list)
                             break
 
                         if no_data_count >= max_empty_count:
@@ -572,11 +568,7 @@ class DataProcess(QObject):
                                 f"points={len(measure_list)}, buffer_remain={len(temp_buffer)}, "
                                 f"total_bytes={total_bytes_read}, queue_size={self.data_queue.qsize()}"
                             )
-                            if measure_list:
-                                logger.info(f"Measurement data collection completed: {len(measure_list)} points")
-                                self._emit_measurement_results(measure_list)
-                            else:
-                                logger.warning("No valid measurement data received")
+                            self._emit_measurement_results(measure_list)
                             break
 
         except Exception as e:
