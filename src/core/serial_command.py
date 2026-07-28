@@ -543,6 +543,7 @@ class SerialCommand(QObject):
         if self.position_query_timer and self.position_query_timer.isActive():
             self.position_query_timer.stop()
         self.position_query_enabled = False
+        self._position_query_in_flight = False  # 取消飞行中的 M~ 查询
 
     def _position_query_from_timer(self) -> None:
         if self._offset_calibrating or self._is_measuring:

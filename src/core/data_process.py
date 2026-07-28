@@ -424,6 +424,17 @@ class DataProcess(QObject):
                     break
 
             if got_data:
+                # 检测是否为二进制数据（非 ASCII 字节占比 > 30% → 丢弃缓冲区）
+                buf = DataProcess._position_buffer
+                non_ascii = sum(1 for b in buf if b > 127)
+                if len(buf) > 100 and non_ascii > len(buf) * 0.3:
+                    logger.warning(
+                        f"M~ buffer discarded ({len(buf)} bytes, {non_ascii} non-ASCII) — binary data detected"
+                    )
+                    DataProcess._position_buffer.clear()
+                    self.signal_position_data_process_finished.emit((None, None, None))
+                    return
+
                 try:
                     text = DataProcess._position_buffer.decode('utf-8', errors='ignore')
                     matches = M_POS_PATTERN.findall(text)

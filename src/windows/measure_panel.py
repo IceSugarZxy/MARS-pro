@@ -666,14 +666,16 @@ class MeasurePanel(QWidget):
         # 重置测量停止标志
         self.data_process._stop_measure_processing = False
 
-        # 设置测量状态标志，停止位置查询，避免干扰测量数据
+        # ① 先设标志，阻止 M~ 查询和文本解析
         if self.serial_command:
             self.serial_command._is_measuring = True
             self.serial_command.disable_position_query_timer()
-            logger.info("已停止位置查询定时器")
         if self.data_process:
             self.data_process._measurement_active = True
             logger.info("测量模式已激活，文本解析器已屏蔽")
+
+        # ② 再清队列，确保之前可能泄露的数据被丢弃
+        self.data_process.clear_data_queue()
 
         # 显示进度对话框
         self.test_progress_dialog = TestProgressDialog(self)
@@ -682,9 +684,6 @@ class MeasurePanel(QWidget):
         self.test_progress_dialog.set_progress(0, "正在采集数据...")
 
         self._update_status("正在测量...")
-
-        # 先清空数据队列
-        self.data_process.clear_data_queue()
 
         # 延迟 300ms 确保 MODE 切换等指令已被固件处理完毕
         QTimer.singleShot(300, self._send_rotate_command)
