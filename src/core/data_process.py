@@ -471,6 +471,10 @@ class DataProcess(QObject):
         logger.info("========== Start processing measurement data ==========")
         logger.info(f"Measurement type: {self.measure_type}")
 
+        # 加载偏置值（ADC 单位）用于零场校正
+        self.mag_offset = self.config.offset or 0
+        logger.info(f"Offset: {self.mag_offset:.1f} ADC")
+
         self._stop_measure_processing = False
 
         try:
@@ -503,7 +507,7 @@ class DataProcess(QObject):
                     for i in range(batch_size):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
-                        measure_list.append(self._decode_s16(byte1, byte2))
+                        measure_list.append(self._decode_s16(byte1, byte2) - self.mag_offset)
 
                     del temp_buffer[0:batch_size * 2]
 
