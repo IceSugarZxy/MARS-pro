@@ -557,14 +557,14 @@ class ConfigPanel(QWidget):
         self._connect_stage_buttons()
 
     def _connect_stage_buttons(self):
-        """台控：按发送 ±25000 步，松停止。"""
+        """台控：按发送 ±500000 步，松停止。"""
         moves = {
-            "stage_btn_up":    "Y-25000",
-            "stage_btn_down":  "Y+25000",
-            "stage_btn_left":  "X-25000",
-            "stage_btn_right": "X+25000",
-            "stage_btn_forward": "Z-25000",
-            "stage_btn_back":    "Z+25000",
+            "stage_btn_up":    "Y-500000",
+            "stage_btn_down":  "Y+500000",
+            "stage_btn_left":  "X-500000",
+            "stage_btn_right": "X+500000",
+            "stage_btn_forward": "Z-500000",
+            "stage_btn_back":    "Z+500000",
         }
         for name, cmd in moves.items():
             btn = self.findChild(QPushButton, name)
