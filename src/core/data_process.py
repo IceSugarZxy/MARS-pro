@@ -28,7 +28,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import get_logger
-from .config_manager import SENSOR_RANGE_160MT_INDEX, SENSOR_RANGE_600MT_INDEX, SENSOR_RANGE_OPTIONS, get_config_manager
+from .config_manager import get_config_manager
 from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
@@ -92,12 +92,8 @@ class DataProcess(QObject):
     signal_motion_done = pyqtSignal(str)                                # 运动完成信号，参数为轴 ('X'/'Y'/'Z')
     signal_offset_data_progress = pyqtSignal(int, int)                  # 偏置数据处理进度 (当前, 总量)
     # ========================================================================
-    # 类属性（转换系数）
+    # 类属性
     # ========================================================================
-    # 磁场转换系数：将原始HEX值转换为物理单位（mT）
-    # 计算公式：5.12V * 1000mV / (2^16 - 1) / 1.25V * 0.1mT/V
-    MAG_CONVERSION_FACTOR = 5.12 * 1000 / (65536 - 1) / 1.25 * 0.1
-    DEFAULT_OFFSET = 2500 / 1.25 * 0.1  # 默认偏置值
     SAMPLING_FREQ = 27000  # 采样频率 (Hz)
     CUTOFF_RATIO = 70  # 截止频率与采样频率的比值
 
@@ -140,36 +136,11 @@ class DataProcess(QObject):
 
         logger.info(f"初始化数据处理模块完成：√")
 
-    def _get_sensor_range_index(self) -> int:
-        index = self.config.sensor_range
-        if 0 <= index < len(SENSOR_RANGE_OPTIONS):
-            return index
-        return 0
-
-    def _get_sensor_range_text(self) -> str:
-        return SENSOR_RANGE_OPTIONS[self._get_sensor_range_index()]
-
-    def _get_mag_conversion_factor(self) -> float:
-        """获取磁场转换系数（mT / ADC原始值）。
-
-        80mT量程：放大器增益较高，系数 = 基准值。
-        160mT量程：增益减半，系数 ×2。
-        600mT量程：增益为 80mT 的 80/600，系数 ×7.5。
-        """
-        factor = self.MAG_CONVERSION_FACTOR
-        idx = self._get_sensor_range_index()
-        if idx == SENSOR_RANGE_160MT_INDEX:
-            return factor * 2.0
-        if idx == SENSOR_RANGE_600MT_INDEX:
-            return factor * 7.5
-        return factor
-
-    def _get_default_offset(self) -> float:
-        """获取默认偏置值（mT）。
-
-        偏置来自传感器零场输出，不随放大器增益变化而改变。
-        """
-        return self.DEFAULT_OFFSET
+    @staticmethod
+    def _decode_s16(high: int, low: int) -> int:
+        """大端序有符号 16-bit 解码：两个字节 → int16 ADC 原始值。"""
+        raw = (high << 8) | low
+        return raw - 0x10000 if raw >= 0x8000 else raw
 
     def set_sample_info(self, sample_info: dict) -> None:
         """
@@ -499,18 +470,6 @@ class DataProcess(QObject):
         """Collect raw measurement bytes and emit processed results."""
         logger.info("========== Start processing measurement data ==========")
         logger.info(f"Measurement type: {self.measure_type}")
-        try:
-            mag_conversion_factor = self._get_mag_conversion_factor()
-        except Exception as e:
-            logger.error(f"获取转换系数失败: {e}", exc_info=True)
-            self.signal_measure_analysis_finished.emit([], [], None)
-            return
-        self.mag_offset = self.config.offset or self._get_default_offset()
-        logger.info(
-            f"Current offset: {self.mag_offset}, "
-            f"sensor_range={self._get_sensor_range_text()}, "
-            f"conversion_factor={mag_conversion_factor}"
-        )
 
         self._stop_measure_processing = False
 
@@ -544,9 +503,7 @@ class DataProcess(QObject):
                     for i in range(batch_size):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
-                        hex_value = (byte1 << 8) | byte2
-                        mag_value = round(hex_value * mag_conversion_factor - self.mag_offset, 4)
-                        measure_list.append(mag_value)
+                        measure_list.append(self._decode_s16(byte1, byte2))
 
                     del temp_buffer[0:batch_size * 2]
 
@@ -641,11 +598,10 @@ class DataProcess(QObject):
             保存的偏置值会在每次程序启动时加载，用于校正测量数据
         """
         try:
-            mag_conversion_factor = self._get_mag_conversion_factor()
             start_time = time.time()
             last_data_time = start_time
             temp_buffer = bytearray()
-            offset_list: List[float] = []
+            offset_list: List[int] = []
             got_data = False
             raw_bytes_received = 0
             queue_items_received = 0
@@ -654,8 +610,6 @@ class DataProcess(QObject):
             logger.info(
                 "Offset flow: processor started, "
                 f"initial_queue_size={self.data_queue.qsize()}, "
-                f"sensor_range={self._get_sensor_range_text()}, "
-                f"conversion_factor={mag_conversion_factor}, "
                 f"max_process={OFFSET_MAX_PROCESS_SECONDS:.1f}s, "
                 f"no_data_timeout={OFFSET_NO_DATA_TIMEOUT_SECONDS:.1f}s"
             )
@@ -678,14 +632,11 @@ class DataProcess(QObject):
                 except queue.Empty:
                     pass
 
-                # 2. 处理缓冲区中的所有数据
+                # 2. 处理缓冲区：有符号 16-bit 大端序解码
                 while len(temp_buffer) >= 2:
                     byte1 = temp_buffer[0]
                     byte2 = temp_buffer[1]
-                    hex_value = (byte1 << 8) | byte2
-                    # 转换为磁场强度（mT），注意：偏置数据不使用偏置校正
-                    mag_value = round(hex_value * mag_conversion_factor, 4)
-                    offset_list.append(mag_value)
+                    offset_list.append(self._decode_s16(byte1, byte2))
                     del temp_buffer[0:2]
 
                 # 进度更新
@@ -773,7 +724,7 @@ class DataProcess(QObject):
                 self.config.offset = self.mag_offset
                 logger.info(
                     "Offset flow: calibration succeeded, "
-                    f"offset={self.mag_offset:.4f} mT, "
+                    f"offset={self.mag_offset:.1f} ADC, "
                     f"config_file={getattr(self.config, 'config_file', '')}"
                 )
                 logger.info("Offset flow: emitting finished signal, success=True")
