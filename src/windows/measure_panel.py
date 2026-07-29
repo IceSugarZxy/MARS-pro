@@ -693,7 +693,10 @@ class MeasurePanel(QWidget):
         if self.serial_command and self.serial_manager.get_connection_status():
             self.data_process.clear_data_queue()  # B~ 发送前最后清一次队列
             self.serial_command.claw_rotate()
-            logger.info("B~ 采集指令已发送（延迟 300ms）")
+            # 同步清空写队列，确保 B~ 在测量循环启动前已实际发送到串口
+            # 否则 Qt 事件循环被 time.sleep(0.5) 阻塞时，5ms 写定时器无法触发
+            flushed = self.serial_manager.flush_write_queue()
+            logger.info(f"B~ 采集指令已发送（延迟 300ms），同步刷新 {flushed} 条指令")
         else:
             logger.error(
                 f"无法发送 B~: serial_command={self.serial_command is not None}, "

@@ -294,6 +294,69 @@ class SerialManager(QObject):
         self.signal_connection_status_changed.emit(False)
         logger.info("串口已断开")
 
+    def flush_write_queue(self) -> int:
+        """
+        同步清空写队列，将所有待发指令立即写入串口。
+        返回写入的指令数。用于测量等关键操作前确保 B~ 等指令已实际发出。
+        """
+        if not self.is_connected or not self.serial_port:
+            return 0
+
+        flushed = 0
+        try:
+            while True:
+                # 处理滞留的分片写入
+                if self._pending_write_item is not None:
+                    item = self._pending_write_item
+                    self._pending_write_item = None
+                else:
+                    try:
+                        item = self.write_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                if isinstance(item, dict):
+                    data = self._coerce_payload(item.get("data", b""))
+                    tx_id = item.get("id")
+                    source = item.get("source", "")
+                else:
+                    data = self._coerce_payload(item)
+                    tx_id = None
+                    source = "raw_queue"
+
+                if not data:
+                    continue
+
+                written = self.serial_port.write(data)
+                self.serial_port.flush()
+                self._last_write_time = time.monotonic()
+                flushed += 1
+                logger.info(
+                    f"Serial TX flush: id={tx_id}, source={source}, "
+                    f"bytes={len(data)}, written={written}, "
+                    f"preview={self._payload_preview(data)}"
+                )
+
+                if written < len(data):
+                    remaining = data[int(written):]
+                    self._pending_write_item = {
+                        "id": tx_id,
+                        "source": f"{source}:partial",
+                        "data": remaining,
+                        "enqueued_at": time.time(),
+                    }
+                    logger.warning(
+                        f"Serial TX flush partial: written={written}/{len(data)}, "
+                        f"remaining={len(remaining)}"
+                    )
+
+        except Exception as e:
+            logger.error(f"flush_write_queue 失败: {e}")
+
+        if flushed > 0:
+            logger.info(f"Write queue flushed: {flushed} commands sent synchronously")
+        return flushed
+
     def _process_write(self) -> None:
         """处理写队列（发信及时）"""
         if not self.is_connected or not self.serial_port:

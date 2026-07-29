@@ -689,6 +689,10 @@ class SerialCommand(QObject):
         )
         if not result:
             logger.warning("Offset flow: B~ command was not queued successfully")
+        # 同步清空写队列，确保 B~ 在数据处理启动前已实际发送
+        if self.serial_manager:
+            flushed = self.serial_manager.flush_write_queue()
+            logger.info(f"Offset flow: write queue flushed ({flushed} commands)")
         QTimer.singleShot(200, self._emit_offset_process_signal)
 
     def _emit_offset_process_signal(self) -> None:
