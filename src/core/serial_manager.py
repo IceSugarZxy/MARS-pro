@@ -104,11 +104,14 @@ class SerialManager(QObject):
         self.signal_data_received.emit(payload)
 
     def _log_rx_payload(self, payload: bytes) -> None:
-        """记录串口接收数据：开头内容（hex）+ 长度"""
+        """记录串口接收数据：开头内容（hex）+ 长度（INFO 级别，便于排查丢数据）"""
         preview_len = min(16, len(payload))
         hex_preview = payload[:preview_len].hex(' ')
         ascii_preview = ''.join(chr(b) if 32 <= b < 127 else '.' for b in payload[:preview_len])
-        logger.debug(
+        # 首字节 > 127 为二进制数据，用 INFO；ASCII 文本用 DEBUG
+        is_binary = len(payload) > 0 and payload[0] > 127
+        log_fn = logger.info if is_binary else logger.debug
+        log_fn(
             f"Serial RX: {len(payload)}B | {hex_preview} | {ascii_preview}"
         )
 
