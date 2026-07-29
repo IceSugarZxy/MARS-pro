@@ -756,6 +756,11 @@ class MeasurePanel(QWidget):
 
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
+        # 重试期间不更新 UI
+        if self.serial_command and getattr(self.serial_command, '_offset_retrying', False):
+            logger.info("Offset flow: MeasurePanel skipping UI update during retry")
+            return
+
         logger.info(
             "Offset flow: MeasurePanel finished callback, "
             f"success={success}, dialog_present={self._offset_dialog is not None}"

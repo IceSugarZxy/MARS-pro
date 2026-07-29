@@ -786,13 +786,17 @@ class SerialCommand(QObject):
             retry = getattr(self, '_offset_retry_count', 0) + 1
             if retry <= 2:
                 self._offset_retry_count = retry
+                self._offset_retrying = True  # 重试中，UI 不要弹失败
                 logger.warning(f"Offset flow: retry {retry}/2 due to no data")
                 self.data_process.clear_data_queue()
                 self.counter_measurer()
                 return
             self._offset_retry_count = 0
+            self._offset_retrying = False
 
         if self._offset_calibrating:
+            self._offset_retry_count = 0
+            self._offset_retrying = False
             self._offset_calibrating = False
             self.data_process._offset_calibrating = False
             self.data_process._measurement_active = False
