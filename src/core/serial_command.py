@@ -226,6 +226,15 @@ class SerialCommand(QObject):
         now = time.time()
         axis = wait_state["axis"]
 
+        # 诊断：测量期间 poll 仍活跃 → 可能竞争队列
+        if self._is_measuring or self.data_process._measurement_active:
+            logger.warning(
+                f"_poll_motion_done running while measuring! "
+                f"is_measuring={self._is_measuring}, "
+                f"measurement_active={self.data_process._measurement_active}, "
+                f"axis={axis}, queue_size={self.data_process.data_queue.qsize()}"
+            )
+
         # 循环处理队列中所有反馈（每次 poll 可能有多条）
         while True:
             result = self.data_process.check_motion_feedback()

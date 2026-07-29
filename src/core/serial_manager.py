@@ -112,7 +112,7 @@ class SerialManager(QObject):
         is_binary = len(payload) > 0 and payload[0] > 127
         log_fn = logger.info if is_binary else logger.debug
         log_fn(
-            f"Serial RX: {len(payload)}B | {hex_preview} | {ascii_preview}"
+            f"Serial RX: {len(payload)}B | {hex_preview} | {ascii_preview} | q={self.data_queue.qsize()}"
         )
 
         if not self._is_mostly_printable(payload):

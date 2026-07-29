@@ -284,11 +284,21 @@ class DataProcess(QObject):
         将队列中的所有数据丢弃，通常在开始新数据处理前调用，
         以确保只处理本次需要的数据。
         """
+        cleared_bytes = 0
+        cleared_chunks = 0
         while not self.data_queue.empty():
             try:
-                self.data_queue.get_nowait()
+                chunk = self.data_queue.get_nowait()
+                cleared_bytes += len(chunk)
+                cleared_chunks += 1
             except queue.Empty:
                 break
+        if cleared_chunks > 0:
+            logger.info(
+                f"Queue cleared: {cleared_chunks} chunks, {cleared_bytes} bytes, "
+                f"measurement_active={self._measurement_active}, "
+                f"offset_calibrating={self._offset_calibrating}"
+            )
 
     # ========================================================================
     # 运动完成检测
@@ -305,6 +315,7 @@ class DataProcess(QObject):
             完成运动的轴名 ('X'/'Y'/'Z')，未检测到返回 None
         """
         if self._measurement_active:
+            logger.debug(f"check_motion_done blocked by _measurement_active (queue_size={self.data_queue.qsize()})")
             return None
         try:
             while True:
@@ -312,6 +323,15 @@ class DataProcess(QObject):
                     data = self.data_queue.get_nowait()
                 except queue.Empty:
                     break
+
+                # 诊断：非测量期间读到二进制数据 → 可能固件误发或时序问题
+                if data and data[0] > 127:
+                    logger.warning(
+                        f"check_motion_done consumed binary data: {len(data)}B, "
+                        f"first_byte=0x{data[0]:02X}, "
+                        f"measurement_active={self._measurement_active}, "
+                        f"queue_size={self.data_queue.qsize()}"
+                    )
 
                 text = data.decode('utf-8', errors='ignore')
                 # 优先检测 DONE（可能在 START 之后但先被读到）
@@ -343,6 +363,7 @@ class DataProcess(QObject):
             未检测到返回 None
         """
         if self._measurement_active:
+            logger.debug(f"check_motion_feedback blocked by _measurement_active (queue_size={self.data_queue.qsize()})")
             return None
         try:
             while True:
@@ -350,6 +371,15 @@ class DataProcess(QObject):
                     data = self.data_queue.get_nowait()
                 except queue.Empty:
                     break
+
+                # 诊断：非测量期间读到二进制数据
+                if data and data[0] > 127:
+                    logger.warning(
+                        f"check_motion_feedback consumed binary data: {len(data)}B, "
+                        f"first_byte=0x{data[0]:02X}, "
+                        f"measurement_active={self._measurement_active}, "
+                        f"queue_size={self.data_queue.qsize()}"
+                    )
 
                 text = data.decode('utf-8', errors='ignore')
                 # 1) 优先检测 DONE
@@ -402,6 +432,7 @@ class DataProcess(QObject):
 
         # 测量期间禁止位置查询，避免抽干二进制测量数据
         if self._measurement_active:
+            logger.debug(f"process_position_data blocked by _measurement_active (queue_size={self.data_queue.qsize()})")
             return
 
         x_position: Optional[str] = None
@@ -420,6 +451,14 @@ class DataProcess(QObject):
             while True:
                 try:
                     data = self.data_queue.get_nowait()
+                    # 诊断：process_position_data 读到二进制数据
+                    if data and data[0] > 127:
+                        logger.warning(
+                            f"process_position_data consumed binary data: {len(data)}B, "
+                            f"first_byte=0x{data[0]:02X}, "
+                            f"measurement_active={self._measurement_active}, "
+                            f"queue_size={self.data_queue.qsize()}"
+                        )
                     DataProcess._position_buffer.extend(data)
                     got_data = True
                 except queue.Empty:
@@ -536,8 +575,9 @@ class DataProcess(QObject):
                             data_started = True
                             max_empty_count = max_empty_done
                             logger.info(
-                                f"First data received ({len(data)} bytes), "
-                                f"switching timeout to {max_empty_done * 0.5}s"
+                                f"Measure first RX: {len(data)} bytes, "
+                                f"queue_remain={self.data_queue.qsize()}, "
+                                f"measurement_active={self._measurement_active}"
                             )
                         logger.debug(
                             f"Measure RX: +{len(data)} bytes (total {total_bytes_read}), "
@@ -551,7 +591,10 @@ class DataProcess(QObject):
                         logger.debug(
                             f"Measure empty poll #{no_data_count}/{max_empty_count}, "
                             f"points={len(measure_list)}, buffer={len(temp_buffer)}, "
-                            f"total_bytes={total_bytes_read}, data_started={data_started}"
+                            f"total_bytes={total_bytes_read}, data_started={data_started}, "
+                            f"queue_size={self.data_queue.qsize()}, "
+                            f"measurement_active={self._measurement_active}, "
+                            f"offset_calibrating={self._offset_calibrating}"
                         )
                         time.sleep(0.5)
 
@@ -580,7 +623,9 @@ class DataProcess(QObject):
                             logger.warning(
                                 f"Measurement receive timeout: {no_data_count} empty polls, "
                                 f"points={len(measure_list)}, buffer_remain={len(temp_buffer)}, "
-                                f"total_bytes={total_bytes_read}, queue_size={self.data_queue.qsize()}"
+                                f"total_bytes={total_bytes_read}, queue_size={self.data_queue.qsize()}, "
+                                f"measurement_active={self._measurement_active}, "
+                                f"offset_calibrating={self._offset_calibrating}"
                             )
                             self._emit_measurement_results(measure_list)
                             break
