@@ -15,7 +15,7 @@ from PyQt5.QtGui import QPainter, QColor, QIcon, QPixmap, QPolygon, QTransform
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
+from core.config_manager import action_to_text
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
@@ -144,7 +144,6 @@ class MeasurePanel(QWidget):
     def _init_sample_info_inputs(self):
         """Initialize the sample info combo boxes."""
         self._init_tester_combo()
-        self._init_sensor_combo()
 
     def _init_tester_combo(self):
         combo = self.findChild(QComboBox, "comboBox_tester_edit")
@@ -161,37 +160,6 @@ class MeasurePanel(QWidget):
             history = self._merge_tester_history(last_tester, history)
 
         self._set_combo_items(combo, history, last_tester)
-
-    def _init_sensor_combo(self):
-        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
-        if not combo:
-            return
-
-        config = get_config_manager()
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItems(SENSOR_RANGE_OPTIONS)
-        combo.setCurrentIndex(config.sensor_range)
-        combo.blockSignals(False)
-        combo.currentIndexChanged.connect(self._on_sensor_range_changed)
-        config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
-
-    def _on_sensor_range_changed(self, index):
-        config = get_config_manager()
-        config.sensor_range = index
-        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
-
-    def _on_config_sensor_range_changed(self, index):
-        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
-        if combo and combo.currentIndex() != index:
-            combo.blockSignals(True)
-            combo.setCurrentIndex(index)
-            combo.blockSignals(False)
-
-    def _sync_sensor_range_from_ui(self):
-        combo = self.findChild(QComboBox, "comboBox_sensor_edit")
-        if combo:
-            get_config_manager().sensor_range = combo.currentIndex()
 
     def _load_tester_history(self):
         config = get_config_manager()
@@ -648,7 +616,6 @@ class MeasurePanel(QWidget):
             self._update_status("错误：串口未连接", is_error=True)
             return
 
-        self._sync_sensor_range_from_ui()
         self._reset_sample_inputs()
         self.data_process.measure_type = "rotation"
         raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
@@ -734,7 +701,6 @@ class MeasurePanel(QWidget):
         """偏置校准"""
         logger.info("偏置校准按钮被点击")
         if self.serial_command:
-            self._sync_sensor_range_from_ui()
             logger.info(
                 "Offset flow: MeasurePanel request received, "
                 f"dialog_present={self._offset_dialog is not None}"
@@ -998,7 +964,6 @@ class MeasurePanel(QWidget):
             'remark': self.findChild(QLineEdit, "remark_edit").text().strip(),
             'polar_num': "" if polar_num == "--" else polar_num,
             'tester': self._combo_text("comboBox_tester_edit", "tester_edit"),
-            'probe': self._combo_text("comboBox_sensor_edit"),
         }
 
     def update_plot_data(self, angle_data=None, mag_data=None, color='r'):

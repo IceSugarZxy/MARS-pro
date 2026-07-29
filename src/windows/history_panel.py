@@ -416,9 +416,7 @@ class HistoryPanel(QWidget):
                             if tester_edit:
                                 tester_edit.setText(sample_info['tester'])
                     if sample_info.get('probe'):
-                        sensor_combo = measure_panel.findChild(QComboBox, "comboBox_sensor_edit")
-                        if sensor_combo:
-                            sensor_combo.setCurrentText(sample_info['probe'])
+                        pass  # 量程选项已移除，跳过探头字段恢复
 
                     # 进行波形分析
                     from windows.wave_analysis import WaveAnalysis

@@ -96,7 +96,7 @@ class DataProcess(QObject):
     # ========================================================================
     SAMPLING_FREQ = 27000  # 采样频率 (Hz)
     CUTOFF_RATIO = 70  # 截止频率与采样频率的比值
-    ADC_PER_MT = 73.35   # 标定灵敏度：73.35 ADC/mT
+    ADC_PER_MT = 733.5   # 标定灵敏度：733.5 ADC/mT（原始标定 73.35 ADC/Gs，×10 转 mT）
     ZERO_FIELD_ADC = 488.69  # 标定零场偏置（绝对值）
 
     def __init__(self, data_queue: queue.Queue):

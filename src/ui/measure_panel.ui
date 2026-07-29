@@ -2058,60 +2058,6 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="4">
-       <widget class="QComboBox" name="comboBox_sensor_edit">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>25</height>
-         </size>
-        </property>
-        <property name="currentIndex">
-         <number>0</number>
-        </property>
-        <item>
-         <property name="text">
-          <string>80mT量程</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>160mT量程</string>
-         </property>
-        </item>
-       </widget>
-      </item>
-      <item row="2" column="2">
-       <widget class="QLabel" name="label_sensor">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>80</width>
-          <height>25</height>
-         </size>
-        </property>
-        <property name="layoutDirection">
-         <enum>Qt::LeftToRight</enum>
-        </property>
-        <property name="text">
-         <string>探头量程：</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
-      </item>
       <item row="0" column="2">
        <widget class="QLabel" name="serial_status_label">
         <property name="sizePolicy">

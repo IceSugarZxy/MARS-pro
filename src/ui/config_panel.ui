@@ -593,38 +593,6 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="6">
-       <widget class="QComboBox" name="combo_sensor">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>100</width>
-          <height>30</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>200</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <item>
-         <property name="text">
-          <string>80mT</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>160mT</string>
-         </property>
-        </item>
-       </widget>
-      </item>
       <item row="4" column="0">
        <widget class="QLabel" name="label_x_offset">
         <property name="sizePolicy">
@@ -848,34 +816,6 @@
         </property>
         <property name="text">
          <string>编辑</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="5">
-       <widget class="QLabel" name="label_sensor">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>100</width>
-          <height>30</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>100</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>探头量程：</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
         </property>
        </widget>
       </item>

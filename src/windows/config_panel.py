@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QComboBox, 
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
+from core.config_manager import action_to_text
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
@@ -175,16 +175,6 @@ class ConfigPanel(QWidget):
             combo_test_speed.currentIndexChanged.connect(self._on_test_speed_changed)
             config.signal_test_speed_changed.connect(self._on_config_test_speed_changed)
 
-        combo_sensor = self.findChild(QComboBox, "combo_sensor")
-        if combo_sensor:
-            combo_sensor.blockSignals(True)
-            combo_sensor.clear()
-            combo_sensor.addItems(SENSOR_RANGE_OPTIONS)
-            combo_sensor.setCurrentIndex(config.sensor_range)
-            combo_sensor.blockSignals(False)
-            combo_sensor.currentIndexChanged.connect(self._on_sensor_range_changed)
-            config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
-
         # 更新方案显示
         self._update_scheme_display(config.test_type)
 
@@ -252,25 +242,6 @@ class ConfigPanel(QWidget):
         logger.info(f"测试速度已更改: {index}")
         if self.serial_command and self.serial_manager and self.serial_manager.get_connection_status():
             self.serial_command.set_mode_from_test_speed(index)
-
-    def _on_sensor_range_changed(self, index):
-        """探头量程改变"""
-        config = get_config_manager()
-        config.sensor_range = index
-        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
-
-    def _on_config_sensor_range_changed(self, index):
-        """配置管理器探头量程改变，同步更新下拉框"""
-        combo_sensor = self.findChild(QComboBox, "combo_sensor")
-        if combo_sensor and combo_sensor.currentIndex() != index:
-            combo_sensor.blockSignals(True)
-            combo_sensor.setCurrentIndex(index)
-            combo_sensor.blockSignals(False)
-
-    def _sync_sensor_range_from_ui(self):
-        combo_sensor = self.findChild(QComboBox, "combo_sensor")
-        if combo_sensor:
-            get_config_manager().sensor_range = combo_sensor.currentIndex()
 
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
@@ -651,7 +622,6 @@ class ConfigPanel(QWidget):
     def _on_offset(self):
         """偏置校准"""
         if self.serial_command:
-            self._sync_sensor_range_from_ui()
             logger.info(
                 "Offset flow: ConfigPanel request received, "
                 f"dialog_present={self._offset_dialog is not None}"
