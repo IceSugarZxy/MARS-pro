@@ -830,7 +830,10 @@ class MeasurePanel(QWidget):
                 btn.setStyleSheet(style)
 
     def _connect_stage_buttons(self):
-        """台控：按发送 ±500000 步，松停止。"""
+        """台控：按发送 ±500000 步，松停止。
+        
+        使用事件过滤器接管 press/release，确保鼠标移出按钮后松手也能发送 O~。
+        """
         moves = {
             "stage_btn_up":      "Y-500000",
             "stage_btn_down":    "Y+500000",
@@ -839,23 +842,32 @@ class MeasurePanel(QWidget):
             "stage_btn_forward": "Z-500000",
             "stage_btn_back":    "Z+500000",
         }
+        self._stage_pressed_button: Optional[QPushButton] = None
+
         for name, cmd in moves.items():
             btn = self.findChild(QPushButton, name)
             if btn:
-                btn.pressed.connect(self._make_send(cmd))
-                btn.released.connect(self._make_stop())
+                btn._stage_cmd = cmd
+                btn.installEventFilter(self)
 
-    def _make_send(self, cmd):
-        def handler():
-            if self.serial_command:
-                self.serial_command.send_data(f"{cmd}~", source="stage_press")
-        return handler
-
-    def _make_stop(self):
-        def handler():
-            if self.serial_command:
-                self.serial_command.send_data("O~", source="stage_release")
-        return handler
+    def eventFilter(self, obj, event):
+        """拦截台控按钮的 press/release，确保 O~ 可靠发送。"""
+        from PyQt5.QtCore import QEvent
+        if isinstance(obj, QPushButton) and hasattr(obj, '_stage_cmd'):
+            if event.type() == QEvent.MouseButtonPress:
+                if self.serial_command:
+                    self.serial_command.send_data(f"{obj._stage_cmd}~", source="stage_press")
+                self._stage_pressed_button = obj
+                obj.grabMouse()
+                return True
+            elif event.type() == QEvent.MouseButtonRelease:
+                if self._stage_pressed_button is not None:
+                    self._stage_pressed_button.releaseMouse()
+                if self.serial_command:
+                    self.serial_command.send_data("O~", source="stage_release")
+                self._stage_pressed_button = None
+                return True
+        return super().eventFilter(obj, event)
 
     def _reset_sample_inputs(self):
         """重置样品信息"""
