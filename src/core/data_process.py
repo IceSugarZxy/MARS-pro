@@ -96,6 +96,8 @@ class DataProcess(QObject):
     # ========================================================================
     SAMPLING_FREQ = 27000  # 采样频率 (Hz)
     CUTOFF_RATIO = 70  # 截止频率与采样频率的比值
+    ADC_PER_MT = 73.35   # 标定灵敏度：73.35 ADC/mT
+    ZERO_FIELD_ADC = 488.69  # 标定零场偏置（绝对值）
 
     def __init__(self, data_queue: queue.Queue):
         """
@@ -516,7 +518,8 @@ class DataProcess(QObject):
                     for i in range(batch_size):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
-                        measure_list.append(self._decode_s16(byte1, byte2) - self.mag_offset)
+                        adc = self._decode_s16(byte1, byte2) - self.mag_offset
+                        measure_list.append(round(adc / self.ADC_PER_MT, 4))
 
                     del temp_buffer[0:batch_size * 2]
 
@@ -731,7 +734,7 @@ class DataProcess(QObject):
                 self.config.offset = self.mag_offset
                 logger.info(
                     "Offset flow: calibration succeeded, "
-                    f"offset={self.mag_offset:.1f} ADC, "
+                    f"offset={self.mag_offset:.1f} ADC ({self.mag_offset/self.ADC_PER_MT:.3f} mT), "
                     f"config_file={getattr(self.config, 'config_file', '')}"
                 )
                 logger.info("Offset flow: emitting finished signal, success=True")

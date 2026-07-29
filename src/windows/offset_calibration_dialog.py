@@ -82,7 +82,7 @@ class OffsetCalibrationDialog(QDialog):
             self.progress_bar.setMaximum(100)
             self.progress_bar.setValue(100)
             if offset_value is not None:
-                self.label_status.setText(f"偏置值: {offset_value:.1f} ADC")
+                self.label_status.setText(f"偏置值: {offset_value:.4f} mT")
             else:
                 self.label_status.setText("校准成功")
         else:

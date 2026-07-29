@@ -766,9 +766,10 @@ class MeasurePanel(QWidget):
             logger.info("Offset flow: MeasurePanel re-enabled position query timer")
         if self._offset_dialog:
             config = get_config_manager()
-            offset_value = getattr(config, 'offset', None)
-            logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_value}")
-            self._offset_dialog.show_result(success, offset_value)
+            offset_adc = getattr(config, 'offset', None)
+            offset_mt = offset_adc / 73.35 if offset_adc else None
+            logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_adc} ADC ({offset_mt} mT)")
+            self._offset_dialog.show_result(success, offset_mt)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
     def _close_offset_dialog(self):
         """关闭偏置校准对话框"""

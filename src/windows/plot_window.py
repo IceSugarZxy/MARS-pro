@@ -54,7 +54,7 @@ class PlotWindow(QWidget):
 
         # 设置坐标轴颜色（适配白色背景）
         self.plot_widget.plotItem.setLabel('bottom', '角度', units='°', **{'color': '#000000', 'font-size': '12px'})
-        self.plot_widget.plotItem.setLabel('left', 'ADC值', **{'color': '#000000', 'font-size': '12px'})
+        self.plot_widget.plotItem.setLabel('left', '磁场', units='mT', **{'color': '#000000', 'font-size': '12px'})
         axis = self.plot_widget.plotItem.getAxis('bottom')
         axis.setPen('#333333')
         axis = self.plot_widget.plotItem.getAxis('left')
