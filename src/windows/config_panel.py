@@ -11,12 +11,14 @@ from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QComboBox, 
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import action_to_text
+from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
 
 logger = get_logger('ConfigPanel')
+
+STAGE_LONG_PRESS_MS = 500
 
 
 class ConfigPanel(QWidget):
@@ -46,6 +48,7 @@ class ConfigPanel(QWidget):
 
         # 连接按钮事件
         self._connect_buttons()
+        self._init_stage_distance()
         self._init_serial_controls()
         self._init_serial_rx_display()
 
@@ -175,6 +178,16 @@ class ConfigPanel(QWidget):
             combo_test_speed.currentIndexChanged.connect(self._on_test_speed_changed)
             config.signal_test_speed_changed.connect(self._on_config_test_speed_changed)
 
+        combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
+        if combo_sensor_range:
+            combo_sensor_range.blockSignals(True)
+            combo_sensor_range.clear()
+            combo_sensor_range.addItems(SENSOR_RANGE_OPTIONS)
+            combo_sensor_range.setCurrentIndex(config.sensor_range)
+            combo_sensor_range.blockSignals(False)
+            combo_sensor_range.currentIndexChanged.connect(self._on_sensor_range_changed)
+            config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
+
         # 更新方案显示
         self._update_scheme_display(config.test_type)
 
@@ -260,6 +273,20 @@ class ConfigPanel(QWidget):
             combo_test_speed.blockSignals(True)
             combo_test_speed.setCurrentIndex(index)
             combo_test_speed.blockSignals(False)
+
+    def _on_sensor_range_changed(self, index):
+        """探头量程改变（仅记录选择，暂不参与数据处理）"""
+        config = get_config_manager()
+        config.sensor_range = index
+        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
+
+    def _on_config_sensor_range_changed(self, index):
+        """配置管理器探头量程改变，同步更新下拉框"""
+        combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
+        if combo_sensor_range and combo_sensor_range.currentIndex() != index:
+            combo_sensor_range.blockSignals(True)
+            combo_sensor_range.setCurrentIndex(index)
+            combo_sensor_range.blockSignals(False)
 
     def _on_config_scheme_changed(self, test_type):
         """配置管理器移动方案改变，同步更新当前测试类型流程。"""
@@ -533,21 +560,29 @@ class ConfigPanel(QWidget):
         使用事件过滤器接管 press/release，确保鼠标移出按钮后松手也能发送 O~。
         Qt 原生 released 信号仅在鼠标位于按钮区域内松手时触发，不可靠。
         """
-        moves = {
-            "stage_btn_up":    "Y-500000",
-            "stage_btn_down":  "Y+500000",
-            "stage_btn_left":  "X-500000",
-            "stage_btn_right": "X+500000",
-            "stage_btn_forward": "Z-500000",
-            "stage_btn_back":    "Z+500000",
+        stage_specs = {
+            "stage_btn_up":      ("Y-500000", "Y", -1, "向上"),
+            "stage_btn_down":    ("Y+500000", "Y", 1,  "向下"),
+            "stage_btn_left":    ("X-500000", "X", -1, "向左"),
+            "stage_btn_right":   ("X+500000", "X", 1,  "向右"),
+            "stage_btn_forward": ("Z-500000", "Z", -1, "向后"),
+            "stage_btn_back":    ("Z+500000", "Z", 1,  "向前"),
         }
         # 追踪当前按下的按钮，确保松手时发送正确的停止指令
         self._stage_pressed_button: Optional[QPushButton] = None
+        self._stage_long_pressed = False
+        self._stage_press_timer = QTimer(self)
+        self._stage_press_timer.setSingleShot(True)
+        self._stage_press_timer.setInterval(STAGE_LONG_PRESS_MS)
+        self._stage_press_timer.timeout.connect(self._on_stage_press_timeout)
 
-        for name, cmd in moves.items():
+        for name, (cmd, axis, direction, label) in stage_specs.items():
             btn = self.findChild(QPushButton, name)
             if btn:
                 btn._stage_cmd = cmd
+                btn._stage_axis = axis
+                btn._stage_direction = direction
+                btn._stage_label = label
                 btn.installEventFilter(self)
 
     def eventFilter(self, obj, event):
@@ -555,19 +590,84 @@ class ConfigPanel(QWidget):
         from PyQt5.QtCore import QEvent
         if isinstance(obj, QPushButton) and hasattr(obj, '_stage_cmd'):
             if event.type() == QEvent.MouseButtonPress:
-                if self.serial_command:
-                    self.serial_command.send_data(f"{obj._stage_cmd}~", source="stage_press")
+                self._stage_press_timer.stop()
                 self._stage_pressed_button = obj
+                self._stage_long_pressed = False
+                self._stage_press_timer.start()
                 obj.grabMouse()  # 捕获鼠标，确保 release 事件不丢失
                 return True
             elif event.type() == QEvent.MouseButtonRelease:
-                if self._stage_pressed_button is not None:
-                    self._stage_pressed_button.releaseMouse()
-                if self.serial_command:
-                    self.serial_command.send_data("O~", source="stage_release")
+                self._stage_press_timer.stop()
+                btn = self._stage_pressed_button
+                was_long = self._stage_long_pressed
                 self._stage_pressed_button = None
+                self._stage_long_pressed = False
+                if btn is not None:
+                    btn.releaseMouse()
+                if self.serial_command:
+                    if was_long:
+                        self.serial_command.send_data("O~", source="stage_release")
+                    elif btn is not None:
+                        self._execute_short_press(btn)
                 return True
         return super().eventFilter(obj, event)
+
+    def _on_stage_press_timeout(self):
+        """长按判定成立：开始连续移动。"""
+        btn = self._stage_pressed_button
+        if btn is None or not hasattr(btn, '_stage_cmd'):
+            return
+        self._stage_long_pressed = True
+        if self.serial_command:
+            self.serial_command.send_data(f"{btn._stage_cmd}~", source="stage_press")
+
+    def _execute_short_press(self, btn):
+        """短按：按输入距离沿对应轴方向移动一次。"""
+        distance = self._get_distance_value()
+        if distance is None or self.serial_command is None:
+            return
+        self.serial_command.set_move_task(btn._stage_axis, btn._stage_direction, distance)
+        self.serial_command.position_query(source="stage_short_press")
+
+    def _get_distance_value(self):
+        """读取短按距离(mm)，非法时提示并返回 None。"""
+        distance_edit = self.findChild(QLineEdit, "distance_edit")
+        if not distance_edit:
+            return None
+        text = distance_edit.text().strip()
+        if not text:
+            self._set_serial_status("错误：距离值为空", "#e74c3c")
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            self._set_serial_status("错误：距离值格式错误", "#e74c3c")
+            return None
+        if value <= 0:
+            self._set_serial_status("错误：距离值必须大于 0", "#e74c3c")
+            return None
+        return value
+
+    def _init_stage_distance(self):
+        """从配置载入短按距离，并连接编辑结束校验保存。"""
+        config = get_config_manager()
+        distance_edit = self.findChild(QLineEdit, "distance_edit")
+        if distance_edit:
+            distance_edit.setText(f"{config.stage_step_distance:g}")
+            distance_edit.editingFinished.connect(self._on_stage_distance_edited)
+
+    def _on_stage_distance_edited(self):
+        """校验输入的距离值，合法则持久化，非法则回退为配置值。"""
+        config = get_config_manager()
+        distance_edit = self.findChild(QLineEdit, "distance_edit")
+        if not distance_edit:
+            return
+        value = self._get_distance_value()
+        if value is None:
+            distance_edit.setText(f"{config.stage_step_distance:g}")
+            return
+        config.stage_step_distance = value
+        distance_edit.setText(f"{value:g}")
 
     def _init_quick_action_settings(self):
         """初始化快捷操作配置"""

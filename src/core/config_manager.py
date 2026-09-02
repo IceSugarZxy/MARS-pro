@@ -18,6 +18,11 @@ X_AXIS_PULSES_PER_MM = 640.53
 # Z 轴保留旧标定
 Z_AXIS_PULSES_PER_MM = 6407.801478
 
+# 探头量程选项
+SENSOR_RANGE_OPTIONS = ("80mT量程", "160mT量程")
+SENSOR_RANGE_80MT_INDEX = 0
+SENSOR_RANGE_160MT_INDEX = 1
+
 
 # 动作类型定义
 ACTION_TYPES = ['X', 'Z', 'X+', 'X-', 'Z+', 'Z-']
@@ -97,6 +102,8 @@ class ConfigManager(QObject):
     signal_test_speed_changed = pyqtSignal(int)
     # 测试/挂起移动方案改变信号
     signal_scheme_changed = pyqtSignal(int)
+    # 探头量程改变信号
+    signal_sensor_range_changed = pyqtSignal(int)
 
     DEFAULT_CONFIG = {
         'offset': '0',
@@ -111,6 +118,8 @@ class ConfigManager(QObject):
         'test_type': '0',
         # 测试速度: 0=高速测量, 1=高分辨率测量
         'test_speed': '0',
+        # 探头量程: 0=80mT量程, 1=160mT量程（仅记录选择，暂不参与数据处理）
+        'sensor_range': '0',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
         'test_movement_scheme': 'x_first',
         # 挂起位置移动方案
@@ -121,6 +130,8 @@ class ConfigManager(QObject):
         'inner_z_offset': '1',
         # 贴靠动作回弹距离(mm)
         'retract_distance': '0.3',
+        # 方向键短按移动距离(mm)
+        'stage_step_distance': '1.0',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -303,6 +314,33 @@ class ConfigManager(QObject):
     @retract_distance.setter
     def retract_distance(self, value: float) -> None:
         self.set('retract_distance', max(0.0, float(value)))
+
+    @property
+    def stage_step_distance(self) -> float:
+        """方向键短按移动距离(mm)。"""
+        return max(0.0, self.get_float('stage_step_distance', 1.0))
+
+    @stage_step_distance.setter
+    def stage_step_distance(self, value: float) -> None:
+        self.set('stage_step_distance', max(0.0, float(value)))
+
+    @property
+    def sensor_range(self) -> int:
+        """探头量程索引（仅记录选择，暂不参与数据处理）。"""
+        index = self.get_int('sensor_range', SENSOR_RANGE_80MT_INDEX)
+        if 0 <= index < len(SENSOR_RANGE_OPTIONS):
+            return index
+        return SENSOR_RANGE_80MT_INDEX
+
+    @sensor_range.setter
+    def sensor_range(self, value: int) -> None:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            index = SENSOR_RANGE_80MT_INDEX
+        index = max(0, min(index, len(SENSOR_RANGE_OPTIONS) - 1))
+        self.set('sensor_range', index)
+        self.signal_sensor_range_changed.emit(index)
 
     # ==================== 移动方案管理 ====================
 
