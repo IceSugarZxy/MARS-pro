@@ -15,13 +15,80 @@ logger = logging.getLogger(__name__)
 
 # X/Y 滑台标定：100000 脉冲 = 156.12 mm → 640.53 脉冲/mm（2026-07-24 更新）
 X_AXIS_PULSES_PER_MM = 640.53
-# Z 轴保留旧标定
-Z_AXIS_PULSES_PER_MM = 6407.801478
+# Z 轴（前后）滑台为不同型号：实测“指定 5mm 实际运动 40mm”（8 倍），
+# 原系数 6407.801478 ÷ 8 ≈ 800.97518475 脉冲/mm（2026-09-07 复核修正）
+Z_AXIS_PULSES_PER_MM = 800.97518475
 
-# 探头量程选项
-SENSOR_RANGE_OPTIONS = ("80mT量程", "160mT量程")
-SENSOR_RANGE_80MT_INDEX = 0
-SENSOR_RANGE_160MT_INDEX = 1
+# PGA 增益档位（对应固件 PGA<0~7>~：0=×1 ~ 7=×128）
+PGA_GAIN_VALUES = (1, 2, 4, 8, 16, 32, 64, 128)
+
+# 各档位量程命名（mT）：建议保守线性量程向下取整十（2026-09-07 标定）
+PGA_RANGE_TEXTS = (
+    "3120mT",  # ×1
+    "1570mT",  # ×2
+    "780mT",   # ×4
+    "390mT",   # ×8
+    "190mT",   # ×16
+    "90mT",    # ×32
+    "40mT",    # ×64
+    "20mT",    # ×128
+)
+# 各档位理论最大量程（mT，16bit 代码满量程 0x7FFF/0x8000 边界，2026-09-07 标定）
+PGA_THEORY_MAX_TEXTS = (
+    "6399mT",  # ×1
+    "3239mT",  # ×2
+    "1619mT",  # ×4
+    "811mT",   # ×8
+    "403mT",   # ×16
+    "199mT",   # ×32
+    "97mT",    # ×64
+    "46mT",    # ×128
+)
+PGA_OPTION_TEXTS = tuple(
+    "{0}量程 (理论{1})".format(range_text, theory_text)
+    for range_text, theory_text in zip(PGA_RANGE_TEXTS, PGA_THEORY_MAX_TEXTS)
+)
+PGA_DEFAULT_INDEX = 5  # ×32（固件默认增益）
+
+# 各 PGA 档位默认零场偏置（原始 ADC 计数，键 0~7 = ×1~×128）
+# 来源：2026-09-07 两轮一致性较好的零场标定（10mT 环境）取平均
+PGA_OFFSETS_KEY = 'pga_offsets'
+PGA_DEFAULT_OFFSETS = {
+    '0': -26.762011423190738,
+    '1': -53.43753875354281,
+    '2': -106.21986176213516,
+    '3': -212.25595570273902,
+    '4': -423.38122533254596,
+    '5': -845.6150033990581,
+    '6': -1692.3727071422007,
+    '7': -3387.012073047531,
+}
+
+# 各 PGA 档位磁场换算系数（ADC counts/mT）
+# 来源：2026-09-07 标定报告（10mT 轮确定档位比例 + 238mT 轮 ×1 绝对锚定），
+#       仅适用于当前 IDAC 配置；重标定后请同步更新本表。
+PGA_MAG_ADC_PER_MT = {
+    0: 5.117,    # ×1
+    1: 10.10,    # ×2
+    2: 20.18,    # ×4
+    3: 40.13,    # ×8
+    4: 80.2,     # ×16
+    5: 160.3,    # ×32
+    6: 320.8,    # ×64
+    7: 640.9,    # ×128
+}
+
+
+def get_pga_mag_conversion_factor(index: int) -> float:
+    """获取指定 PGA 档位的磁场换算系数（ADC counts/mT）。"""
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        index = 0
+    if 0 <= index < len(PGA_GAIN_VALUES):
+        return float(PGA_MAG_ADC_PER_MT[index])
+    logger.warning(f"未知 PGA 档位 {index}，回退使用 ×1 换算系数")
+    return float(PGA_MAG_ADC_PER_MT[0])
 
 
 # 动作类型定义
@@ -102,11 +169,15 @@ class ConfigManager(QObject):
     signal_test_speed_changed = pyqtSignal(int)
     # 测试/挂起移动方案改变信号
     signal_scheme_changed = pyqtSignal(int)
-    # 探头量程改变信号
-    signal_sensor_range_changed = pyqtSignal(int)
+    # PGA 增益改变信号
+    signal_pga_gain_changed = pyqtSignal(int)
+    # PGA 档位偏置更新信号（参数为 PGA 档位索引）
+    signal_pga_offset_changed = pyqtSignal(int)
 
     DEFAULT_CONFIG = {
         'offset': '0',
+        # 各 PGA 档位零场偏置（原始 ADC 计数）
+        PGA_OFFSETS_KEY: json.dumps(PGA_DEFAULT_OFFSETS, ensure_ascii=False),
         'COM': 'COM12',
         # 测试位置
         'test_x': '0',
@@ -118,8 +189,8 @@ class ConfigManager(QObject):
         'test_type': '0',
         # 测试速度: 0=高速测量, 1=高分辨率测量
         'test_speed': '0',
-        # 探头量程: 0=80mT量程, 1=160mT量程（仅记录选择，暂不参与数据处理）
-        'sensor_range': '0',
+        # PGA 增益档位: 0=×1 ~ 7=×128（默认 5=×32，与固件默认一致）
+        'pga_gain': '5',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
         'test_movement_scheme': 'x_first',
         # 挂起位置移动方案
@@ -153,14 +224,36 @@ class ConfigManager(QObject):
 
         try:
             self._config = {}
+            file_keys = set()
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if ':' in line:
                         key, value = line.split(':', 1)
-                        self._config[key.strip()] = value.strip()
+                        key = key.strip()
+                        self._config[key] = value.strip()
+                        file_keys.add(key)
             for key, value in self.DEFAULT_CONFIG.items():
                 self._config.setdefault(key, value)
+            # 旧版本只有单值 offset：按当前档位增益倍数外推，填充 8 档偏置表
+            if PGA_OFFSETS_KEY not in file_keys and 'offset' in file_keys:
+                try:
+                    base_offset = float(self._config.get('offset', 0.0) or 0.0)
+                    if abs(base_offset) > 1e-9:
+                        current_index = self.pga_gain
+                        current_gain = PGA_GAIN_VALUES[current_index]
+                        migrated_offsets = {}
+                        for index, gain in enumerate(PGA_GAIN_VALUES):
+                            migrated_offsets[str(index)] = base_offset * gain / current_gain
+                        self._config[PGA_OFFSETS_KEY] = json.dumps(
+                            migrated_offsets, ensure_ascii=False
+                        )
+                        logger.info(
+                            "旧版单值偏置已按增益外推为 8 档偏置表: "
+                            f"base={base_offset:.2f} ADC @ PGA{current_index} (×{current_gain})"
+                        )
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"旧版偏置外推失败: {e}")
             logger.info(f"配置文件加载成功: {self.config_file}")
         except Exception as e:
             logger.error(f"加载配置文件失败: {e}")
@@ -217,13 +310,82 @@ class ConfigManager(QObject):
     def com_port(self, value: str) -> None:
         self.set('COM', self._strip_quotes(value) or 'COM12')
 
+    # ==================== 零场偏置（按 PGA 档位） ====================
+
+    @property
+    def pga_offsets(self) -> Dict[int, float]:
+        """全部 PGA 档位的零场偏置（ADC 计数），键为档位索引 0~7。"""
+        raw = self.get(PGA_OFFSETS_KEY, '')
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    result: Dict[int, float] = {}
+                    for raw_key, raw_value in parsed.items():
+                        try:
+                            result[int(raw_key)] = float(raw_value)
+                        except (TypeError, ValueError):
+                            continue
+                    if result:
+                        return result
+            except (ValueError, TypeError) as e:
+                logger.warning(f"配置项 {PGA_OFFSETS_KEY} 解析失败，按单值偏置外推: {e}")
+        # 兼容：偏置表缺失时按旧单值 offset × 增益倍数外推
+        legacy_offset = self.get_float('offset', 0.0)
+        if legacy_offset:
+            current_gain = PGA_GAIN_VALUES[self.pga_gain]
+            return {
+                index: legacy_offset * gain / current_gain
+                for index, gain in enumerate(PGA_GAIN_VALUES)
+            }
+        return {
+            index: float(PGA_DEFAULT_OFFSETS[str(index)])
+            for index in range(len(PGA_GAIN_VALUES))
+        }
+
+    def get_offset_for_pga(self, index: int) -> float:
+        """获取指定 PGA 档位的零场偏置（ADC 计数）。"""
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return 0.0
+        if not (0 <= index < len(PGA_GAIN_VALUES)):
+            return 0.0
+        return float(self.pga_offsets.get(index, 0.0))
+
+    def set_offset_for_pga(self, index: int, value: float) -> bool:
+        """保存指定 PGA 档位的零场偏置，并同步旧单值字段 offset。"""
+        try:
+            index = int(index)
+            value = float(value)
+        except (TypeError, ValueError):
+            return False
+        if not (0 <= index < len(PGA_GAIN_VALUES)):
+            return False
+
+        offsets = self.pga_offsets
+        offsets[index] = value
+        self._config[PGA_OFFSETS_KEY] = json.dumps(
+            {str(key): val for key, val in offsets.items()}, ensure_ascii=False
+        )
+        # 旧字段 offset 始终表示“当前档位”的偏置，供历史代码兼容读取
+        if index == self.pga_gain:
+            self._config['offset'] = str(value)
+
+        ok = self.save()
+        if ok:
+            self.signal_pga_offset_changed.emit(index)
+        return ok
+
     @property
     def offset(self) -> float:
-        return self.get_float('offset', 0.0)
+        """当前 PGA 档位的零场偏置（ADC 计数）。"""
+        return self.get_offset_for_pga(self.pga_gain)
 
     @offset.setter
     def offset(self, value: float) -> None:
-        self.set('offset', value)
+        """写入当前 PGA 档位的零场偏置。"""
+        self.set_offset_for_pga(self.pga_gain, value)
 
     @property
     def test_x(self) -> int:
@@ -325,22 +487,28 @@ class ConfigManager(QObject):
         self.set('stage_step_distance', max(0.0, float(value)))
 
     @property
-    def sensor_range(self) -> int:
-        """探头量程索引（仅记录选择，暂不参与数据处理）。"""
-        index = self.get_int('sensor_range', SENSOR_RANGE_80MT_INDEX)
-        if 0 <= index < len(SENSOR_RANGE_OPTIONS):
+    def pga_gain(self) -> int:
+        """PGA 增益档位索引 (0=×1 ~ 7=×128)。"""
+        index = self.get_int('pga_gain', PGA_DEFAULT_INDEX)
+        if 0 <= index < len(PGA_GAIN_VALUES):
             return index
-        return SENSOR_RANGE_80MT_INDEX
+        return PGA_DEFAULT_INDEX
 
-    @sensor_range.setter
-    def sensor_range(self, value: int) -> None:
+    @pga_gain.setter
+    def pga_gain(self, value: int) -> None:
         try:
             index = int(value)
         except (TypeError, ValueError):
-            index = SENSOR_RANGE_80MT_INDEX
-        index = max(0, min(index, len(SENSOR_RANGE_OPTIONS) - 1))
-        self.set('sensor_range', index)
-        self.signal_sensor_range_changed.emit(index)
+            index = PGA_DEFAULT_INDEX
+        index = max(0, min(index, len(PGA_GAIN_VALUES) - 1))
+        self.set('pga_gain', index)
+        # 同步旧单值字段 offset，使其始终等于当前档位偏置
+        try:
+            self._config['offset'] = str(self.get_offset_for_pga(index))
+        except Exception:
+            pass
+        self.save()
+        self.signal_pga_gain_changed.emit(index)
 
     # ==================== 移动方案管理 ====================
 

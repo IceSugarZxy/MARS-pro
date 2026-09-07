@@ -11,7 +11,11 @@ from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QComboBox, 
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
+from core.config_manager import (
+    PGA_OPTION_TEXTS,
+    action_to_text,
+    get_pga_mag_conversion_factor,
+)
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
@@ -182,11 +186,11 @@ class ConfigPanel(QWidget):
         if combo_sensor_range:
             combo_sensor_range.blockSignals(True)
             combo_sensor_range.clear()
-            combo_sensor_range.addItems(SENSOR_RANGE_OPTIONS)
-            combo_sensor_range.setCurrentIndex(config.sensor_range)
+            combo_sensor_range.addItems(PGA_OPTION_TEXTS)
+            combo_sensor_range.setCurrentIndex(config.pga_gain)
             combo_sensor_range.blockSignals(False)
-            combo_sensor_range.currentIndexChanged.connect(self._on_sensor_range_changed)
-            config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
+            combo_sensor_range.currentIndexChanged.connect(self._on_pga_gain_changed)
+            config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
 
         # 更新方案显示
         self._update_scheme_display(config.test_type)
@@ -274,14 +278,14 @@ class ConfigPanel(QWidget):
             combo_test_speed.setCurrentIndex(index)
             combo_test_speed.blockSignals(False)
 
-    def _on_sensor_range_changed(self, index):
-        """探头量程改变（仅记录选择，暂不参与数据处理）"""
+    def _on_pga_gain_changed(self, index):
+        """用户修改 PGA 档位：写入配置（发送与回信确认由测量面板统一处理）。"""
         config = get_config_manager()
-        config.sensor_range = index
-        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
+        config.pga_gain = index
+        logger.info(f"PGA 档位已更改: {PGA_OPTION_TEXTS[config.pga_gain]}")
 
-    def _on_config_sensor_range_changed(self, index):
-        """配置管理器探头量程改变，同步更新下拉框"""
+    def _on_config_pga_gain_changed(self, index):
+        """配置管理器 PGA 档位改变，同步更新下拉框"""
         combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
         if combo_sensor_range and combo_sensor_range.currentIndex() != index:
             combo_sensor_range.blockSignals(True)
@@ -766,9 +770,14 @@ class ConfigPanel(QWidget):
         logger.info("Offset flow: ConfigPanel re-enabled position query timer")
         if self._offset_dialog:
             config = get_config_manager()
-            offset_value = getattr(config, 'offset', None)
-            logger.info(f"Offset flow: ConfigPanel showing result, offset={offset_value}")
-            self._offset_dialog.show_result(success, offset_value)
+            offset_adc = getattr(config, 'offset', None)
+            factor = get_pga_mag_conversion_factor(config.pga_gain)
+            offset_mt = offset_adc / factor if offset_adc is not None else None
+            logger.info(
+                f"Offset flow: ConfigPanel showing result, "
+                f"offset={offset_adc} ADC ({offset_mt} mT)"
+            )
+            self._offset_dialog.show_result(success, offset_mt)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
 
     def _close_offset_dialog(self):

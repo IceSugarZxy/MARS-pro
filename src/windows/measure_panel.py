@@ -5,17 +5,23 @@
 
 import os
 import json
+import re
 import serial.tools.list_ports
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
                               QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
-                              QMessageBox)
+                              QMessageBox, QSpinBox)
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot, QEvent, QPoint
 from PyQt5.QtGui import QPainter, QColor, QIcon, QPixmap, QPolygon, QTransform
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
-from core.config_manager import SENSOR_RANGE_OPTIONS, action_to_text
+from core.config_manager import (
+    PGA_OPTION_TEXTS,
+    PGA_GAIN_VALUES,
+    action_to_text,
+    get_pga_mag_conversion_factor,
+)
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
@@ -28,6 +34,8 @@ logger = get_logger('MeasurePanel')
 STATUS_AUTO_RECOVER_MS = 2000
 DEFAULT_PLOT_COLOR = '#e74c3c'
 STAGE_LONG_PRESS_MS = 500
+# 串口连接成功后需要设置的 IDAC 电流档位
+CONNECT_IDAC_INDEX = 4
 TESTER_HISTORY_CONFIG_KEY = "tester_history"
 LAST_TESTER_CONFIG_KEY = "last_tester"
 MAX_TESTER_HISTORY_COUNT = 20
@@ -246,11 +254,39 @@ class MeasurePanel(QWidget):
         if combo_sensor_range:
             combo_sensor_range.blockSignals(True)
             combo_sensor_range.clear()
-            combo_sensor_range.addItems(SENSOR_RANGE_OPTIONS)
-            combo_sensor_range.setCurrentIndex(config.sensor_range)
+            combo_sensor_range.addItems(PGA_OPTION_TEXTS)
+            combo_sensor_range.setCurrentIndex(config.pga_gain)
             combo_sensor_range.blockSignals(False)
-            combo_sensor_range.currentIndexChanged.connect(self._on_sensor_range_changed)
-            config.signal_sensor_range_changed.connect(self._on_config_sensor_range_changed)
+            combo_sensor_range.currentIndexChanged.connect(self._on_pga_gain_changed)
+            config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
+
+        # PGA 增益：已确认值 + 发送确认状态
+        self._pga_gain_confirmed = config.pga_gain
+        self._pga_pending = False
+        self._pga_pending_index = None
+        self._pga_rx_buffer = ""
+        self._pga_confirm_timer = QTimer(self)
+        self._pga_confirm_timer.setSingleShot(True)
+        self._pga_confirm_timer.setInterval(2500)
+        self._pga_confirm_timer.timeout.connect(self._on_pga_confirm_timeout)
+
+        # 串口连接后的固件 PGA 档位查询状态（PGA~ → PGA n (xN)）
+        self._pga_query_pending = False
+        self._pga_query_retry_count = 0
+        self._pga_query_timer = QTimer(self)
+        self._pga_query_timer.setSingleShot(True)
+        self._pga_query_timer.setInterval(2500)
+        self._pga_query_timer.timeout.connect(self._on_pga_query_timeout)
+
+        # 串口连接后的 IDAC 档位设置状态（IDAC4~ → IDAC 4 OK）
+        self._idac_connect_started = False
+        self._idac_set_pending = False
+        self._idac_set_pending_index = None
+        self._idac_retry_count = 0
+        self._idac_confirm_timer = QTimer(self)
+        self._idac_confirm_timer.setSingleShot(True)
+        self._idac_confirm_timer.setInterval(2500)
+        self._idac_confirm_timer.timeout.connect(self._on_idac_confirm_timeout)
         # 更新移动方案显示
         self._update_scheme_display(config.test_type)
 
@@ -303,19 +339,254 @@ class MeasurePanel(QWidget):
             combo_test_speed.setCurrentIndex(index)
             combo_test_speed.blockSignals(False)
 
-    def _on_sensor_range_changed(self, index):
-        """探头量程改变（仅记录选择，暂不参与数据处理）"""
+    def _on_pga_gain_changed(self, index):
+        """用户在量程(PGA)下拉框中选择新档位 -> 写入配置，统一由配置信号触发发送确认。"""
         config = get_config_manager()
-        config.sensor_range = index
-        logger.info(f"探头量程已更改: {SENSOR_RANGE_OPTIONS[config.sensor_range]}")
+        if index == self._pga_gain_confirmed:
+            return
+        config.pga_gain = index
 
-    def _on_config_sensor_range_changed(self, index):
-        """配置管理器探头量程改变，同步更新下拉框"""
+    def _on_config_pga_gain_changed(self, index):
+        """配置管理器 PGA 档位改变：同步下拉框，若为新档位则发送 PGA<n>~ 并等待回信。"""
         combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
         if combo_sensor_range and combo_sensor_range.currentIndex() != index:
             combo_sensor_range.blockSignals(True)
             combo_sensor_range.setCurrentIndex(index)
             combo_sensor_range.blockSignals(False)
+
+        if index != self._pga_gain_confirmed:
+            self._request_pga_gain_change(index)
+
+    def _request_pga_gain_change(self, index: int) -> None:
+        """发送 PGA<n>~ 指令，启动回信确认窗口。"""
+        if self._pga_pending:
+            self._pga_confirm_timer.stop()
+
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+        if not connected:
+            self._finish_pga_failure(index, "串口未连接")
+            return
+
+        self._pga_pending = True
+        self._pga_pending_index = index
+        self._pga_rx_buffer = ""
+        self.serial_command.send_data(f"PGA{index}~", source="pga_set")
+        logger.info(f"PGA 档位变更请求已发送: PGA{index}~")
+        self._update_status(f"正在设置 {PGA_OPTION_TEXTS[index]} ...")
+        self._pga_confirm_timer.start()
+
+    def _finish_pga_failure(self, index: int, reason: str) -> None:
+        """PGA 设置失败：恢复为上次确认的档位。"""
+        self._pga_pending = False
+        self._pga_confirm_timer.stop()
+        self._pga_rx_buffer = ""
+        config = get_config_manager()
+        logger.warning(f"PGA{index} 设置失败: {reason}")
+        self._update_status(
+            f"{PGA_OPTION_TEXTS[index]} 设置失败：{reason}，已恢复为 {PGA_OPTION_TEXTS[self._pga_gain_confirmed]}",
+            is_error=True,
+        )
+        if config.pga_gain != self._pga_gain_confirmed:
+            config.pga_gain = self._pga_gain_confirmed
+
+    def _confirm_pga_ok(self, index: int) -> None:
+        """收到固件 PGA <n> OK 回信：确认切换成功。"""
+        self._pga_pending = False
+        self._pga_confirm_timer.stop()
+        self._pga_rx_buffer = ""
+        self._pga_gain_confirmed = index
+        config = get_config_manager()
+        config.pga_gain = index
+        logger.info(f"PGA 档位设置成功: PGA{index} (×{PGA_GAIN_VALUES[index]})")
+        self._update_status(
+            f"{PGA_OPTION_TEXTS[index]} 设置成功",
+            auto_recover=True,
+        )
+
+    def _on_pga_confirm_timeout(self) -> None:
+        if self._pga_pending:
+            self._finish_pga_failure(self._pga_pending_index, "未收到固件确认(超时)")
+
+    def _on_pga_rx_bytes(self, data: bytes) -> None:
+        """解析固件回信，确认 PGA 是否修改成功。"""
+        if not (self._pga_pending or self._pga_query_pending or self._idac_set_pending):
+            return
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:
+            return
+        self._pga_rx_buffer += text
+        while "\n" in self._pga_rx_buffer:
+            line, self._pga_rx_buffer = self._pga_rx_buffer.split("\n", 1)
+            line = line.strip("\r").strip()
+            if not line:
+                continue
+
+            # 查询回信：PGA 5 (x32)
+            query_match = re.match(r"^PGA\s+(\d+)\s*\(x(\d+)\)\s*$", line, re.IGNORECASE)
+            if query_match:
+                query_index = int(query_match.group(1))
+                if self._pga_query_pending:
+                    self._sync_pga_from_firmware(query_index)
+                continue
+
+            # IDAC 设置回信：IDAC 4 OK / IDAC BUSY / IDAC RANGE
+            idac_ok_match = re.match(r"^IDAC\s+(\d+)\s+OK\s*$", line, re.IGNORECASE)
+            if idac_ok_match:
+                if self._idac_set_pending:
+                    self._confirm_idac_ok(int(idac_ok_match.group(1)))
+                continue
+
+            if re.match(r"^IDAC\s+(BUSY|RANGE|ERR)\b", line, re.IGNORECASE):
+                if self._idac_set_pending:
+                    detail = line.split(None, 1)[1] if " " in line else line
+                    self._fail_idac_set(self._idac_set_pending_index, detail.upper())
+                continue
+
+            ok_match = re.match(r"^PGA\s+(\d+)\s+OK\s*$", line, re.IGNORECASE)
+            if ok_match:
+                ok_index = int(ok_match.group(1))
+                if self._pga_pending and ok_index == self._pga_pending_index:
+                    self._confirm_pga_ok(ok_index)
+                continue
+
+            if re.match(r"^PGA\s+(BUSY|RANGE|ERR)\b", line, re.IGNORECASE):
+                if self._pga_pending:
+                    detail = line.split(None, 1)[1] if " " in line else line
+                    self._finish_pga_failure(self._pga_pending_index, detail.upper())
+
+    def _query_pga_gain_from_firmware(self) -> None:
+        """串口连接完成后查询固件当前 PGA 档位（PGA~）。"""
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+        if not connected:
+            return
+        if self._pga_pending:
+            logger.debug("PGA 档位查询延后：存在档位设置确认中")
+            return
+        self._pga_query_pending = True
+        self._pga_rx_buffer = ""
+        self.serial_command.send_data("PGA~", source="pga_query")
+        logger.info("串口连接后发送 PGA 档位查询: PGA~")
+        self._pga_query_timer.start()
+
+    def _on_pga_query_timeout(self) -> None:
+        """PGA 查询超时：先重试 1 次，仍失败则保持本地配置。"""
+        if self._pga_query_pending:
+            if self._pga_query_retry_count < 1:
+                self._pga_query_retry_count += 1
+                logger.warning("PGA 档位查询超时，进行第 1 次重试")
+                self._query_pga_gain_from_firmware()
+                return
+            self._pga_query_pending = False
+            self._pga_rx_buffer = ""
+            logger.warning(
+                "PGA 档位查询重试仍超时，保持本地配置: "
+                f"{PGA_OPTION_TEXTS[self._pga_gain_confirmed]}"
+            )
+
+    def _sync_pga_from_firmware(self, index: int) -> None:
+        """固件查询结果：同步量程下拉框与当前档位偏置。"""
+        if not (0 <= index < len(PGA_GAIN_VALUES)):
+            logger.warning(f"固件返回的 PGA 档位无效: {index}")
+            self._pga_query_pending = False
+            self._pga_query_timer.stop()
+            self._pga_rx_buffer = ""
+            return
+
+        self._pga_query_pending = False
+        self._pga_query_timer.stop()
+        self._pga_rx_buffer = ""
+        self._pga_query_retry_count = 0
+        # 先标记已确认，避免 config 信号触发重复下发 PGA<n>~
+        self._pga_gain_confirmed = index
+        config = get_config_manager()
+        config.pga_gain = index  # 同步下拉框并自动匹配该档位偏置
+        logger.info(
+            "串口连接后已同步固件 PGA 档位: "
+            f"{PGA_OPTION_TEXTS[index]}，当前偏置 offset={config.offset:.1f} ADC"
+        )
+        self._update_status(
+            f"已同步 {PGA_OPTION_TEXTS[index]}，偏置 {config.offset:.1f} ADC",
+            auto_recover=True,
+        )
+
+    # ==================== 连接后 IDAC 设置（完成后执行 PGA 查询） ====================
+
+    def _start_connect_idac_set(self) -> None:
+        """串口连接后先设置 IDAC 档位（IDAC4~），确认后再做 PGA 查询。"""
+        if self._idac_connect_started:
+            return
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+        if not connected:
+            return
+        self._idac_connect_started = True
+        self._request_idac_set(CONNECT_IDAC_INDEX)
+
+    def _request_idac_set(self, index: int) -> None:
+        """发送 IDAC<n>~ 指令，启动回信确认窗口。"""
+        if self._idac_set_pending:
+            return
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+        if not connected:
+            return
+        self._idac_set_pending = True
+        self._idac_set_pending_index = index
+        self._pga_rx_buffer = ""
+        self.serial_command.send_data(f"IDAC{index}~", source="idac_set")
+        logger.info(f"串口连接后设置 IDAC 档位: IDAC{index}~")
+        self._idac_confirm_timer.start()
+
+    def _confirm_idac_ok(self, index: int) -> None:
+        """收到 IDAC <n> OK：确认成功，继续执行 PGA 查询。"""
+        self._idac_set_pending = False
+        self._idac_confirm_timer.stop()
+        logger.info(f"IDAC 档位设置成功: IDAC{index}")
+        self._update_status(f"IDAC{index} 设置成功", auto_recover=True)
+        # 后续步骤：PGA 档位查询与量程/偏置同步
+        self._query_pga_gain_from_firmware()
+
+    def _fail_idac_set(self, index: int, reason: str) -> None:
+        """IDAC 设置失败：记录后继续执行 PGA 查询。"""
+        self._idac_set_pending = False
+        self._idac_confirm_timer.stop()
+        logger.warning(f"IDAC{index} 设置失败: {reason}")
+        self._update_status(
+            f"IDAC{index} 设置失败: {reason}",
+            is_error=True,
+            auto_recover=True,
+        )
+        # 即使 IDAC 设置失败，仍继续后续的 PGA 查询同步
+        self._query_pga_gain_from_firmware()
+
+    def _on_idac_confirm_timeout(self) -> None:
+        """IDAC 设置超时：先重试 1 次，仍失败则继续 PGA 查询。"""
+        if not self._idac_set_pending:
+            return
+        index = self._idac_set_pending_index
+        if self._idac_retry_count < 1:
+            self._idac_retry_count += 1
+            logger.warning(f"IDAC{index} 设置超时，进行第 1 次重试")
+            self._pga_rx_buffer = ""
+            self.serial_command.send_data(f"IDAC{index}~", source="idac_set_retry")
+            self._idac_confirm_timer.start()
+            return
+        self._fail_idac_set(index, "未收到固件确认(超时)")
 
     def _on_config_scheme_changed(self, test_type):
         """配置管理器移动方案改变，同步更新当前测试类型流程。"""
@@ -518,8 +789,19 @@ class MeasurePanel(QWidget):
             if self.serial_command:
                 self.serial_command.set_mode_from_test_speed(get_config_manager().test_speed)
 
+            # 串口连接后：先设置 IDAC4~ 并确认，随后再查询/同步 PGA 档位
+            self._idac_connect_started = False
+            self._idac_retry_count = 0
+            self._pga_query_retry_count = 0
+            QTimer.singleShot(500, self._start_connect_idac_set)
+
             logger.info(f"Serial connected: {com_port}")
         else:
+            self._pga_query_pending = False
+            self._pga_query_timer.stop()
+            self._idac_set_pending = False
+            self._idac_confirm_timer.stop()
+            self._idac_connect_started = False
             self._set_serial_button_state(False)
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
@@ -767,7 +1049,8 @@ class MeasurePanel(QWidget):
         if self._offset_dialog:
             config = get_config_manager()
             offset_adc = getattr(config, 'offset', None)
-            offset_mt = offset_adc / 73.35 if offset_adc else None
+            factor = get_pga_mag_conversion_factor(config.pga_gain)
+            offset_mt = offset_adc / factor if offset_adc is not None else None
             logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_adc} ADC ({offset_mt} mT)")
             self._offset_dialog.show_result(success, offset_mt)
             self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
@@ -930,44 +1213,36 @@ class MeasurePanel(QWidget):
         self.serial_command.position_query(source="stage_short_press")
 
     def _get_distance_value(self):
-        """读取短按距离(mm)，非法时提示并返回 None。"""
-        distance_edit = self.findChild(QLineEdit, "distance_edit")
-        if not distance_edit:
+        """读取短按距离(mm 整数，来自带 mm 后缀的输入框)。"""
+        spin = self.findChild(QSpinBox, "distance_edit")
+        if spin is None:
             return None
-        text = distance_edit.text().strip()
-        if not text:
-            self._update_status("错误：距离值为空", is_error=True)
-            return None
-        try:
-            value = float(text)
-        except ValueError:
-            self._update_status("错误：距离值格式错误", is_error=True)
-            return None
+        value = spin.value()
         if value <= 0:
             self._update_status("错误：距离值必须大于 0", is_error=True)
             return None
         return value
 
     def _init_stage_distance(self):
-        """从配置载入短按距离，并连接编辑结束校验保存。"""
+        """从配置载入短按距离(mm 整数)，限制整数输入并连接保存。"""
         config = get_config_manager()
-        distance_edit = self.findChild(QLineEdit, "distance_edit")
-        if distance_edit:
-            distance_edit.setText(f"{config.stage_step_distance:g}")
-            distance_edit.editingFinished.connect(self._on_stage_distance_edited)
+        spin = self.findChild(QSpinBox, "distance_edit")
+        if spin:
+            spin.setValue(int(round(config.stage_step_distance)))
+            spin.editingFinished.connect(self._on_stage_distance_edited)
 
     def _on_stage_distance_edited(self):
         """校验输入的距离值，合法则持久化，非法则回退为配置值。"""
         config = get_config_manager()
-        distance_edit = self.findChild(QLineEdit, "distance_edit")
-        if not distance_edit:
+        spin = self.findChild(QSpinBox, "distance_edit")
+        if spin is None:
             return
         value = self._get_distance_value()
         if value is None:
-            distance_edit.setText(f"{config.stage_step_distance:g}")
+            spin.setValue(int(round(config.stage_step_distance)))
             return
         config.stage_step_distance = value
-        distance_edit.setText(f"{value:g}")
+        spin.setValue(value)
 
     def _reset_sample_inputs(self):
         """重置样品信息"""
@@ -1172,6 +1447,12 @@ class MeasurePanel(QWidget):
         if hasattr(self.serial_manager, "signal_connection_status_changed"):
             self.serial_manager.signal_connection_status_changed.connect(
                 self._on_serial_status_changed,
+                Qt.QueuedConnection,
+            )
+
+        if hasattr(self.serial_manager, "signal_data_received"):
+            self.serial_manager.signal_data_received.connect(
+                self._on_pga_rx_bytes,
                 Qt.QueuedConnection,
             )
 

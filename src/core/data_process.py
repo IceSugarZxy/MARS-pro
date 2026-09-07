@@ -28,7 +28,12 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import get_logger
-from .config_manager import get_config_manager
+from .config_manager import (
+    PGA_GAIN_VALUES,
+    PGA_OPTION_TEXTS,
+    get_config_manager,
+    get_pga_mag_conversion_factor,
+)
 from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
@@ -96,8 +101,8 @@ class DataProcess(QObject):
     # ========================================================================
     SAMPLING_FREQ = 27000  # 采样频率 (Hz)
     CUTOFF_RATIO = 70  # 截止频率与采样频率的比值
-    ADC_PER_MT = 733.5   # 标定灵敏度：733.5 ADC/mT（原始标定 73.35 ADC/Gs，×10 转 mT）
-    ZERO_FIELD_ADC = 488.69  # 标定零场偏置（绝对值）
+    # 磁场换算系数不再使用固定常数，改为按 PGA 档位查表：
+    # config_manager.PGA_MAG_ADC_PER_MT（2026-09-07 标定）
 
     def __init__(self, data_queue: queue.Queue):
         """
@@ -114,6 +119,9 @@ class DataProcess(QObject):
 
         # 从配置文件加载偏置值，如果不存在则使用默认值
         self.mag_offset = self.config.offset or self._get_default_offset()
+        self._mag_conversion_factor = self._get_mag_conversion_factor()
+        # 切换 PGA 档位时自动匹配对应档位的偏置
+        self.config.signal_pga_gain_changed.connect(self._on_pga_gain_changed)
 
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
@@ -143,6 +151,24 @@ class DataProcess(QObject):
         """大端序有符号 16-bit 解码：两个字节 → int16 ADC 原始值。"""
         raw = (high << 8) | low
         return raw - 0x10000 if raw >= 0x8000 else raw
+
+    def _get_default_offset(self) -> float:
+        """偏置缺失时的兜底值（0 = 不校正）。"""
+        return 0.0
+
+    def _get_mag_conversion_factor(self) -> float:
+        """当前 PGA 档位的磁场换算系数（ADC counts/mT）。"""
+        return get_pga_mag_conversion_factor(self.config.pga_gain)
+
+    def _on_pga_gain_changed(self, index: int) -> None:
+        """PGA 档位切换后自动匹配该档位保存的零场偏置。"""
+        self.mag_offset = self.config.offset or 0
+        self._mag_conversion_factor = self._get_mag_conversion_factor()
+        logger.info(
+            f"PGA 档位已切换为 {PGA_OPTION_TEXTS[index]}，"
+            f"自动匹配偏置: {self.mag_offset:.1f} ADC，"
+            f"换算系数: {self._mag_conversion_factor:.3f} ADC/mT"
+        )
 
     def set_sample_info(self, sample_info: dict) -> None:
         """
@@ -525,7 +551,12 @@ class DataProcess(QObject):
 
         # 加载偏置值（ADC 单位）用于零场校正
         self.mag_offset = self.config.offset or 0
-        logger.info(f"Offset: {self.mag_offset:.1f} ADC")
+        self._mag_conversion_factor = self._get_mag_conversion_factor()
+        logger.info(
+            f"Offset: {self.mag_offset:.1f} ADC "
+            f"({PGA_OPTION_TEXTS[self.config.pga_gain]} 档位)，"
+            f"换算系数: {self._mag_conversion_factor:.3f} ADC/mT"
+        )
 
         self._stop_measure_processing = False
 
@@ -558,7 +589,7 @@ class DataProcess(QObject):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
                         adc = self._decode_s16(byte1, byte2) - self.mag_offset
-                        measure_list.append(round(adc / self.ADC_PER_MT, 4))
+                        measure_list.append(round(adc / self._mag_conversion_factor, 4))
 
                     del temp_buffer[0:batch_size * 2]
 
@@ -775,11 +806,13 @@ class DataProcess(QObject):
                 )
                 self.mag_offset = statistics.mean(middle_data)
 
-                # 保存偏置值到配置文件
+                # 保存偏置值到配置文件（写入当前 PGA 档位对应项）
                 self.config.offset = self.mag_offset
                 logger.info(
                     "Offset flow: calibration succeeded, "
-                    f"offset={self.mag_offset:.1f} ADC ({self.mag_offset/self.ADC_PER_MT:.3f} mT), "
+                    f"offset={self.mag_offset:.1f} ADC "
+                    f"({self.mag_offset/self._mag_conversion_factor:.3f} mT), "
+                    f"pga={PGA_OPTION_TEXTS[self.config.pga_gain]}, "
                     f"config_file={getattr(self.config, 'config_file', '')}"
                 )
                 logger.info("Offset flow: emitting finished signal, success=True")

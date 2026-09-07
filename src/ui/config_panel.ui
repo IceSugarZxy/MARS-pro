@@ -727,22 +727,52 @@
             <verstretch>0</verstretch>
            </sizepolicy>
           </property>
-          <property name="minimumSize">
-           <size>
-            <width>110</width>
-            <height>30</height>
-           </size>
-          </property>
-          <item>
-           <property name="text">
-            <string>80mT量程</string>
-           </property>
-          </item>
-          <item>
-           <property name="text">
-            <string>160mT量程</string>
-           </property>
-          </item>
+        <property name="minimumSize">
+         <size>
+          <width>215</width>
+          <height>30</height>
+         </size>
+        </property>
+        <item>
+         <property name="text">
+          <string>3120mT量程 (理论6399mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>1570mT量程 (理论3239mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>780mT量程 (理论1619mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>390mT量程 (理论811mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>190mT量程 (理论403mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>90mT量程 (理论199mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>40mT量程 (理论97mT)</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>20mT量程 (理论46mT)</string>
+         </property>
+        </item>
          </widget>
         </item>
       <item row="1" column="6">
