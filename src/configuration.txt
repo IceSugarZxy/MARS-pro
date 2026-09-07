@@ -1,0 +1,18 @@
+offset:-1.9399921627618115
+pga_offsets:{"0": -1.9399921627618115, "1": -53.43753875354281, "2": -106.21986176213515, "3": -212.25595570273902, "4": -423.38122533254597, "5": -845.6150033990581, "6": -1692.3727071422006, "7": -220.28477580121339}
+COM:COM4
+test_x:-180
+test_z:48218
+suspend_x:54134
+suspend_z:95354
+test_type:0
+test_movement_scheme:x_extra
+suspend_movement_scheme:x_extra
+test_type_schemes:{"0": {"test_schemes": [{"steps": ["X", "Z"]}, {"name": "z_first", "steps": ["Z", "X"]}], "suspend_schemes": [{"steps": ["Z", "X"]}, {"name": "x_first", "steps": ["X", "Z"]}], "active_test_scheme": 0, "active_suspend_scheme": 0}, "1": {"test_schemes": [{"name": "z_first", "steps": ["Z", "X"]}, {"name": "x_first", "steps": ["X", "Z"]}], "suspend_schemes": [{"name": "x_first", "steps": ["X", "Z"]}, {"name": "z_first", "steps": ["Z", "X"]}], "active_test_scheme": 0, "active_suspend_scheme": 0}, "2": {"test_schemes": [{"steps": ["X", "X-", "Z", "X"]}], "suspend_schemes": [{"steps": ["X+", "Z", "X"]}], "active_test_scheme": 0, "active_suspend_scheme": 0}, "3": {"test_schemes": [{"name": "z_first", "steps": ["Z", "X"]}, {"name": "x_first", "steps": ["X", "Z"]}], "suspend_schemes": [{"name": "x_first", "steps": ["X", "Z"]}, {"name": "z_first", "steps": ["Z", "X"]}], "active_test_scheme": 0, "active_suspend_scheme": 0}, "2": {"test_schemes": [{"steps": ["X", "X-", "Z", "X"]}], "suspend_schemes": [{"steps": ["X-", "Z", "X"]}], "active_test_scheme": 0, "active_suspend_scheme": 0}}
+inner_x_offset:1.0
+inner_z_offset:1.0
+retract_distance:0.0
+test_speed:0
+sensor_range:1
+stage_step_distance:10.0
+pga_gain:0
