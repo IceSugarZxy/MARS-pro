@@ -1020,10 +1020,23 @@ class MeasurePanel(QWidget):
             # 显示校准对话框
             self._offset_dialog = OffsetCalibrationDialog(self)
             self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
+            self._offset_dialog.cancel_requested.connect(
+                self._on_offset_cancel_clicked
+            )
             self._offset_dialog.show()
             logger.info("Offset flow: MeasurePanel progress dialog shown")
             self.serial_command.offset_calibration()
             logger.info("Offset flow: MeasurePanel command dispatched")
+
+    def _on_offset_cancel_clicked(self):
+        """偏置校准进行中点击取消：立即停止采集并关闭对话框。"""
+        logger.info("Offset flow: 用户取消偏置校准")
+        if self._offset_dialog is not None:
+            self._offset_dialog.close()
+            self._offset_dialog = None
+        if self.serial_command is not None:
+            self.serial_command.cancel_offset_calibration()
+            self._update_status("偏置校准已取消", auto_recover=True)
 
     def _on_offset_progress(self, current, total):
         """更新偏置校准进度条"""
@@ -1053,14 +1066,6 @@ class MeasurePanel(QWidget):
             offset_mt = offset_adc / factor if offset_adc is not None else None
             logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_adc} ADC ({offset_mt} mT)")
             self._offset_dialog.show_result(success, offset_mt)
-            self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
-    def _close_offset_dialog(self):
-        """关闭偏置校准对话框"""
-        if self._offset_dialog:
-            logger.info("Offset flow: MeasurePanel offset dialog closed")
-            self._offset_dialog.close()
-            self._offset_dialog = None
-
     def _test_position_button_clicked(self):
         """测试位置"""
         logger.info("测试位置按钮被点击")

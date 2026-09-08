@@ -4,7 +4,7 @@
 显示校准进度和结果
 """
 from PyQt5.QtWidgets import QDialog, QMessageBox
-from PyQt5.QtCore import Qt, QPoint, QTimer
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5 import uic
 import os
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
@@ -13,12 +13,14 @@ from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 class OffsetCalibrationDialog(QDialog):
     """偏置校准对话框"""
 
+    cancel_requested = pyqtSignal()
     CALIBRATION_DURATION = OFFSET_PROGRESS_SECONDS
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("偏置校准")
         self.setFixedSize(400, 200)
+        self._finished = False
 
         ui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui", "offset_calibration_dialog.ui")
         uic.loadUi(ui_path, self)
@@ -34,7 +36,7 @@ class OffsetCalibrationDialog(QDialog):
         self._progress_timer.timeout.connect(self._update_progress_by_time)
         self._progress_start_time = None
 
-        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_cancel.clicked.connect(self._on_cancel_clicked)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.pos().y() <= 35:
@@ -76,6 +78,7 @@ class OffsetCalibrationDialog(QDialog):
 
     def show_result(self, success, offset_value=None):
         """显示校准结果"""
+        self._finished = True
         if success:
             self.label_title.setText("偏置校准完成")
             self.label_title.setStyleSheet("color: #27ae60; font-size: 18px; font-weight: bold;")
@@ -93,3 +96,10 @@ class OffsetCalibrationDialog(QDialog):
             self.label_status.setText("未能获取有效偏置数据")
 
         self.btn_cancel.setText("确定")
+
+    def _on_cancel_clicked(self):
+        """校准中点击取消：通知调用方停止采集；完成态点击：关闭窗口。"""
+        if self._finished:
+            self.accept()
+            return
+        self.cancel_requested.emit()

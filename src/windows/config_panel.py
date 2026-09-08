@@ -4,10 +4,21 @@
 """
 
 import os
+import re
 import serial.tools.list_ports
 from PyQt5.QtCore import Qt, QTimer, QObject, QEvent
 from PyQt5.QtGui import QTextCursor
-from PyQt5.QtWidgets import QWidget, QPushButton, QLineEdit, QLabel, QComboBox, QToolButton, QDoubleSpinBox, QPlainTextEdit
+from PyQt5.QtWidgets import (
+    QWidget,
+    QPushButton,
+    QLineEdit,
+    QLabel,
+    QComboBox,
+    QToolButton,
+    QDoubleSpinBox,
+    QPlainTextEdit,
+    QMessageBox,
+)
 from PyQt5 import uic
 from core.logger import get_logger
 from core import get_config_manager
@@ -16,8 +27,7 @@ from core.config_manager import (
     action_to_text,
     get_pga_mag_conversion_factor,
 )
-from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
-from windows.offset_calibration_dialog import OffsetCalibrationDialog
+from windows.full_offset_calibration_dialog import FullOffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
 
 logger = get_logger('ConfigPanel')
@@ -59,8 +69,22 @@ class ConfigPanel(QWidget):
         # 初始化快捷操作配置
         self._init_quick_action_settings()
 
-        # 偏置校准对话框
-        self._offset_dialog = None
+        # 全量程偏置校准自动流程状态
+        self._offset_all_active = False
+        self._offset_all_gains = list(range(len(PGA_OPTION_TEXTS)))
+        self._offset_all_cursor = 0
+        self._offset_all_original_pga = None
+        self._offset_all_wait_pga = False
+        self._offset_all_wait_offset = False
+        self._offset_all_pga_retries = 0
+        self._offset_all_pga_buffer = ""
+        self._offset_all_cancel_pending = False
+        self._offset_all_results = []
+        self._offset_all_progress = None
+        self._offset_all_pga_timer = QTimer(self)
+        self._offset_all_pga_timer.setSingleShot(True)
+        self._offset_all_pga_timer.setInterval(2500)
+        self._offset_all_pga_timer.timeout.connect(self._on_offset_all_pga_timeout)
 
         # 加载台控示意图
         self._init_stage_picture()
@@ -138,6 +162,7 @@ class ConfigPanel(QWidget):
         if tm:
             self.serial_manager = tm.serial_manager
             self.serial_command = tm.serial_command
+            self.data_process = tm.data_process
             self.serial_manager.signal_connection_status_changed.connect(
                 self._on_serial_status_changed,
                 Qt.QueuedConnection,
@@ -151,9 +176,9 @@ class ConfigPanel(QWidget):
                 self._on_position_data_updated,
                 Qt.QueuedConnection,
             )
-            # 连接偏置校准完成信号
+            # 全量程偏置校准完成信号
             tm.data_process.signal_offset_data_process_finished.connect(
-                self._on_offset_calibration_finished,
+                self._on_offset_all_offset_finished,
                 Qt.QueuedConnection,
             )
             logger.info("测试配置面板已绑定线程管理器，位置查询由 SerialCommand 管理")
@@ -279,13 +304,13 @@ class ConfigPanel(QWidget):
             combo_test_speed.blockSignals(False)
 
     def _on_pga_gain_changed(self, index):
-        """用户修改 PGA 档位：写入配置（发送与回信确认由测量面板统一处理）。"""
+        """用户修改 PGA 量程：写入配置（发送与回信确认由测量面板统一处理）。"""
         config = get_config_manager()
         config.pga_gain = index
-        logger.info(f"PGA 档位已更改: {PGA_OPTION_TEXTS[config.pga_gain]}")
+        logger.info(f"PGA 量程已更改: {PGA_OPTION_TEXTS[config.pga_gain]}")
 
     def _on_config_pga_gain_changed(self, index):
-        """配置管理器 PGA 档位改变，同步更新下拉框"""
+        """配置管理器 PGA 量程改变，同步更新下拉框"""
         combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
         if combo_sensor_range and combo_sensor_range.currentIndex() != index:
             combo_sensor_range.blockSignals(True)
@@ -469,6 +494,10 @@ class ConfigPanel(QWidget):
         super().hideEvent(event)
 
     def _on_serial_data_received(self, data: bytes) -> None:
+        # 全量程偏置校准进行中且等待 PGA 回信时，先喂给自动流程解析
+        if self._offset_all_active and self._offset_all_wait_pga:
+            self._feed_offset_all_pga_rx(data)
+
         if not self._serial_rx_update_enabled:
             return
 
@@ -530,6 +559,10 @@ class ConfigPanel(QWidget):
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.disable_position_query_timer()
 
+            # 串口断开时中止进行中的全量程偏置校准
+            if self._offset_all_active:
+                self._offset_all_force_stop()
+
             port_combo = self.findChild(QComboBox, "port_combo")
             if port_combo and port_combo.count() > 0:
                 port_combo.setEnabled(True)
@@ -547,7 +580,9 @@ class ConfigPanel(QWidget):
 
         # 快捷操作
         self.findChild(QPushButton, "btn_zeroing").clicked.connect(self._on_zeroing)
-        self.findChild(QPushButton, "btn_offset").clicked.connect(self._on_offset)
+        btn_offset_all = self.findChild(QPushButton, "btn_offset_all")
+        if btn_offset_all:
+            btn_offset_all.clicked.connect(self._on_offset_all)
         self.findChild(QPushButton, "btn_test_pos").clicked.connect(self._on_test_pos)
         self.findChild(QPushButton, "btn_suspend").clicked.connect(self._on_suspend)
         self.findChild(QPushButton, "btn_test_pos_save").clicked.connect(self._on_test_pos_save)
@@ -737,55 +772,285 @@ class ConfigPanel(QWidget):
         else:
             logger.warning("串口命令未初始化")
 
-    def _on_offset(self):
-        """偏置校准"""
-        if self.serial_command:
-            logger.info(
-                "Offset flow: ConfigPanel request received, "
-                f"dialog_present={self._offset_dialog is not None}"
-            )
-            # 停止位置查询定时器，防止干扰偏置校准
-            self.serial_command.disable_position_query_timer()
-            logger.info("Offset flow: ConfigPanel disabled position query timer")
+    # ==================== 全量程偏置校准 ====================
 
-            # 显示校准对话框
-            self._offset_dialog = OffsetCalibrationDialog(self)
-            self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
-            self._offset_dialog.show()
-            logger.info("Offset flow: ConfigPanel progress dialog shown")
-            self.serial_command.offset_calibration()
-            logger.info("Offset flow: ConfigPanel command dispatched")
-        else:
-            logger.warning("串口命令未初始化")
-
-    def _on_offset_calibration_finished(self, success):
-        """偏置校准完成"""
-        logger.info(
-            "Offset flow: ConfigPanel finished callback, "
-            f"success={success}, dialog_present={self._offset_dialog is not None}"
+    def _on_offset_all(self):
+        """全量程偏置校准：自动切换 8 个 PGA 量程并逐个执行偏置校准。"""
+        if self._offset_all_active:
+            return
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
         )
-        # 重新启动位置查询定时器
+        if not connected:
+            QMessageBox.warning(self, "全量程偏置校准", "请先连接串口")
+            return
+        if getattr(self.serial_command, '_offset_calibrating', False):
+            QMessageBox.warning(self, "全量程偏置校准", "当前已有偏置校准进行中，请稍后再试")
+            return
+
+        config = get_config_manager()
+        self._offset_all_active = True
+        self._offset_all_original_pga = config.pga_gain
+        self._offset_all_cursor = 0
+        self._offset_all_cancel_pending = False
+        self._offset_all_results = []
+        self._offset_all_wait_pga = False
+        self._offset_all_wait_offset = False
+        self._offset_all_pga_buffer = ""
+        self._offset_all_pga_retries = 0
+        self._offset_all_set_buttons_enabled(False)
+
+        progress = FullOffsetCalibrationDialog(
+            self, total=len(self._offset_all_gains)
+        )
+        progress.cancel_requested.connect(self._offset_all_on_cancel_requested)
+        progress.show()
+        self._offset_all_progress = progress
+
+        logger.info("全量程偏置校准开始，共 %d 个量程", len(self._offset_all_gains))
+        self._offset_all_start_gain(0)
+
+    def _offset_all_set_buttons_enabled(self, enabled: bool):
+        """自动校准期间禁用/恢复偏置相关按钮，避免并发操作。"""
+        for name in ("btn_offset_all",):
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(enabled)
+        combo = self.findChild(QComboBox, "combo_sensor_range")
+        if combo:
+            combo.setEnabled(enabled)
+
+    def _offset_all_on_cancel_requested(self):
+        """用户点击取消：立即关闭界面；若正在采集则停止并丢弃本轮数据。"""
+        if not self._offset_all_active:
+            return
+        self._offset_all_cancel_pending = True
+        # 立即关闭对话框，不等当前轮结束
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.accept()
+            self._offset_all_progress = None
+
+        if self._offset_all_wait_pga:
+            # 正在切换量程，无采集进行中，直接收尾
+            self._offset_all_wait_pga = False
+            self._offset_all_pga_timer.stop()
+            self._offset_all_pga_buffer = ""
+            self._offset_all_finish()
+            return
+        if self._offset_all_wait_offset:
+            # 正在偏置采集：立即停止并丢弃残缺数据，finished 到达后收尾
+            if self.serial_command is not None:
+                self.serial_command.cancel_offset_calibration()
+            return
+        # 其他间隙：直接收尾
+        self._offset_all_finish()
+
+    def _offset_all_update_progress(self, text: str, value: int):
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.set_progress(value, text)
+
+    def _offset_all_start_gain(self, idx: int):
+        """开始第 idx 个量程：先发送 PGA 切换并等待固件确认。"""
+        if not self._offset_all_active:
+            return
+        if idx >= len(self._offset_all_gains) or self._offset_all_cancel_pending:
+            self._offset_all_finish()
+            return
+
+        self._offset_all_cursor = idx
+        gain_idx = self._offset_all_gains[idx]
+        self._offset_all_wait_pga = True
+        self._offset_all_pga_retries = 0
+        self._offset_all_pga_buffer = ""
+        self._offset_all_update_progress(
+            f"正在切换至 {PGA_OPTION_TEXTS[gain_idx]}（{idx + 1}/{len(self._offset_all_gains)}）…",
+            idx,
+        )
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.set_gain_state(idx, "切换中")
+        if self.serial_command:
+            self.serial_command.send_data(f"PGA{gain_idx}~", source="offset_all_pga")
+            self._offset_all_pga_timer.start()
+        else:
+            self._offset_all_finish()
+
+    def _feed_offset_all_pga_rx(self, data: bytes):
+        """解析全量程流程中 PGA<n>~ 的回信（PGA n OK）。"""
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:
+            return
+        self._offset_all_pga_buffer += text
+        while "\n" in self._offset_all_pga_buffer:
+            line, self._offset_all_pga_buffer = self._offset_all_pga_buffer.split("\n", 1)
+            line = line.strip("\r").strip()
+            if not line:
+                continue
+            ok_match = re.match(r"^PGA\s+(\d+)\s+OK\s*$", line, re.IGNORECASE)
+            if ok_match:
+                if not self._offset_all_wait_pga:
+                    continue
+                target = self._offset_all_gains[self._offset_all_cursor]
+                if int(ok_match.group(1)) == target:
+                    self._on_offset_all_pga_confirmed()
+                continue
+            if re.match(r"^PGA\s+(BUSY|RANGE|ERR)\b", line, re.IGNORECASE):
+                if self._offset_all_wait_pga:
+                    self._offset_all_pga_fail("固件拒绝(BUSY/RANGE/ERR)")
+                continue
+
+    def _on_offset_all_pga_confirmed(self):
+        """PGA 切换已确认，进入该量程的偏置校准。"""
+        self._offset_all_wait_pga = False
+        self._offset_all_pga_timer.stop()
+        self._offset_all_pga_buffer = ""
+        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        logger.info("全量程偏置校准：%s 切换成功", PGA_OPTION_TEXTS[gain_idx])
+        self._offset_all_start_offset()
+
+    def _on_offset_all_pga_timeout(self):
+        """PGA 切换回信超时：重试一次，仍失败则跳过该档。"""
+        if not (self._offset_all_active and self._offset_all_wait_pga):
+            return
+        if self._offset_all_pga_retries < 1:
+            self._offset_all_pga_retries += 1
+            gain_idx = self._offset_all_gains[self._offset_all_cursor]
+            logger.warning("全量程偏置校准：%s 切换超时，第 1 次重试",
+                           PGA_OPTION_TEXTS[gain_idx])
+            self._offset_all_pga_buffer = ""
+            self.serial_command.send_data(f"PGA{gain_idx}~", source="offset_all_pga_retry")
+            self._offset_all_pga_timer.start()
+            return
+        self._offset_all_pga_fail("PGA 切换超时")
+
+    def _offset_all_pga_fail(self, reason: str):
+        """PGA 切换失败：记录后跳过该档，继续下一档。"""
+        if not self._offset_all_active:
+            return
+        self._offset_all_wait_pga = False
+        self._offset_all_pga_timer.stop()
+        self._offset_all_pga_buffer = ""
+        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        logger.warning("全量程偏置校准：%s 失败：%s", PGA_OPTION_TEXTS[gain_idx], reason)
+        self._offset_all_results.append((gain_idx, False, None))
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.show_gain_result(gain_idx, False)
+            self._offset_all_progress.set_progress(
+                self._offset_all_cursor + 1,
+                f"{PGA_OPTION_TEXTS[gain_idx]} 切换失败：{reason}，跳过",
+            )
+        self._offset_all_next()
+
+    def _offset_all_start_offset(self):
+        """对当前量程执行一次偏置校准（结果写入指定量程槽位）。"""
+        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        self._offset_all_wait_offset = True
+        self._offset_all_update_progress(
+            f"正在校准 {PGA_OPTION_TEXTS[gain_idx]} 偏置"
+            f"（{self._offset_all_cursor + 1}/{len(self._offset_all_gains)}）…",
+            self._offset_all_cursor,
+        )
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.set_gain_state(self._offset_all_cursor, "校准中")
+        if self.data_process is not None:
+            self.data_process.set_offset_save_pga(gain_idx)
+        if self.serial_command:
+            self.serial_command.disable_position_query_timer()
+            self.serial_command.offset_calibration()
+
+    def _on_offset_all_offset_finished(self, success: bool):
+        """某一档偏置校准流程结束（含固件内部重试后的最终结果）。"""
+        if not (self._offset_all_active and self._offset_all_wait_offset):
+            return
+        # 固件内部自动重试尚未结束，继续等待
+        if getattr(self.serial_command, '_offset_retrying', False):
+            return
+        # 用户已取消：结束流程，不再进入下一量程
+        if self._offset_all_cancel_pending:
+            self._offset_all_wait_offset = False
+            self._offset_all_finish()
+            return
+
+        self._offset_all_wait_offset = False
+        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        offset_value = None
+        if success:
+            config = get_config_manager()
+            offset_value = config.get_offset_for_pga(gain_idx)
+        self._offset_all_results.append((gain_idx, bool(success), offset_value))
+        offset_mt = None
+        if success and offset_value is not None:
+            offset_mt = offset_value / get_pga_mag_conversion_factor(gain_idx)
+        logger.info(
+            "全量程偏置校准：%s %s（offset=%s）",
+            PGA_OPTION_TEXTS[gain_idx],
+            "成功" if success else "失败",
+            f"{offset_value:.1f}" if offset_value is not None else "-",
+        )
         if self.serial_command:
             self.serial_command.enable_position_query_timer()
-        logger.info("Offset flow: ConfigPanel re-enabled position query timer")
-        if self._offset_dialog:
-            config = get_config_manager()
-            offset_adc = getattr(config, 'offset', None)
-            factor = get_pga_mag_conversion_factor(config.pga_gain)
-            offset_mt = offset_adc / factor if offset_adc is not None else None
-            logger.info(
-                f"Offset flow: ConfigPanel showing result, "
-                f"offset={offset_adc} ADC ({offset_mt} mT)"
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.show_gain_result(
+                gain_idx, bool(success), offset_value, offset_mt
             )
-            self._offset_dialog.show_result(success, offset_mt)
-            self._offset_dialog.btn_cancel.clicked.connect(self._close_offset_dialog)
+            self._offset_all_progress.set_progress(
+                self._offset_all_cursor + 1,
+                f"已完成 {self._offset_all_cursor + 1}/{len(self._offset_all_gains)} 个量程",
+            )
+        self._offset_all_next()
 
-    def _close_offset_dialog(self):
-        """关闭偏置校准对话框"""
-        if self._offset_dialog:
-            logger.info("Offset flow: ConfigPanel offset dialog closed")
-            self._offset_dialog.close()
-            self._offset_dialog = None
+    def _offset_all_next(self):
+        """进入下一个量程。"""
+        self._offset_all_start_gain(self._offset_all_cursor + 1)
+
+    def _offset_all_finish(self):
+        """全部结束：恢复原量程并汇总结果。"""
+        if not self._offset_all_active:
+            return
+        self._offset_all_active = False
+        self._offset_all_cancel_pending = False
+        self._offset_all_wait_pga = False
+        self._offset_all_wait_offset = False
+        self._offset_all_pga_timer.stop()
+        self._offset_all_pga_buffer = ""
+        if self.data_process is not None:
+            self.data_process.clear_offset_save_pga()
+        if self.serial_command:
+            self.serial_command.enable_position_query_timer()
+
+        # 恢复进入前的 PGA 量程
+        config = get_config_manager()
+        if self._offset_all_original_pga is not None:
+            config.pga_gain = self._offset_all_original_pga
+
+        self._offset_all_set_buttons_enabled(True)
+
+        ok = [r for r in self._offset_all_results if r[1]]
+        failed = [r for r in self._offset_all_results if not r[1]]
+        logger.info("全量程偏置校准结束：成功 %d 个，失败 %d 个", len(ok), len(failed))
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.finish(len(ok), len(failed))
+
+    def _offset_all_force_stop(self):
+        """串口断开等异常情况下直接中止自动校准（不恢复硬件量程）。"""
+        if not self._offset_all_active:
+            return
+        self._offset_all_active = False
+        self._offset_all_cancel_pending = False
+        self._offset_all_wait_pga = False
+        self._offset_all_wait_offset = False
+        self._offset_all_pga_timer.stop()
+        self._offset_all_pga_buffer = ""
+        if self.data_process is not None:
+            self.data_process.clear_offset_save_pga()
+            self.data_process.request_offset_abort()
+        self._offset_all_set_buttons_enabled(True)
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.close()
+            self._offset_all_progress = None
+        logger.warning("串口断开，全量程偏置校准已中止")
 
     def _on_test_pos(self):
         """移动到测试位置"""

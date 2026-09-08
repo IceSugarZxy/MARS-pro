@@ -86,7 +86,7 @@
        </widget>
       </item>
       <item row="0" column="1">
-       <widget class="QPushButton" name="btn_offset">
+       <widget class="QPushButton" name="btn_offset_all">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
           <horstretch>0</horstretch>
@@ -106,7 +106,7 @@
          </size>
         </property>
         <property name="text">
-         <string>偏置校准</string>
+         <string>全量程偏置校准</string>
         </property>
        </widget>
       </item>

@@ -120,6 +120,10 @@ class DataProcess(QObject):
         # 从配置文件加载偏置值，如果不存在则使用默认值
         self.mag_offset = self.config.offset or self._get_default_offset()
         self._mag_conversion_factor = self._get_mag_conversion_factor()
+        # 全量程偏置校准时，将本次结果写入指定 PGA 量程（而非当前量程）
+        self._offset_save_pga_override: Optional[int] = None
+        # 用户取消偏置校准标志：置位后丢弃本次残缺数据
+        self._offset_abort_requested = False
         # 切换 PGA 档位时自动匹配对应档位的偏置
         self.config.signal_pga_gain_changed.connect(self._on_pga_gain_changed)
 
@@ -159,6 +163,33 @@ class DataProcess(QObject):
     def _get_mag_conversion_factor(self) -> float:
         """当前 PGA 档位的磁场换算系数（ADC counts/mT）。"""
         return get_pga_mag_conversion_factor(self.config.pga_gain)
+
+    def set_offset_save_pga(self, index: Optional[int]) -> None:
+        """设置偏置校准结果的写入档位；None 表示写当前档位。"""
+        if index is None:
+            self._offset_save_pga_override = None
+            return
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            self._offset_save_pga_override = None
+            return
+        if 0 <= index < len(PGA_GAIN_VALUES):
+            self._offset_save_pga_override = index
+        else:
+            self._offset_save_pga_override = None
+
+    def clear_offset_save_pga(self) -> None:
+        """清除偏置校准结果的指定写入档位（恢复写当前档位）。"""
+        self._offset_save_pga_override = None
+
+    def request_offset_abort(self) -> None:
+        """请求立即中止本次偏置校准（丢弃残缺数据，不保存）。"""
+        self._offset_abort_requested = True
+
+    def clear_offset_abort(self) -> None:
+        """清除偏置校准中止标志。"""
+        self._offset_abort_requested = False
 
     def _on_pga_gain_changed(self, index: int) -> None:
         """PGA 档位切换后自动匹配该档位保存的零场偏置。"""
@@ -701,6 +732,9 @@ class DataProcess(QObject):
             )
 
             while True:
+                if self._offset_abort_requested:
+                    logger.warning("Offset flow: 用户取消，停止采集")
+                    break
                 # 1. 把队列中的数据都取出来放到缓冲区
                 try:
                     while True:
@@ -775,6 +809,13 @@ class DataProcess(QObject):
 
                 time.sleep(OFFSET_QUEUE_POLL_SECONDS)
 
+            # 用户取消：丢弃本次残缺数据，不计算/不保存
+            if self._offset_abort_requested:
+                self._offset_abort_requested = False
+                logger.warning("Offset flow: aborted by user, discard partial data")
+                self.signal_offset_data_process_finished.emit(False)
+                return
+
             # 处理完成，计算偏置值
             if len(offset_list) > 0:
                 # 进行低通滤波
@@ -806,13 +847,18 @@ class DataProcess(QObject):
                 )
                 self.mag_offset = statistics.mean(middle_data)
 
-                # 保存偏置值到配置文件（写入当前 PGA 档位对应项）
-                self.config.offset = self.mag_offset
+                # 保存偏置值到配置文件：
+                # 全档位校准时写入指定档位，否则写入当前 PGA 档位对应项
+                save_pga = self._offset_save_pga_override
+                if save_pga is not None:
+                    self.config.set_offset_for_pga(save_pga, self.mag_offset)
+                else:
+                    self.config.offset = self.mag_offset
                 logger.info(
                     "Offset flow: calibration succeeded, "
                     f"offset={self.mag_offset:.1f} ADC "
                     f"({self.mag_offset/self._mag_conversion_factor:.3f} mT), "
-                    f"pga={PGA_OPTION_TEXTS[self.config.pga_gain]}, "
+                    f"pga={PGA_OPTION_TEXTS[save_pga if save_pga is not None else self.config.pga_gain]}, "
                     f"config_file={getattr(self.config, 'config_file', '')}"
                 )
                 logger.info("Offset flow: emitting finished signal, success=True")

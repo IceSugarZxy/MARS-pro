@@ -790,26 +790,37 @@ class SerialCommand(QObject):
         self._offset_calibrating = True
         self.data_process._offset_calibrating = True
         self.data_process._measurement_active = True   # 偏置校准同样产生二进制流，屏蔽文本解析器
+        self.data_process.clear_offset_abort()
+        self._offset_cancel_requested = False
         logger.debug("Offset flow: calibration flags enabled")
         self.counter_measurer()
+
+    def cancel_offset_calibration(self) -> None:
+        """用户取消偏置校准：立即停止采集并丢弃本次残缺数据。"""
+        self._offset_cancel_requested = True
+        self.data_process.request_offset_abort()
+        self.send_data("S~", source="offset_cancel")
+        logger.warning("Offset flow: 用户取消偏置校准")
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
         # 失败时自动重试（固件偶发 B~ 不响应，最多重试 2 次）
         if not success:
-            retry = getattr(self, '_offset_retry_count', 0) + 1
-            if retry <= 2:
-                self._offset_retry_count = retry
-                self._offset_retrying = True  # 重试中，UI 不要弹失败
-                logger.warning(f"Offset flow: retry {retry}/2 due to no data")
-                self.data_process.clear_data_queue()
-                self.counter_measurer()
-                return
-            self._offset_retry_count = 0
-            self._offset_retrying = False
+            if not getattr(self, '_offset_cancel_requested', False):
+                retry = getattr(self, '_offset_retry_count', 0) + 1
+                if retry <= 2:
+                    self._offset_retry_count = retry
+                    self._offset_retrying = True  # 重试中，UI 不要弹失败
+                    logger.warning(f"Offset flow: retry {retry}/2 due to no data")
+                    self.data_process.clear_data_queue()
+                    self.counter_measurer()
+                    return
+                self._offset_retry_count = 0
+                self._offset_retrying = False
 
         if self._offset_calibrating:
             self._offset_retry_count = 0
             self._offset_retrying = False
+            self._offset_cancel_requested = False
             self._offset_calibrating = False
             self.data_process._offset_calibrating = False
             self.data_process._measurement_active = False
