@@ -32,7 +32,7 @@ for relative_path in [
     if os.path.exists(source_path):
         datas.append((source_path, '.'))
 
-# 仅包含 7/29 的波形数据，raw_data 不复制
+# 仅包含 7/29 的波形数据
 plot_data_0729 = os.path.join(SPEC_DIR, 'data', 'plot_data', '20260729')
 if os.path.isdir(plot_data_0729):
     datas.append((plot_data_0729, os.path.join('data', 'plot_data', '20260729')))

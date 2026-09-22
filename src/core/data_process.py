@@ -31,6 +31,8 @@ from .logger import get_logger
 from .config_manager import (
     PGA_GAIN_VALUES,
     PGA_OPTION_TEXTS,
+    IDAC_MIN_INDEX,
+    IDAC_MAX_INDEX,
     get_config_manager,
     get_pga_mag_conversion_factor,
 )
@@ -122,15 +124,19 @@ class DataProcess(QObject):
         self._mag_conversion_factor = self._get_mag_conversion_factor()
         # 全量程偏置校准时，将本次结果写入指定 PGA 量程（而非当前量程）
         self._offset_save_pga_override: Optional[int] = None
+        # 用户校准的写入 IDAC 档位（None 表示写当前 IDAC 档）
+        self._offset_save_idac_override: Optional[int] = None
         # 用户取消偏置校准标志：置位后丢弃本次残缺数据
         self._offset_abort_requested = False
         # 切换 PGA 档位时自动匹配对应档位的偏置
         self.config.signal_pga_gain_changed.connect(self._on_pga_gain_changed)
+        # 切换 IDAC 档位时同样重新匹配（二维偏置表的另一维）
+        if hasattr(self.config, 'signal_idac_index_changed'):
+            self.config.signal_idac_index_changed.connect(self._on_idac_index_changed)
 
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
         self.enable_concentricity_calibration: bool = True
-        self.save_raw_data_enabled: bool = False
 
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
@@ -179,9 +185,27 @@ class DataProcess(QObject):
         else:
             self._offset_save_pga_override = None
 
+    def set_offset_save_target(self, pga_index: Optional[int],
+                               idac_index: Optional[int] = None) -> None:
+        """设置偏置校准结果的写入 (PGA, IDAC) 槽位；None 表示写当前档位。"""
+        self.set_offset_save_pga(pga_index)
+        if idac_index is None:
+            self._offset_save_idac_override = None
+            return
+        try:
+            idac_index = int(idac_index)
+        except (TypeError, ValueError):
+            self._offset_save_idac_override = None
+            return
+        if IDAC_MIN_INDEX <= idac_index <= IDAC_MAX_INDEX:
+            self._offset_save_idac_override = idac_index
+        else:
+            self._offset_save_idac_override = None
+
     def clear_offset_save_pga(self) -> None:
         """清除偏置校准结果的指定写入档位（恢复写当前档位）。"""
         self._offset_save_pga_override = None
+        self._offset_save_idac_override = None
 
     def request_offset_abort(self) -> None:
         """请求立即中止本次偏置校准（丢弃残缺数据，不保存）。"""
@@ -199,6 +223,13 @@ class DataProcess(QObject):
             f"PGA 档位已切换为 {PGA_OPTION_TEXTS[index]}，"
             f"自动匹配偏置: {self.mag_offset:.1f} ADC，"
             f"换算系数: {self._mag_conversion_factor:.3f} ADC/mT"
+        )
+
+    def _on_idac_index_changed(self, index: int) -> None:
+        """IDAC 档位切换后重新匹配该 (PGA, IDAC) 组合的零场偏置。"""
+        self.mag_offset = self.config.offset or 0
+        logger.info(
+            f"IDAC 档位已切换为 IDAC{index}，自动匹配偏置: {self.mag_offset:.1f} ADC"
         )
 
     def set_sample_info(self, sample_info: dict) -> None:
@@ -251,10 +282,6 @@ class DataProcess(QObject):
         else:
             logger.warning("测量数据为空，emit 空结果触发重试判断")
         self.signal_measure_data_progress.emit(len(measure_list), len(measure_list))
-        if self.save_raw_data_enabled:
-            self.save_raw_measure_data(measure_list)
-        else:
-            logger.info("原始测量数据自动保存已关闭，跳过 raw_data 写入")
 
         if self.measure_type == "vertical":
             angle_data = list(range(len(measure_list)))
@@ -850,8 +877,13 @@ class DataProcess(QObject):
                 # 保存偏置值到配置文件：
                 # 全档位校准时写入指定档位，否则写入当前 PGA 档位对应项
                 save_pga = self._offset_save_pga_override
-                if save_pga is not None:
-                    self.config.set_offset_for_pga(save_pga, self.mag_offset)
+                save_idac = self._offset_save_idac_override
+                if save_pga is not None or save_idac is not None:
+                    self.config.set_offset_for(
+                        save_pga if save_pga is not None else self.config.pga_gain,
+                        save_idac if save_idac is not None else self.config.idac_index,
+                        self.mag_offset,
+                    )
                 else:
                     self.config.offset = self.mag_offset
                 logger.info(
@@ -859,6 +891,7 @@ class DataProcess(QObject):
                     f"offset={self.mag_offset:.1f} ADC "
                     f"({self.mag_offset/self._mag_conversion_factor:.3f} mT), "
                     f"pga={PGA_OPTION_TEXTS[save_pga if save_pga is not None else self.config.pga_gain]}, "
+                    f"idac={save_idac if save_idac is not None else self.config.idac_index}, "
                     f"config_file={getattr(self.config, 'config_file', '')}"
                 )
                 logger.info("Offset flow: emitting finished signal, success=True")
@@ -1249,55 +1282,6 @@ class DataProcess(QObject):
     # ========================================================================
     # 数据保存
     # ========================================================================
-
-    def save_raw_measure_data(self, measure_list: List[float]) -> Optional[str]:
-        """
-        保存原始测量数据到CSV文件
-
-        将测量原始数据保存到文件，用于数据追溯和离线分析。
-
-        Args:
-            measure_list: 测量数据列表
-
-        Returns:
-            文件路径，保存失败返回None
-        """
-        try:
-            raw_data_dir = get_data_dir("raw_data")
-
-            # 创建目录（如果不存在）
-            if not os.path.exists(raw_data_dir):
-                os.makedirs(raw_data_dir)
-
-            # 生成文件名：raw_measure_data_YYYYMMDD_HHMMSS.csv
-            current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"raw_measure_data_{current_time}.csv"
-            filepath = os.path.join(raw_data_dir, filename)
-
-            # 写入CSV文件
-            with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-
-                # 写入样品信息
-                if self._sample_info:
-                    writer.writerow(['样品编号', self._sample_info.get('sample_code', '')])
-                    writer.writerow(['样品名称', self._sample_info.get('sample_name', '')])
-                    writer.writerow(['材料', self._sample_info.get('material', '')])
-                    writer.writerow(['线圈编号', self._sample_info.get('coil_code', '')])
-                    writer.writerow(['备注', self._sample_info.get('remark', '')])
-                    writer.writerow(['保存时间', current_time])
-                    writer.writerow([])  # 空行分隔
-
-                writer.writerow(['原始测量值'])  # 表头
-                for value in measure_list:
-                    writer.writerow([value])
-
-            logger.info(f"原始测量数据已保存到: {filepath}，共 {len(measure_list)} 个数据点")
-            return filepath
-
-        except Exception as e:
-            logger.error(f"保存原始测量数据失败: {e}")
-            return None
 
     def save_plot_measure_data(self, angle_data: List[float], mag_data: List[float],
                                analysis_results: dict = None) -> Optional[str]:

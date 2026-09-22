@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
 )
 
-from core.config_manager import PGA_OPTION_TEXTS
+from core.config_manager import PGA_OPTION_TEXTS, IDAC_OPTION_TEXTS
 
 
 class FullOffsetCalibrationDialog(QDialog):
@@ -34,15 +34,17 @@ class FullOffsetCalibrationDialog(QDialog):
     COLOR_FAIL = "#e74c3c"
     COLOR_WAIT = "#7f8c8d"
 
-    def __init__(self, parent=None, total=8):
+    def __init__(self, parent=None, total=8, targets=None):
+        """targets: [(pga_index, idac_index), ...]；给出时按组合列表显示。"""
         super().__init__(parent)
         self.setWindowTitle("全量程偏置校准")
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setModal(True)
-        self.setFixedSize(660, 520)
+        self.setFixedSize(700, 620)
         self.setStyleSheet("QDialog { border: 1px solid #555555; }")
 
-        self._total = int(total)
+        self._targets = list(targets) if targets else None
+        self._total = len(self._targets) if self._targets else int(total)
         self._finished = False
         self.dragging = False
         self.drag_position = QPoint()
@@ -75,7 +77,7 @@ class FullOffsetCalibrationDialog(QDialog):
 
         self.table_results = QTableWidget(self._total, 4, self)
         self.table_results.setHorizontalHeaderLabels(
-            ["量程", "状态", "偏置 (ADC)", "偏置 (mT)"]
+            ["组合", "状态", "偏置 (ADC)", "偏置 (mT)"]
         )
         self.table_results.verticalHeader().setVisible(False)
         self.table_results.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -89,7 +91,12 @@ class FullOffsetCalibrationDialog(QDialog):
         self.table_results.setAlternatingRowColors(True)
 
         for index in range(self._total):
-            text = PGA_OPTION_TEXTS[index] if index < len(PGA_OPTION_TEXTS) else f"PGA{index}"
+            if self._targets:
+                pga_index, idac_index = self._targets[index]
+                # 只显示挡位，不显示电流值
+                text = f"IDAC{idac_index}  {PGA_OPTION_TEXTS[pga_index]}"
+            else:
+                text = PGA_OPTION_TEXTS[index] if index < len(PGA_OPTION_TEXTS) else f"PGA{index}"
             self.table_results.setItem(index, 0, QTableWidgetItem(text))
             self.table_results.setItem(index, 1, QTableWidgetItem("等待"))
             self.table_results.setItem(index, 2, QTableWidgetItem("-"))

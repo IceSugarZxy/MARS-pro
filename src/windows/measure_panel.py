@@ -6,6 +6,7 @@
 import os
 import json
 import re
+import time
 import serial.tools.list_ports
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
                               QComboBox, QHBoxLayout, QListWidget,
@@ -19,7 +20,9 @@ from core import get_config_manager
 from core.config_manager import (
     PGA_OPTION_TEXTS,
     PGA_GAIN_VALUES,
+    RANGE_SELECT_MARGIN_MT,
     action_to_text,
+    format_range_selection,
     get_pga_mag_conversion_factor,
 )
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
@@ -64,6 +67,15 @@ RESULT_FIELD_DEFAULTS = {
     "single_polar_error_edit": "0.00",
     "polar_error_sum_edit": "0.00",
     "thd_error_edit": "0.00",
+    "polar_num_edit": "--",
+}
+
+# 样品信息输入框的默认值（测试员除外，开始测量后恢复默认值）
+SAMPLE_INFO_INPUT_DEFAULTS = {
+    "sample_name_edit": "测试样品",
+    "sample_code_edit": "",
+    "airgap_edit": "",
+    "remark_edit": "",
     "polar_num_edit": "--",
 }
 
@@ -157,7 +169,8 @@ class MeasurePanel(QWidget):
 
     def _init_tester_combo(self):
         combo = self.findChild(QComboBox, "comboBox_tester_edit")
-        if not combo:
+        # 注意：QComboBox 在下拉项为空时布尔值为 False，这里必须判断是否为 None
+        if combo is None:
             return
 
         combo.setEditable(True)
@@ -208,7 +221,7 @@ class MeasurePanel(QWidget):
 
     def _combo_text(self, combo_name, fallback_line_edit_name=None):
         combo = self.findChild(QComboBox, combo_name)
-        if combo:
+        if combo is not None:
             return combo.currentText().strip()
 
         if fallback_line_edit_name:
@@ -228,7 +241,7 @@ class MeasurePanel(QWidget):
         config.set(LAST_TESTER_CONFIG_KEY, tester)
 
         combo = self.findChild(QComboBox, "comboBox_tester_edit")
-        if combo:
+        if combo is not None:
             self._set_combo_items(combo, history, tester)
 
     def _init_config_display(self):
@@ -250,18 +263,20 @@ class MeasurePanel(QWidget):
             combo_test_speed.currentIndexChanged.connect(self._on_test_speed_changed)
             config.signal_test_speed_changed.connect(self._on_config_test_speed_changed)
 
-        combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
-        if combo_sensor_range:
-            combo_sensor_range.blockSignals(True)
-            combo_sensor_range.clear()
-            combo_sensor_range.addItems(PGA_OPTION_TEXTS)
-            combo_sensor_range.setCurrentIndex(config.pga_gain)
-            combo_sensor_range.blockSignals(False)
-            combo_sensor_range.currentIndexChanged.connect(self._on_pga_gain_changed)
-            config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
-
+        # 量程改为“输入估计磁场 + 开始测量时自动选档”，不再使用下拉框
+        estimate_edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if estimate_edit:
+            estimate_edit.editingFinished.connect(self._on_range_estimate_changed)
+        config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
+        if hasattr(config, 'signal_idac_index_changed'):
+            config.signal_idac_index_changed.connect(self._on_config_idac_changed)
+        if hasattr(config, 'signal_range_estimate_changed'):
+            config.signal_range_estimate_changed.connect(self._on_shared_range_estimate_changed)
+        self._update_range_selection_label()
         # PGA 增益：已确认值 + 发送确认状态
         self._pga_gain_confirmed = config.pga_gain
+        # IDAC 电流：已确认值（None 表示尚未确认）
+        self._idac_confirmed = None
         self._pga_pending = False
         self._pga_pending_index = None
         self._pga_rx_buffer = ""
@@ -346,8 +361,74 @@ class MeasurePanel(QWidget):
             return
         config.pga_gain = index
 
+    # ==================== 量程估计输入与自动选档 ====================
+
+    def _on_shared_range_estimate_changed(self, value):
+        """另一界面修改了量程估计值：同步输入框与提示标签。"""
+        edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if edit:
+            text = '' if value is None else f'{float(value):g}'
+            if edit.text().strip() != text:
+                edit.blockSignals(True)
+                edit.setText(text)
+                edit.blockSignals(False)
+        self._update_range_selection_label()
+
+    def _on_range_estimate_changed(self):
+        """输入框编辑完成：写入共享估计值并自动选档（配置界面的显示同步更新）。"""
+        estimate = self._range_estimate()
+        config = get_config_manager()
+        config.range_estimate_mt = estimate      # 触发两界面同步
+        if estimate is not None:
+            config.apply_range_estimate(estimate)   # 写 PGA/IDAC，硬件指令随配置信号下发
+        self._update_range_selection_label()
+
+    def _range_estimate(self):
+        """读取估计磁场（mT）；非法返回 None。"""
+        edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if not edit:
+            return None
+        text = edit.text().strip()
+        if not text:
+            return None
+        try:
+            value = abs(float(text))
+        except ValueError:
+            return None
+        return value
+
+    def _resolve_range_selection(self):
+        """按输入估计值选档，返回 (pga, idac, span, target, overflow) 或 None。"""
+        estimate = self._range_estimate()
+        if estimate is None:
+            return None
+        return get_config_manager().select_range(estimate)
+
+    def _update_range_selection_label(self):
+        label = self.findChild(QLabel, "label_range_selected")
+        if not label:
+            return
+        config = get_config_manager()
+        if config.range_estimate_mt is None:
+            label.setText("请输入估计磁场")
+            label.setStyleSheet("color: #b0b0b0;")
+            return
+        pga, idac = config.pga_gain, config.idac_index
+        span = config.max_range_mt(pga, idac)
+        label.setText(format_range_selection(pga, idac, span))
+        overflow = config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span
+        label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
+
+    def _on_config_idac_changed(self, index):
+        """IDAC 档位变化：刷新选档提示，并在已连接时下发 IDAC 指令。"""
+        self._update_range_selection_label()
+        connected = bool(self.serial_manager and self.serial_manager.get_connection_status())
+        if connected and index != getattr(self, '_idac_confirmed', None):
+            self._request_idac_set(index)
+
     def _on_config_pga_gain_changed(self, index):
         """配置管理器 PGA 档位改变：同步下拉框，若为新档位则发送 PGA<n>~ 并等待回信。"""
+        self._update_range_selection_label()
         combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
         if combo_sensor_range and combo_sensor_range.currentIndex() != index:
             combo_sensor_range.blockSignals(True)
@@ -532,7 +613,12 @@ class MeasurePanel(QWidget):
         if not connected:
             return
         self._idac_connect_started = True
-        self._request_idac_set(CONNECT_IDAC_INDEX)
+        # 连接后按配置里的 IDAC 档位设置（默认 IDAC4），而不是固定值
+        try:
+            target_idac = get_config_manager().idac_index
+        except Exception:  # noqa: BLE001
+            target_idac = CONNECT_IDAC_INDEX
+        self._request_idac_set(target_idac)
 
     def _request_idac_set(self, index: int) -> None:
         """发送 IDAC<n>~ 指令，启动回信确认窗口。"""
@@ -557,7 +643,15 @@ class MeasurePanel(QWidget):
         self._idac_set_pending = False
         self._idac_confirm_timer.stop()
         logger.info(f"IDAC 档位设置成功: IDAC{index}")
+        self._idac_confirmed = index
         self._update_status(f"IDAC{index} 设置成功", auto_recover=True)
+        # 写入配置：data_process 会据此重新匹配 (PGA, IDAC) 二维偏置
+        try:
+            config = get_config_manager()
+            if config.idac_index != index:
+                config.idac_index = index
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"记录 IDAC 档位到配置失败: {exc}")
         # 后续步骤：PGA 档位查询与量程/偏置同步
         self._query_pga_gain_from_firmware()
 
@@ -918,17 +1012,84 @@ class MeasurePanel(QWidget):
             status_label.setStyleSheet("color: #b0b0b0; font-style: italic;")
 
     def _start_rotation_button_clicked(self):
-        """开始测量"""
+        """开始测量：先按输入估计值自动选档并调整硬件参数，再执行采集。"""
         logger.info("测量开始按钮被点击")
         if not self.serial_manager or not self.serial_manager.get_connection_status():
             self._update_status("错误：串口未连接", is_error=True)
             return
 
+        selection = self._resolve_range_selection()
+        if selection is None:
+            # 未输入估计值时（例如脚本自动测量）不打断流程，沿用当前档位
+            logger.info("未输入磁场估计值，按当前 PGA/IDAC 档位直接测量")
+            self._update_status(
+                "未输入估计磁场，按当前档位测量", is_error=True, auto_recover=True
+            )
+            self._begin_measurement()
+            return
+        pga, idac, span, target, overflow = selection
+        estimate = target - RANGE_SELECT_MARGIN_MT
+        logger.info(
+            f"自动选档：估计 {estimate:.1f} mT + 余量 {RANGE_SELECT_MARGIN_MT:.0f} mT "
+            f"= {target:.1f} mT → IDAC{idac} / PGA{pga}（量程 {span:.1f} mT）"
+            + ("（超出最大量程，取最大档）" if overflow else "")
+        )
+        if overflow:
+            self._update_status(
+                f"警告：{estimate:.0f} mT 超出最大量程，已选最大档 {span:.0f} mT",
+                is_error=True, auto_recover=True,
+            )
+        self._pending_measure_selection = (pga, idac, span)
+        self._apply_pending_selection()
+
+    def _apply_pending_selection(self):
+        """按选档结果下发 IDAC / PGA 指令（先电流后增益），确认后开始采集。"""
+        if not self._pending_measure_selection:
+            return
+        pga, idac, span = self._pending_measure_selection
+        config = get_config_manager()
+        self._range_apply_deadline = time.monotonic() + 15.0
+
+        if config.idac_index != idac or getattr(self, '_idac_set_pending', False):
+            self._update_status(f"正在切换到 IDAC{idac} …", auto_recover=True)
+            self._request_idac_set(idac)
+            QTimer.singleShot(200, self._poll_pending_selection)
+            return
+        if self._pga_gain_confirmed != pga:
+            self._update_status(f"正在切换到 {PGA_OPTION_TEXTS[pga]} …", auto_recover=True)
+            self._request_pga_gain_change(pga)
+            QTimer.singleShot(200, self._poll_pending_selection)
+            return
+        self._pending_measure_selection = None
+        self._begin_measurement()
+
+    def _poll_pending_selection(self):
+        """等待 IDAC / PGA 切换确认，确认完成后开始采集。"""
+        if not self._pending_measure_selection:
+            return
+        pga, idac, span = self._pending_measure_selection
+        config = get_config_manager()
+        idac_ok = (config.idac_index == idac) and not getattr(self, '_idac_set_pending', False)
+        pga_ok = (self._pga_gain_confirmed == pga) and not getattr(self, '_pga_pending', False)
+        if idac_ok and pga_ok:
+            self._pending_measure_selection = None
+            self._begin_measurement()
+            return
+        if time.monotonic() > getattr(self, '_range_apply_deadline', 0.0):
+            self._pending_measure_selection = None
+            self._update_status(
+                f"错误：档位切换超时（目标 IDAC{idac} / PGA{pga}），测量取消",
+                is_error=True,
+            )
+            return
+        QTimer.singleShot(200, self._poll_pending_selection)
+
+    def _begin_measurement(self):
+        """执行一次采集（原“开始测量”主体）。"""
+        # 开始新测试：先恢复样品信息默认值（测试员保留），方便采集后录入新信息
         self._reset_sample_inputs()
+
         self.data_process.measure_type = "rotation"
-        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
-        self.data_process.save_raw_data_enabled = bool(raw_checkbox and raw_checkbox.isChecked())
-        logger.info(f"原始数据自动保存: {self.data_process.save_raw_data_enabled}")
 
         sample_info = self._collect_sample_info_from_ui()
         self.data_process.set_sample_info(sample_info)
@@ -1250,14 +1411,11 @@ class MeasurePanel(QWidget):
         spin.setValue(value)
 
     def _reset_sample_inputs(self):
-        """重置样品信息"""
-        sample_name_edit = self.findChild(QLineEdit, "sample_name_edit")
-        if sample_name_edit and not sample_name_edit.text().strip():
-            sample_name_edit.setText("测试样品")
-
-        polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
-        if polar_num_edit:
-            polar_num_edit.setText("--")
+        """恢复样品信息默认值（测试员保留）"""
+        for field_name, default_value in SAMPLE_INFO_INPUT_DEFAULTS.items():
+            edit = self.findChild(QLineEdit, field_name)
+            if edit:
+                edit.setText(default_value)
 
     def _update_display_defaults(self):
         """更新显示默认值"""
@@ -1280,16 +1438,10 @@ class MeasurePanel(QWidget):
     def _disable_function_buttons(self):
         """禁用功能按钮"""
         self._set_measurement_locked_buttons_enabled(False)
-        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
-        if raw_checkbox:
-            raw_checkbox.setEnabled(False)
 
     def _enable_function_buttons(self):
         """启用所有功能按钮"""
         self._set_measurement_locked_buttons_enabled(True)
-        raw_checkbox = self.findChild(QRadioButton, "radio_save_raw_data")
-        if raw_checkbox:
-            raw_checkbox.setEnabled(True)
 
     def _set_measurement_locked_buttons_enabled(self, enabled):
         for button_name in MEASUREMENT_LOCKED_BUTTONS:

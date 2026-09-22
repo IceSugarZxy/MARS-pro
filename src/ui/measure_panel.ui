@@ -205,64 +205,6 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
-       <widget class="QComboBox" name="combo_test_type">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>24</height>
-         </size>
-        </property>
-        <item>
-         <property name="text">
-          <string>平面旋转测试</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>外侧面旋转测试</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>内侧面旋转测试</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>外侧面垂直测试</string>
-         </property>
-        </item>
-       </widget>
-      </item>
-      <item row="2" column="2">
-       <widget class="QLabel" name="label_sensor">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>90</width>
-          <height>25</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>探头量程：</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
-      </item>
       <item row="4" column="0">
        <widget class="QLabel" name="label_test_speed">
         <property name="sizePolicy">
@@ -464,32 +406,6 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="3" colspan="2">
-       <widget class="QComboBox" name="combo_sensor_range">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>110</width>
-          <height>24</height>
-         </size>
-        </property>
-        <item>
-         <property name="text">
-          <string>80mT量程</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>160mT量程</string>
-         </property>
-        </item>
-       </widget>
-      </item>
       <item row="0" column="3">
        <widget class="QPushButton" name="btnSuccess">
         <property name="sizePolicy">
@@ -507,6 +423,99 @@
         <property name="text">
          <string>连接</string>
         </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="label_sensor">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>90</width>
+          <height>25</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>磁场估计(mT)：</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QLineEdit" name="edit_range_estimate">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>120</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>输入估计磁场（mT），开始测量时自动加 10mT 并按最大量程表选择最接近的 PGA×IDAC 组合</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="2" colspan="2">
+       <widget class="QLabel" name="label_range_selected">
+        <property name="minimumSize">
+         <size>
+          <width>150</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>未选档</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QComboBox" name="combo_test_type">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>120</width>
+          <height>24</height>
+         </size>
+        </property>
+        <item>
+         <property name="text">
+          <string>平面旋转测试</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>外侧面旋转测试</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>内侧面旋转测试</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>外侧面垂直测试</string>
+         </property>
+        </item>
        </widget>
       </item>
      </layout>
@@ -2049,31 +2058,6 @@
           </widget>
          </item>
         </layout>
-       </widget>
-      </item>
-      <item row="0" column="0">
-       <widget class="QRadioButton" name="radio_save_raw_data">
-        <property name="minimumSize">
-         <size>
-          <width>0</width>
-          <height>28</height>
-         </size>
-        </property>
-        <property name="toolTip">
-         <string>勾选后，本次测量完成时自动保存 raw_data 原始数据</string>
-        </property>
-        <property name="styleSheet">
-         <string notr="true">background-color: transparent;</string>
-        </property>
-        <property name="text">
-         <string>保存原始数据</string>
-        </property>
-        <property name="checked">
-         <bool>false</bool>
-        </property>
-        <property name="autoExclusive">
-         <bool>false</bool>
-        </property>
        </widget>
       </item>
       <item row="1" column="0" rowspan="3">

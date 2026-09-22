@@ -18,6 +18,9 @@ from core.path_utils import get_data_dir
 
 logger = get_logger('HistoryPanel')
 
+# 历史列表列定义，顺序必须与 history_panel.ui 中 data_table 的列一致
+TABLE_COLUMNS = ('sample_name', 'sample_code', 'time_str', 'tester', 'polar_num', 'airgap', 'remark')
+
 
 def _is_plot_data_header(row):
     return len(row) >= 2 and "角度" in row[0] and "磁场" in row[1]
@@ -133,6 +136,7 @@ class LoadHistoryThread(QThread):
 
                 record = {
                     'sample_name': sample_name,
+                    'sample_code': sample_info.get('sample_code', ''),
                     'time_str': time_str,
                     'polar_num': sample_info.get('polar_num', ''),
                     'airgap': sample_info.get('airgap', ''),
@@ -198,6 +202,10 @@ class HistoryPanel(QWidget):
         if airgap_edit:
             airgap_edit.textChanged.connect(self._on_search_changed)
 
+        sample_code_edit = self.findChild(QLineEdit, "sample_code_edit")
+        if sample_code_edit:
+            sample_code_edit.textChanged.connect(self._on_search_changed)
+
     def _setup_table(self):
         """设置表格"""
         table = self.findChild(QTableWidget, "data_table")
@@ -247,21 +255,26 @@ class HistoryPanel(QWidget):
             return
 
         self._all_records = records
-
-        for record in records:
-            row = table.rowCount()
-            table.insertRow(row)
-            item_sample = QTableWidgetItem(record['sample_name'])
-            item_sample.setData(Qt.UserRole, record['file_path'])
-            table.setItem(row, 0, item_sample)
-            table.setItem(row, 1, QTableWidgetItem(record['time_str']))
-            table.setItem(row, 2, QTableWidgetItem(record['tester']))
-            table.setItem(row, 3, QTableWidgetItem(record['polar_num']))
-            table.setItem(row, 4, QTableWidgetItem(record['airgap']))
-            table.setItem(row, 5, QTableWidgetItem(record['remark']))
+        self._populate_table(records)
 
         logger.info(f"填充了 {len(records)} 条历史记录到表格")
         self._load_thread = None
+
+    def _populate_table(self, records):
+        """按 TABLE_COLUMNS 填充表格（首列附带文件路径，供双击加载使用）"""
+        table = self.findChild(QTableWidget, "data_table")
+        if not table:
+            return
+
+        table.setRowCount(0)
+        for record in records:
+            row = table.rowCount()
+            table.insertRow(row)
+            for column, field in enumerate(TABLE_COLUMNS):
+                item = QTableWidgetItem(str(record.get(field, '') or ''))
+                if column == 0:
+                    item.setData(Qt.UserRole, record.get('file_path', ''))
+                table.setItem(row, column, item)
 
     def _on_search_changed(self):
         """搜索条件变化，执行筛选"""
@@ -274,11 +287,13 @@ class HistoryPanel(QWidget):
         tester_edit = self.findChild(QLineEdit, "tester_edit")
         polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
         airgap_edit = self.findChild(QLineEdit, "airgap_edit")
+        sample_code_edit = self.findChild(QLineEdit, "sample_code_edit")
 
         search_sample = sample_name_edit.text().strip().lower() if sample_name_edit else ""
         search_tester = tester_edit.text().strip().lower() if tester_edit else ""
         search_polar = polar_num_edit.text().strip() if polar_num_edit else ""
         search_airgap = airgap_edit.text().strip() if airgap_edit else ""
+        search_code = sample_code_edit.text().strip().lower() if sample_code_edit else ""
 
         # 筛选记录
         filtered_records = []
@@ -295,22 +310,14 @@ class HistoryPanel(QWidget):
             # 气隙筛选
             if search_airgap and search_airgap not in record['airgap']:
                 continue
+            # 样品编号筛选
+            if search_code and search_code not in str(record.get('sample_code', '')).lower():
+                continue
 
             filtered_records.append(record)
 
         # 更新表格
-        table.setRowCount(0)
-        for record in filtered_records:
-            row = table.rowCount()
-            table.insertRow(row)
-            item_sample = QTableWidgetItem(record['sample_name'])
-            item_sample.setData(Qt.UserRole, record['file_path'])
-            table.setItem(row, 0, item_sample)
-            table.setItem(row, 1, QTableWidgetItem(record['time_str']))
-            table.setItem(row, 2, QTableWidgetItem(record['tester']))
-            table.setItem(row, 3, QTableWidgetItem(record['polar_num']))
-            table.setItem(row, 4, QTableWidgetItem(record['airgap']))
-            table.setItem(row, 5, QTableWidgetItem(record['remark']))
+        self._populate_table(filtered_records)
 
         logger.info(f"筛选结果: {len(filtered_records)} 条记录")
 
@@ -322,6 +329,7 @@ class HistoryPanel(QWidget):
         tester_edit = self.findChild(QLineEdit, "tester_edit")
         polar_num_edit = self.findChild(QLineEdit, "polar_num_edit")
         airgap_edit = self.findChild(QLineEdit, "airgap_edit")
+        sample_code_edit = self.findChild(QLineEdit, "sample_code_edit")
 
         if sample_name_edit:
             sample_name_edit.setText("")
@@ -331,6 +339,8 @@ class HistoryPanel(QWidget):
             polar_num_edit.setText("")
         if airgap_edit:
             airgap_edit.setText("")
+        if sample_code_edit:
+            sample_code_edit.setText("")
 
         self._start_load_history()
 

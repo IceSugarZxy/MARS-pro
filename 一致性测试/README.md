@@ -30,7 +30,6 @@ python 一致性测试\auto_measure_save.py
 保存位置：
 
 - 处理后的测量数据会按日期保存到 `data/plot_data/YYYYMMDD/`
-- 如测量界面勾选了保存原始数据，原始数据会保存到 `data/raw_data/`
 
 注意事项：
 

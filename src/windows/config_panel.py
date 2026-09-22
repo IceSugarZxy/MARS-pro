@@ -24,7 +24,12 @@ from core.logger import get_logger
 from core import get_config_manager
 from core.config_manager import (
     PGA_OPTION_TEXTS,
+    RANGE_SELECT_MARGIN_MT,
+    IDAC_MIN_INDEX,
+    IDAC_MAX_INDEX,
+    IDAC_OPTION_TEXTS,
     action_to_text,
+    format_range_selection,
     get_pga_mag_conversion_factor,
 )
 from windows.full_offset_calibration_dialog import FullOffsetCalibrationDialog
@@ -71,13 +76,22 @@ class ConfigPanel(QWidget):
 
         # 全量程偏置校准自动流程状态
         self._offset_all_active = False
-        self._offset_all_gains = list(range(len(PGA_OPTION_TEXTS)))
+        # 全档偏置校准目标：IDAC3~6 × PGA×1~×64 共 28 组（按 IDAC 分组，减少切档次数）
+        self._offset_all_targets = [
+            (pga, idac)
+            for idac in range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1)
+            for pga in range(len(PGA_OPTION_TEXTS) - 1)
+        ]
         self._offset_all_cursor = 0
         self._offset_all_original_pga = None
+        self._offset_all_original_idac = None
         self._offset_all_wait_pga = False
+        self._offset_all_wait_idac = False
         self._offset_all_wait_offset = False
         self._offset_all_pga_retries = 0
+        self._offset_all_idac_retries = 0
         self._offset_all_pga_buffer = ""
+        self._offset_all_idac_buffer = ""
         self._offset_all_cancel_pending = False
         self._offset_all_results = []
         self._offset_all_progress = None
@@ -85,6 +99,10 @@ class ConfigPanel(QWidget):
         self._offset_all_pga_timer.setSingleShot(True)
         self._offset_all_pga_timer.setInterval(2500)
         self._offset_all_pga_timer.timeout.connect(self._on_offset_all_pga_timeout)
+        self._offset_all_idac_timer = QTimer(self)
+        self._offset_all_idac_timer.setSingleShot(True)
+        self._offset_all_idac_timer.setInterval(2500)
+        self._offset_all_idac_timer.timeout.connect(self._on_offset_all_idac_timeout)
 
         # 加载台控示意图
         self._init_stage_picture()
@@ -215,7 +233,20 @@ class ConfigPanel(QWidget):
             combo_sensor_range.setCurrentIndex(config.pga_gain)
             combo_sensor_range.blockSignals(False)
             combo_sensor_range.currentIndexChanged.connect(self._on_pga_gain_changed)
-            config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
+
+        # 量程改为“输入估计磁场 + 自动选档”
+        estimate_edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if estimate_edit:
+            estimate_edit.editingFinished.connect(self._on_range_estimate_changed)
+        config.signal_pga_gain_changed.connect(lambda _index: self._update_range_selection_label())
+        if hasattr(config, 'signal_idac_index_changed'):
+            config.signal_idac_index_changed.connect(
+                lambda _index: self._update_range_selection_label())
+        if hasattr(config, 'signal_range_estimate_changed'):
+            config.signal_range_estimate_changed.connect(
+                self._on_shared_range_estimate_changed)
+        self._update_range_selection_label()
+        config.signal_pga_gain_changed.connect(self._on_config_pga_gain_changed)
 
         # 更新方案显示
         self._update_scheme_display(config.test_type)
@@ -308,6 +339,68 @@ class ConfigPanel(QWidget):
         config = get_config_manager()
         config.pga_gain = index
         logger.info(f"PGA 量程已更改: {PGA_OPTION_TEXTS[config.pga_gain]}")
+
+    # ==================== 量程估计输入与自动选档 ====================
+
+    def _range_estimate(self):
+        """读取估计磁场（mT）；非法返回 None。"""
+        edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if not edit:
+            return None
+        text = edit.text().strip()
+        if not text:
+            return None
+        try:
+            return abs(float(text))
+        except ValueError:
+            return None
+
+    def _on_range_estimate_changed(self):
+        """输入估计磁场后自动选档：写入共享估计值，测量界面同步显示。"""
+        estimate = self._range_estimate()
+        config = get_config_manager()
+        config.range_estimate_mt = estimate          # 触发两界面同步
+        if estimate is None:
+            self._update_range_selection_label()
+            return
+        selection = config.apply_range_estimate(estimate)
+        if selection is None:
+            self._update_range_selection_label()
+            return
+        pga, idac, span, target, overflow = selection
+        logger.info(
+            f"配置面板自动选档：估计 {estimate:.1f} mT + 余量 "
+            f"{target - estimate:.0f} mT → IDAC{idac} / PGA{pga}（量程 {span:.1f} mT）"
+            + ("（超出最大量程，取最大档）" if overflow else "")
+        )
+        self._update_range_selection_label(overflow=overflow)
+
+    def _update_range_selection_label(self, overflow=False):
+        """刷新选档提示：只显示 IDAC / PGA 增益 / 理论量程。"""
+        label = self.findChild(QLabel, "label_range_selected")
+        if not label:
+            return
+        config = get_config_manager()
+        if config.range_estimate_mt is None:
+            label.setText("请输入估计磁场")
+            label.setStyleSheet("color: #b0b0b0;")
+            return
+        pga, idac = config.pga_gain, config.idac_index
+        span = config.max_range_mt(pga, idac)
+        label.setText(format_range_selection(pga, idac, span))
+        overflow = overflow or (config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span)
+        label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
+
+    def _on_shared_range_estimate_changed(self, value):
+        """另一界面修改了量程估计值：同步输入框与提示标签。"""
+        edit = self.findChild(QLineEdit, "edit_range_estimate")
+        if edit:
+            text = '' if value is None else f'{float(value):g}'
+            if edit.text().strip() != text:
+                edit.blockSignals(True)
+                edit.setText(text)
+                edit.blockSignals(False)
+        self._update_range_selection_label()
 
     def _on_config_pga_gain_changed(self, index):
         """配置管理器 PGA 量程改变，同步更新下拉框"""
@@ -494,6 +587,9 @@ class ConfigPanel(QWidget):
         super().hideEvent(event)
 
     def _on_serial_data_received(self, data: bytes) -> None:
+        # 全档偏置校准进行中：等待 IDAC / PGA 回信时先喂给自动流程解析
+        if self._offset_all_active and self._offset_all_wait_idac:
+            self._feed_offset_all_idac_rx(data)
         # 全量程偏置校准进行中且等待 PGA 回信时，先喂给自动流程解析
         if self._offset_all_active and self._offset_all_wait_pga:
             self._feed_offset_all_pga_rx(data)
@@ -775,7 +871,7 @@ class ConfigPanel(QWidget):
     # ==================== 全量程偏置校准 ====================
 
     def _on_offset_all(self):
-        """全量程偏置校准：自动切换 8 个 PGA 量程并逐个执行偏置校准。"""
+        """全档偏置校准：遍历 IDAC3~6 × PGA×1~×64 共 28 个组合逐个执行偏置校准。"""
         if self._offset_all_active:
             return
         connected = bool(
@@ -793,24 +889,28 @@ class ConfigPanel(QWidget):
         config = get_config_manager()
         self._offset_all_active = True
         self._offset_all_original_pga = config.pga_gain
+        self._offset_all_original_idac = config.idac_index
         self._offset_all_cursor = 0
         self._offset_all_cancel_pending = False
         self._offset_all_results = []
         self._offset_all_wait_pga = False
+        self._offset_all_wait_idac = False
         self._offset_all_wait_offset = False
         self._offset_all_pga_buffer = ""
+        self._offset_all_idac_buffer = ""
         self._offset_all_pga_retries = 0
+        self._offset_all_idac_retries = 0
         self._offset_all_set_buttons_enabled(False)
 
         progress = FullOffsetCalibrationDialog(
-            self, total=len(self._offset_all_gains)
+            self, total=len(self._offset_all_targets), targets=self._offset_all_targets
         )
         progress.cancel_requested.connect(self._offset_all_on_cancel_requested)
         progress.show()
         self._offset_all_progress = progress
 
-        logger.info("全量程偏置校准开始，共 %d 个量程", len(self._offset_all_gains))
-        self._offset_all_start_gain(0)
+        logger.info("全档偏置校准开始，共 %d 个组合", len(self._offset_all_targets))
+        self._offset_all_start_target(0)
 
     def _offset_all_set_buttons_enabled(self, enabled: bool):
         """自动校准期间禁用/恢复偏置相关按钮，避免并发操作。"""
@@ -821,6 +921,9 @@ class ConfigPanel(QWidget):
         combo = self.findChild(QComboBox, "combo_sensor_range")
         if combo:
             combo.setEnabled(enabled)
+        estimate = self.findChild(QLineEdit, "edit_range_estimate")
+        if estimate:
+            estimate.setEnabled(enabled)
 
     def _offset_all_on_cancel_requested(self):
         """用户点击取消：立即关闭界面；若正在采集则停止并丢弃本轮数据。"""
@@ -839,6 +942,13 @@ class ConfigPanel(QWidget):
             self._offset_all_pga_buffer = ""
             self._offset_all_finish()
             return
+        if self._offset_all_wait_idac:
+            # 正在切换 IDAC，无采集进行中，直接收尾
+            self._offset_all_wait_idac = False
+            self._offset_all_idac_timer.stop()
+            self._offset_all_idac_buffer = ""
+            self._offset_all_finish()
+            return
         if self._offset_all_wait_offset:
             # 正在偏置采集：立即停止并丢弃残缺数据，finished 到达后收尾
             if self.serial_command is not None:
@@ -851,30 +961,116 @@ class ConfigPanel(QWidget):
         if self._offset_all_progress is not None:
             self._offset_all_progress.set_progress(value, text)
 
-    def _offset_all_start_gain(self, idx: int):
-        """开始第 idx 个量程：先发送 PGA 切换并等待固件确认。"""
+    def _offset_all_target_text(self, pga: int, idac: int) -> str:
+        """校准过程显示文本：只显示挡位与量程，不显示电流值。"""
+        return f"IDAC{idac}  {PGA_OPTION_TEXTS[pga]}"
+
+    def _offset_all_start_target(self, idx: int):
+        """开始第 idx 个组合：需要时先切 IDAC，再切 PGA，等固件确认后校准。"""
         if not self._offset_all_active:
             return
-        if idx >= len(self._offset_all_gains) or self._offset_all_cancel_pending:
+        if idx >= len(self._offset_all_targets) or self._offset_all_cancel_pending:
             self._offset_all_finish()
             return
 
         self._offset_all_cursor = idx
-        gain_idx = self._offset_all_gains[idx]
-        self._offset_all_wait_pga = True
+        pga, idac = self._offset_all_targets[idx]
         self._offset_all_pga_retries = 0
+        self._offset_all_idac_retries = 0
         self._offset_all_pga_buffer = ""
+        self._offset_all_idac_buffer = ""
+        total = len(self._offset_all_targets)
         self._offset_all_update_progress(
-            f"正在切换至 {PGA_OPTION_TEXTS[gain_idx]}（{idx + 1}/{len(self._offset_all_gains)}）…",
+            f"正在切换至 {self._offset_all_target_text(pga, idac)}（{idx + 1}/{total}）…",
             idx,
         )
         if self._offset_all_progress is not None:
             self._offset_all_progress.set_gain_state(idx, "切换中")
-        if self.serial_command:
-            self.serial_command.send_data(f"PGA{gain_idx}~", source="offset_all_pga")
-            self._offset_all_pga_timer.start()
-        else:
+        if not self.serial_command:
             self._offset_all_finish()
+            return
+
+        config = get_config_manager()
+        if idac != config.idac_index:
+            self._offset_all_wait_idac = True
+            self.serial_command.send_data(f"IDAC{idac}~", source="offset_all_idac")
+            self._offset_all_idac_timer.start()
+            return
+        self._offset_all_send_pga(pga)
+
+    def _offset_all_send_pga(self, pga: int):
+        """发送 PGA 切换指令并等待确认。"""
+        self._offset_all_wait_pga = True
+        self._offset_all_pga_buffer = ""
+        self.serial_command.send_data(f"PGA{pga}~", source="offset_all_pga")
+        self._offset_all_pga_timer.start()
+
+    def _feed_offset_all_idac_rx(self, data: bytes):
+        """解析全档流程中 IDAC<n>~ 的回信（IDAC n OK / BUSY / RANGE）。"""
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:
+            return
+        self._offset_all_idac_buffer += text
+        while "\n" in self._offset_all_idac_buffer:
+            line, self._offset_all_idac_buffer = self._offset_all_idac_buffer.split("\n", 1)
+            line = line.strip("\r").strip()
+            if not line:
+                continue
+            ok_match = re.match(r"^IDAC\s+(\d+)\s+OK\s*$", line, re.IGNORECASE)
+            if ok_match:
+                if not self._offset_all_wait_idac:
+                    continue
+                pga, idac = self._offset_all_targets[self._offset_all_cursor]
+                if int(ok_match.group(1)) != idac:
+                    continue
+                self._offset_all_wait_idac = False
+                self._offset_all_idac_timer.stop()
+                self._offset_all_idac_buffer = ""
+                get_config_manager().idac_index = idac
+                logger.info("全档偏置校准：IDAC%d 切换成功", idac)
+                self._offset_all_send_pga(pga)
+                continue
+            if re.match(r"^IDAC\s+(BUSY|RANGE|ERR)\b", line, re.IGNORECASE):
+                if self._offset_all_wait_idac:
+                    self._offset_all_mark_failed("IDAC 切换被拒绝(BUSY/RANGE/ERR)")
+                continue
+
+    def _on_offset_all_idac_timeout(self):
+        """IDAC 切换回信超时：重试一次，仍失败则跳过该组合。"""
+        if not (self._offset_all_active and self._offset_all_wait_idac):
+            return
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
+        if self._offset_all_idac_retries < 1:
+            self._offset_all_idac_retries += 1
+            logger.warning("全档偏置校准：IDAC%d 切换超时，第 1 次重试", idac)
+            self._offset_all_idac_buffer = ""
+            self.serial_command.send_data(f"IDAC{idac}~", source="offset_all_idac_retry")
+            self._offset_all_idac_timer.start()
+            return
+        self._offset_all_mark_failed("IDAC 切换超时")
+
+    def _offset_all_mark_failed(self, reason: str):
+        """把当前组合记为失败并进入下一组。"""
+        if not self._offset_all_active:
+            return
+        self._offset_all_wait_idac = False
+        self._offset_all_wait_pga = False
+        self._offset_all_idac_timer.stop()
+        self._offset_all_pga_timer.stop()
+        self._offset_all_idac_buffer = ""
+        self._offset_all_pga_buffer = ""
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
+        logger.warning("全档偏置校准：%s 失败：%s",
+                       self._offset_all_target_text(pga, idac), reason)
+        self._offset_all_results.append(((pga, idac), False, None))
+        if self._offset_all_progress is not None:
+            self._offset_all_progress.show_gain_result(self._offset_all_cursor, False)
+            self._offset_all_progress.set_progress(
+                self._offset_all_cursor + 1,
+                f"{self._offset_all_target_text(pga, idac)} 失败：{reason}，跳过",
+            )
+        self._offset_all_next()
 
     def _feed_offset_all_pga_rx(self, data: bytes):
         """解析全量程流程中 PGA<n>~ 的回信（PGA n OK）。"""
@@ -892,8 +1088,8 @@ class ConfigPanel(QWidget):
             if ok_match:
                 if not self._offset_all_wait_pga:
                     continue
-                target = self._offset_all_gains[self._offset_all_cursor]
-                if int(ok_match.group(1)) == target:
+                target_pga, _target_idac = self._offset_all_targets[self._offset_all_cursor]
+                if int(ok_match.group(1)) == target_pga:
                     self._on_offset_all_pga_confirmed()
                 continue
             if re.match(r"^PGA\s+(BUSY|RANGE|ERR)\b", line, re.IGNORECASE):
@@ -906,56 +1102,43 @@ class ConfigPanel(QWidget):
         self._offset_all_wait_pga = False
         self._offset_all_pga_timer.stop()
         self._offset_all_pga_buffer = ""
-        gain_idx = self._offset_all_gains[self._offset_all_cursor]
-        logger.info("全量程偏置校准：%s 切换成功", PGA_OPTION_TEXTS[gain_idx])
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
+        logger.info("全档偏置校准：%s 切换成功", self._offset_all_target_text(pga, idac))
         self._offset_all_start_offset()
 
     def _on_offset_all_pga_timeout(self):
         """PGA 切换回信超时：重试一次，仍失败则跳过该档。"""
         if not (self._offset_all_active and self._offset_all_wait_pga):
             return
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
         if self._offset_all_pga_retries < 1:
             self._offset_all_pga_retries += 1
-            gain_idx = self._offset_all_gains[self._offset_all_cursor]
-            logger.warning("全量程偏置校准：%s 切换超时，第 1 次重试",
-                           PGA_OPTION_TEXTS[gain_idx])
+            logger.warning("全档偏置校准：%s 切换超时，第 1 次重试",
+                           self._offset_all_target_text(pga, idac))
             self._offset_all_pga_buffer = ""
-            self.serial_command.send_data(f"PGA{gain_idx}~", source="offset_all_pga_retry")
+            self.serial_command.send_data(f"PGA{pga}~", source="offset_all_pga_retry")
             self._offset_all_pga_timer.start()
             return
-        self._offset_all_pga_fail("PGA 切换超时")
+        self._offset_all_mark_failed("PGA 切换超时")
 
     def _offset_all_pga_fail(self, reason: str):
         """PGA 切换失败：记录后跳过该档，继续下一档。"""
-        if not self._offset_all_active:
-            return
-        self._offset_all_wait_pga = False
-        self._offset_all_pga_timer.stop()
-        self._offset_all_pga_buffer = ""
-        gain_idx = self._offset_all_gains[self._offset_all_cursor]
-        logger.warning("全量程偏置校准：%s 失败：%s", PGA_OPTION_TEXTS[gain_idx], reason)
-        self._offset_all_results.append((gain_idx, False, None))
-        if self._offset_all_progress is not None:
-            self._offset_all_progress.show_gain_result(gain_idx, False)
-            self._offset_all_progress.set_progress(
-                self._offset_all_cursor + 1,
-                f"{PGA_OPTION_TEXTS[gain_idx]} 切换失败：{reason}，跳过",
-            )
-        self._offset_all_next()
+        self._offset_all_mark_failed(reason)
 
     def _offset_all_start_offset(self):
         """对当前量程执行一次偏置校准（结果写入指定量程槽位）。"""
-        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
+        total = len(self._offset_all_targets)
         self._offset_all_wait_offset = True
         self._offset_all_update_progress(
-            f"正在校准 {PGA_OPTION_TEXTS[gain_idx]} 偏置"
-            f"（{self._offset_all_cursor + 1}/{len(self._offset_all_gains)}）…",
+            f"正在校准 {self._offset_all_target_text(pga, idac)} 偏置"
+            f"（{self._offset_all_cursor + 1}/{total}）…",
             self._offset_all_cursor,
         )
         if self._offset_all_progress is not None:
             self._offset_all_progress.set_gain_state(self._offset_all_cursor, "校准中")
         if self.data_process is not None:
-            self.data_process.set_offset_save_pga(gain_idx)
+            self.data_process.set_offset_save_target(pga, idac)
         if self.serial_command:
             self.serial_command.disable_position_query_timer()
             self.serial_command.offset_calibration()
@@ -974,18 +1157,18 @@ class ConfigPanel(QWidget):
             return
 
         self._offset_all_wait_offset = False
-        gain_idx = self._offset_all_gains[self._offset_all_cursor]
+        pga, idac = self._offset_all_targets[self._offset_all_cursor]
         offset_value = None
         if success:
             config = get_config_manager()
-            offset_value = config.get_offset_for_pga(gain_idx)
-        self._offset_all_results.append((gain_idx, bool(success), offset_value))
+            offset_value = config.get_offset_for(pga, idac)
+        self._offset_all_results.append(((pga, idac), bool(success), offset_value))
         offset_mt = None
         if success and offset_value is not None:
-            offset_mt = offset_value / get_pga_mag_conversion_factor(gain_idx)
+            offset_mt = offset_value / get_pga_mag_conversion_factor(pga)
         logger.info(
-            "全量程偏置校准：%s %s（offset=%s）",
-            PGA_OPTION_TEXTS[gain_idx],
+            "全档偏置校准：%s %s（offset=%s）",
+            self._offset_all_target_text(pga, idac),
             "成功" if success else "失败",
             f"{offset_value:.1f}" if offset_value is not None else "-",
         )
@@ -993,17 +1176,17 @@ class ConfigPanel(QWidget):
             self.serial_command.enable_position_query_timer()
         if self._offset_all_progress is not None:
             self._offset_all_progress.show_gain_result(
-                gain_idx, bool(success), offset_value, offset_mt
+                self._offset_all_cursor, bool(success), offset_value, offset_mt
             )
             self._offset_all_progress.set_progress(
                 self._offset_all_cursor + 1,
-                f"已完成 {self._offset_all_cursor + 1}/{len(self._offset_all_gains)} 个量程",
+                f"已完成 {self._offset_all_cursor + 1}/{len(self._offset_all_targets)} 个组合",
             )
         self._offset_all_next()
 
     def _offset_all_next(self):
-        """进入下一个量程。"""
-        self._offset_all_start_gain(self._offset_all_cursor + 1)
+        """进入下一个组合。"""
+        self._offset_all_start_target(self._offset_all_cursor + 1)
 
     def _offset_all_finish(self):
         """全部结束：恢复原量程并汇总结果。"""
@@ -1012,24 +1195,29 @@ class ConfigPanel(QWidget):
         self._offset_all_active = False
         self._offset_all_cancel_pending = False
         self._offset_all_wait_pga = False
+        self._offset_all_wait_idac = False
         self._offset_all_wait_offset = False
         self._offset_all_pga_timer.stop()
+        self._offset_all_idac_timer.stop()
         self._offset_all_pga_buffer = ""
+        self._offset_all_idac_buffer = ""
         if self.data_process is not None:
             self.data_process.clear_offset_save_pga()
         if self.serial_command:
             self.serial_command.enable_position_query_timer()
 
-        # 恢复进入前的 PGA 量程
+        # 恢复进入前的 PGA 量程与 IDAC 档位
         config = get_config_manager()
         if self._offset_all_original_pga is not None:
             config.pga_gain = self._offset_all_original_pga
+        if self._offset_all_original_idac is not None:
+            config.idac_index = self._offset_all_original_idac
 
         self._offset_all_set_buttons_enabled(True)
 
         ok = [r for r in self._offset_all_results if r[1]]
         failed = [r for r in self._offset_all_results if not r[1]]
-        logger.info("全量程偏置校准结束：成功 %d 个，失败 %d 个", len(ok), len(failed))
+        logger.info("全档偏置校准结束：成功 %d 个，失败 %d 个", len(ok), len(failed))
         if self._offset_all_progress is not None:
             self._offset_all_progress.finish(len(ok), len(failed))
 
@@ -1040,9 +1228,12 @@ class ConfigPanel(QWidget):
         self._offset_all_active = False
         self._offset_all_cancel_pending = False
         self._offset_all_wait_pga = False
+        self._offset_all_wait_idac = False
         self._offset_all_wait_offset = False
         self._offset_all_pga_timer.stop()
+        self._offset_all_idac_timer.stop()
         self._offset_all_pga_buffer = ""
+        self._offset_all_idac_buffer = ""
         if self.data_process is not None:
             self.data_process.clear_offset_save_pga()
             self.data_process.request_offset_abort()
@@ -1050,7 +1241,7 @@ class ConfigPanel(QWidget):
         if self._offset_all_progress is not None:
             self._offset_all_progress.close()
             self._offset_all_progress = None
-        logger.warning("串口断开，全量程偏置校准已中止")
+        logger.warning("串口断开，全档偏置校准已中止")
 
     def _on_test_pos(self):
         """移动到测试位置"""

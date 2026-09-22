@@ -78,6 +78,78 @@ PGA_MAG_ADC_PER_MT = {
     7: 640.9,    # ×128
 }
 
+# ==================== IDAC 电流档位 ====================
+# 现场可用范围：IDAC3~IDAC6（IDAC 0/1 低于开路保护阈值不可用于采集，
+# IDAC7~9 电流过大/量程过小，按要求不参与选档）
+IDAC_MIN_INDEX = 3
+IDAC_MAX_INDEX = 6
+IDAC_DEFAULT_INDEX = 4
+# 固件标签里的标称电流（µA），仅作记录/参考，不参与量程折算
+IDAC_CURRENT_UA = {
+    3: 500.0,
+    4: 750.0,
+    5: 1000.0,
+    6: 1500.0,
+}
+# 各档实际电流比例（以 IDAC4 为 1），由 28 组零场偏置实测反推：
+#   offset ∝ 增益 × 电流 → IDAC3/4/5/6 = 0.4982 / 1.0000 / 1.4987 / 1.9945
+#   （7 个增益上重复性 ±0.0002，与理想 0.5/1/1.5/2 偏差 ≤0.4%）
+# 量程折算用这一组比例，而不是固件标称值。
+IDAC_CURRENT_RATIO = {
+    3: 0.4982,
+    4: 1.0000,
+    5: 1.4987,
+    6: 1.9945,
+}
+# 换算系数表的标定档位：量程折算以此为基准
+IDAC_REFERENCE_INDEX = 4
+# 界面只显示挡位，不显示电流值
+IDAC_OPTION_TEXTS = tuple(
+    f"IDAC{index}" for index in range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1)
+)
+
+# 二维偏置表：键 "PGA:IDAC" → 零场偏置（ADC 计数）
+PGA_IDAC_OFFSETS_KEY = 'pga_idac_offsets'
+
+# 选档时在估计值上增加的余量（mT）
+RANGE_SELECT_MARGIN_MT = 10.0
+# 低于该量程的组合视为不可用（例如 ×64+IDAC5 只剩 1.9 mT、×64+IDAC6 为 0），不参与选档
+MIN_USABLE_RANGE_MT = 5.0
+# 配置项：量程估计值（mT），测量界面与配置界面共用，保证两处显示同步
+RANGE_ESTIMATE_KEY = 'range_estimate_mt'
+
+
+def format_range_selection(pga_index: int, idac_index: int, range_mt: float) -> str:
+    """统一的选档显示文本：IDAC / PGA 增益 / 理论量程。"""
+    try:
+        gain = PGA_GAIN_VALUES[int(pga_index)]
+    except (TypeError, ValueError, IndexError):
+        gain = '?'
+    return f"IDAC{int(idac_index)}  ×{gain}  理论量程 {float(range_mt):.0f} mT"
+
+
+def get_idac_current_ua(index: int) -> float:
+    """获取 IDAC 档位固件标称电流（µA）；仅作参考，量程折算请用 get_idac_current_ratio。"""
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        index = IDAC_DEFAULT_INDEX
+    return float(IDAC_CURRENT_UA.get(index, IDAC_CURRENT_UA[IDAC_DEFAULT_INDEX]))
+
+
+def get_idac_current_ratio(index: int) -> float:
+    """获取 IDAC 档位实际电流比例（以 IDAC4 为 1），用于量程折算。"""
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        index = IDAC_DEFAULT_INDEX
+    return float(IDAC_CURRENT_RATIO.get(index, IDAC_CURRENT_RATIO[IDAC_DEFAULT_INDEX]))
+
+
+def offset_key(pga_index: int, idac_index: int) -> str:
+    """二维偏置表的键。"""
+    return f"{int(pga_index)}:{int(idac_index)}"
+
 
 def get_pga_mag_conversion_factor(index: int) -> float:
     """获取指定 PGA 档位的磁场换算系数（ADC counts/mT）。"""
@@ -173,6 +245,10 @@ class ConfigManager(QObject):
     signal_pga_gain_changed = pyqtSignal(int)
     # PGA 档位偏置更新信号（参数为 PGA 档位索引）
     signal_pga_offset_changed = pyqtSignal(int)
+    # IDAC 电流档位改变信号
+    signal_idac_index_changed = pyqtSignal(int)
+    # 量程估计值改变信号（测量界面与配置界面共用，保证两处同步）
+    signal_range_estimate_changed = pyqtSignal(object)
 
     DEFAULT_CONFIG = {
         'offset': '0',
@@ -191,6 +267,12 @@ class ConfigManager(QObject):
         'test_speed': '0',
         # PGA 增益档位: 0=×1 ~ 7=×128（默认 5=×32，与固件默认一致）
         'pga_gain': '5',
+        # IDAC 电流档位: 3~6（默认 4 = 750µA，与旧版连接后设置一致）
+        'idac_index': str(IDAC_DEFAULT_INDEX),
+        # 二维偏置表（PGA:IDAC → 零场偏置 ADC）
+        PGA_IDAC_OFFSETS_KEY: '{}',
+        # 量程估计值（mT），两个界面共用
+        RANGE_ESTIMATE_KEY: '',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
         'test_movement_scheme': 'x_first',
         # 挂起位置移动方案
@@ -353,6 +435,200 @@ class ConfigManager(QObject):
             return 0.0
         return float(self.pga_offsets.get(index, 0.0))
 
+    # ==================== 二维偏置表（PGA × IDAC） ====================
+
+    @property
+    def pga_idac_offsets(self) -> dict:
+        """二维偏置表：{(pga, idac): 偏置 ADC}。"""
+        raw = self.get(PGA_IDAC_OFFSETS_KEY, '')
+        table = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                logger.warning(f"配置项 {PGA_IDAC_OFFSETS_KEY} 解析失败，按空表处理")
+                parsed = {}
+            if isinstance(parsed, dict):
+                for key, value in parsed.items():
+                    try:
+                        pga_text, idac_text = str(key).split(':', 1)
+                        table[(int(pga_text), int(idac_text))] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+        return table
+
+    def get_offset_for(self, pga_index: int = None, idac_index: int = None) -> float:
+        """获取指定 (PGA, IDAC) 组合的零场偏置；缺省用当前档位。
+
+        二维表里没有该组合时，回退到旧的一维表（按 PGA），保证兼容。
+        """
+        pga = self.pga_gain if pga_index is None else pga_index
+        idac = self.idac_index if idac_index is None else idac_index
+        try:
+            pga, idac = int(pga), int(idac)
+        except (TypeError, ValueError):
+            return 0.0
+        value = self.pga_idac_offsets.get((pga, idac))
+        if value is not None:
+            return float(value)
+        return self.get_offset_for_pga(pga)
+
+    def set_offset_for(self, pga_index: int, idac_index: int, value: float) -> bool:
+        """保存指定 (PGA, IDAC) 组合的零场偏置。"""
+        try:
+            pga, idac, value = int(pga_index), int(idac_index), float(value)
+        except (TypeError, ValueError):
+            return False
+        if not (0 <= pga < len(PGA_GAIN_VALUES)):
+            return False
+
+        table = self.pga_idac_offsets
+        table[(pga, idac)] = value
+        self._config[PGA_IDAC_OFFSETS_KEY] = json.dumps(
+            {f"{key[0]}:{key[1]}": val for key, val in table.items()}, ensure_ascii=False
+        )
+        # 与参考 IDAC 档位同步旧的一维表，保持旧接口可用
+        if idac == IDAC_REFERENCE_INDEX:
+            self.set_offset_for_pga(pga, value)
+        if pga == self.pga_gain and idac == self.idac_index:
+            self._config['offset'] = str(value)
+        ok = self.save()
+        if ok:
+            self.signal_pga_offset_changed.emit(pga)
+        return ok
+
+    @property
+    def idac_index(self) -> int:
+        """当前 IDAC 电流档位（3~6）。"""
+        index = self.get_int('idac_index', IDAC_DEFAULT_INDEX)
+        if IDAC_MIN_INDEX <= index <= IDAC_MAX_INDEX:
+            return index
+        return IDAC_DEFAULT_INDEX
+
+    @idac_index.setter
+    def idac_index(self, value: int) -> None:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            index = IDAC_DEFAULT_INDEX
+        index = max(IDAC_MIN_INDEX, min(index, IDAC_MAX_INDEX))
+        self.set('idac_index', index)
+        self.save()
+        self.signal_idac_index_changed.emit(index)
+
+    # ==================== 量程表与自动选档 ====================
+
+    @property
+    def range_estimate_mt(self):
+        """量程估计值（mT）；未设置时返回 None。"""
+        raw = (self.get(RANGE_ESTIMATE_KEY, '') or '').strip()
+        if not raw:
+            return None
+        try:
+            return abs(float(raw))
+        except ValueError:
+            return None
+
+    @range_estimate_mt.setter
+    def range_estimate_mt(self, value) -> None:
+        if value is None or str(value).strip() == '':
+            self.set(RANGE_ESTIMATE_KEY, '')
+            stored = None
+        else:
+            try:
+                stored = abs(float(value))
+            except (TypeError, ValueError):
+                return
+            self.set(RANGE_ESTIMATE_KEY, f"{stored:g}")
+        self.save()
+        self.signal_range_estimate_changed.emit(stored)
+
+    def apply_range_estimate(self, estimate_mt=None):
+        """按估计值选档并写入配置，返回 (pga, idac, span, target, overflow)。
+
+        estimate_mt 为 None 时用配置里保存的估计值。
+        """
+        estimate = self.range_estimate_mt if estimate_mt is None else estimate_mt
+        if estimate is None:
+            return None
+        selection = self.select_range(estimate)
+        if selection is None:
+            return None
+        pga, idac, span, target, overflow = selection
+        if self.idac_index != idac:
+            self.idac_index = idac
+        if self.pga_gain != pga:
+            self.pga_gain = pga
+        return selection
+
+    def max_range_mt(self, pga_index: int = None, idac_index: int = None) -> float:
+        """该 (PGA, IDAC) 组合的单侧最大量程（mT）。
+
+        量程 =（32768 − |该组合零场偏置|）÷ 该档换算系数 ÷（该档电流 ÷ 参考档电流）
+        """
+        pga = self.pga_gain if pga_index is None else pga_index
+        idac = self.idac_index if idac_index is None else idac_index
+        factor = get_pga_mag_conversion_factor(pga)
+        if factor <= 0:
+            return 0.0
+        offset = self.get_offset_for(pga, idac)
+        # 用实测电流比例折算（以参考档 IDAC4 为 1）
+        current_ratio = get_idac_current_ratio(idac)
+        ref_ratio = get_idac_current_ratio(IDAC_REFERENCE_INDEX)
+        span = (32768.0 - abs(offset)) / factor
+        if current_ratio <= 0:
+            return span
+        return span * ref_ratio / current_ratio
+
+    def range_table(self, pga_list=None, idac_list=None) -> dict:
+        """返回 {(pga, idac): 量程 mT}，默认覆盖可用 PGA × IDAC。"""
+        if pga_list is None:
+            # 默认只用 ×1~×64（×128 因固有偏置已越界，不可用）
+            pga_list = [i for i in range(len(PGA_GAIN_VALUES)) if i < len(PGA_GAIN_VALUES) - 1]
+        if idac_list is None:
+            idac_list = list(range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1))
+        return {
+            (pga, idac): self.max_range_mt(pga, idac)
+            for pga in pga_list for idac in idac_list
+        }
+
+    def select_range(self, estimate_mt: float, margin_mt: float = RANGE_SELECT_MARGIN_MT):
+        """按估计磁场选档：目标 = 估计值 + 余量；取“量程 ≥ 目标”中量程最小的一档。
+
+        并列时优先电流更大的档位（信噪比更好）。
+        返回 (pga, idac, range_mt, target_mt, overflow)；无可用档位时返回 None。
+        """
+        try:
+            estimate = abs(float(estimate_mt))
+        except (TypeError, ValueError):
+            return None
+        target = estimate + float(margin_mt)
+
+        candidates = []
+        for pga in range(len(PGA_GAIN_VALUES) - 1):
+            for idac in range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1):
+                span = self.max_range_mt(pga, idac)
+                if span >= MIN_USABLE_RANGE_MT:
+                    candidates.append((pga, idac, span))
+        if not candidates:
+            return None
+
+        covering = [item for item in candidates if item[2] >= target]
+        overflow = False
+        if covering:
+            # 量程最小；同量程时电流更大者优先
+            pga, idac, span = min(
+                covering,
+                key=lambda it: (round(it[2], 3), -get_idac_current_ratio(it[1])),
+            )
+        else:
+            overflow = True
+            pga, idac, span = max(
+                candidates,
+                key=lambda it: (it[2], get_idac_current_ratio(it[1])),
+            )
+        return pga, idac, span, target, overflow
+
     def set_offset_for_pga(self, index: int, value: float) -> bool:
         """保存指定 PGA 档位的零场偏置，并同步旧单值字段 offset。"""
         try:
@@ -379,13 +655,13 @@ class ConfigManager(QObject):
 
     @property
     def offset(self) -> float:
-        """当前 PGA 档位的零场偏置（ADC 计数）。"""
-        return self.get_offset_for_pga(self.pga_gain)
+        """当前 (PGA, IDAC) 组合的零场偏置（ADC 计数）。"""
+        return self.get_offset_for(self.pga_gain, self.idac_index)
 
     @offset.setter
     def offset(self, value: float) -> None:
-        """写入当前 PGA 档位的零场偏置。"""
-        self.set_offset_for_pga(self.pga_gain, value)
+        """写入当前 (PGA, IDAC) 组合的零场偏置。"""
+        self.set_offset_for(self.pga_gain, self.idac_index, value)
 
     @property
     def test_x(self) -> int:
