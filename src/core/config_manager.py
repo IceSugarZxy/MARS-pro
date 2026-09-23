@@ -555,10 +555,19 @@ class ConfigManager(QObject):
         if selection is None:
             return None
         pga, idac, span, target, overflow = selection
+        prev_pga, prev_idac = self.pga_gain, self.idac_index
         if self.idac_index != idac:
             self.idac_index = idac
         if self.pga_gain != pga:
             self.pga_gain = pga
+        # 切换失败时测量面板会把 PGA 回退到上次确认值，此时必须把 IDAC 一并回退，
+        # 否则会留下“新 IDAC + 旧 PGA”的拼接组合（例如 IDAC5×64，量程只有 2mT）
+        if self.pga_gain != pga and self.idac_index != prev_idac:
+            logger.warning(
+                f"选档未生效（PGA{pga} 未能切换），已把 IDAC 回退为 {prev_idac}，"
+                f"保持组合一致"
+            )
+            self.idac_index = prev_idac
         return selection
 
     def max_range_mt(self, pga_index: int = None, idac_index: int = None) -> float:

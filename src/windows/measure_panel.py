@@ -382,6 +382,37 @@ class MeasurePanel(QWidget):
         if estimate is not None:
             config.apply_range_estimate(estimate)   # 写 PGA/IDAC，硬件指令随配置信号下发
         self._update_range_selection_label()
+        if estimate is not None and not self._is_serial_connected():
+            self._warn_serial_not_connected()
+
+    def _is_serial_connected(self) -> bool:
+        """串口/设备是否可用。"""
+        return bool(
+            self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+
+    def _warn_serial_not_connected(self):
+        """档位未能下发时的提示（非模态，避免阻塞自动测量流程）。"""
+        text = ("串口未连接，PGA/IDAC 档位无法下发。\n"
+                "请先打开设备电源并在配置区点击“连接”，再输入估计磁场。")
+        logger.warning("量程选档未下发：串口未连接")
+        self._update_status("串口未连接，档位未下发", is_error=True, auto_recover=True)
+        # 自动化/离屏运行时不弹窗，避免阻塞或中断脚本
+        if os.environ.get('QT_QPA_PLATFORM', '').startswith('offscreen'):
+            return
+        try:
+            # 复用同一个非模态提示框（避免频繁创建销毁 Qt 对象）
+            box = getattr(self, '_serial_warn_box', None)
+            if box is None:
+                box = QMessageBox(QMessageBox.Warning, "串口未连接", text,
+                                  QMessageBox.Ok, self)
+                self._serial_warn_box = box
+            box.setText(text)
+            box.show()
+            box.raise_()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"显示串口未连接提示失败: {exc}")
 
     def _range_estimate(self):
         """读取估计磁场（mT）；非法返回 None。"""
@@ -413,10 +444,18 @@ class MeasurePanel(QWidget):
             label.setText("请输入估计磁场")
             label.setStyleSheet("color: #b0b0b0;")
             return
-        pga, idac = config.pga_gain, config.idac_index
-        span = config.max_range_mt(pga, idac)
-        label.setText(format_range_selection(pga, idac, span))
-        overflow = config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span
+        # 显示按输入估计值算出的选档结果（而不是“当前配置”，避免切换失败时显示拼接组合）
+        selection = config.select_range(config.range_estimate_mt)
+        if selection:
+            pga, idac, span, _target, overflow = selection
+        else:
+            pga, idac = config.pga_gain, config.idac_index
+            span = config.max_range_mt(pga, idac)
+            overflow = config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span
+        text = format_range_selection(pga, idac, span)
+        if (pga, idac) != (config.pga_gain, config.idac_index):
+            text += "（档位未下发）"
+        label.setText(text)
         label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
 
     def _on_config_idac_changed(self, index):
@@ -1014,8 +1053,9 @@ class MeasurePanel(QWidget):
     def _start_rotation_button_clicked(self):
         """开始测量：先按输入估计值自动选档并调整硬件参数，再执行采集。"""
         logger.info("测量开始按钮被点击")
-        if not self.serial_manager or not self.serial_manager.get_connection_status():
-            self._update_status("错误：串口未连接", is_error=True)
+        if not self._is_serial_connected():
+            self._update_status("错误：串口未连接，请先打开设备电源并点击“连接”", is_error=True)
+            self._warn_serial_not_connected()
             return
 
         selection = self._resolve_range_selection()

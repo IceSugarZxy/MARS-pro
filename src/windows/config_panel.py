@@ -367,6 +367,8 @@ class ConfigPanel(QWidget):
         if selection is None:
             self._update_range_selection_label()
             return
+        if not self._is_serial_connected():
+            self._warn_serial_not_connected()
         pga, idac, span, target, overflow = selection
         logger.info(
             f"配置面板自动选档：估计 {estimate:.1f} mT + 余量 "
@@ -374,6 +376,29 @@ class ConfigPanel(QWidget):
             + ("（超出最大量程，取最大档）" if overflow else "")
         )
         self._update_range_selection_label(overflow=overflow)
+
+    def _is_serial_connected(self) -> bool:
+        """串口/设备是否可用。"""
+        return bool(self.serial_manager and self.serial_manager.get_connection_status())
+
+    def _warn_serial_not_connected(self):
+        """档位未能下发时的提示（非模态，避免阻塞自动流程）。"""
+        text = ("串口未连接，PGA/IDAC 档位无法下发。\n"
+                "请先打开设备电源并点击配置区的“连接”，再输入估计磁场。")
+        logger.warning("配置面板选档未下发：串口未连接")
+        if os.environ.get('QT_QPA_PLATFORM', '').startswith('offscreen'):
+            return
+        try:
+            box = getattr(self, '_serial_warn_box', None)
+            if box is None:
+                box = QMessageBox(QMessageBox.Warning, "串口未连接", text,
+                                  QMessageBox.Ok, self)
+                self._serial_warn_box = box
+            box.setText(text)
+            box.show()
+            box.raise_()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"显示串口未连接提示失败: {exc}")
 
     def _update_range_selection_label(self, overflow=False):
         """刷新选档提示：只显示 IDAC / PGA 增益 / 理论量程。"""
@@ -386,9 +411,18 @@ class ConfigPanel(QWidget):
             label.setStyleSheet("color: #b0b0b0;")
             return
         pga, idac = config.pga_gain, config.idac_index
-        span = config.max_range_mt(pga, idac)
-        label.setText(format_range_selection(pga, idac, span))
-        overflow = overflow or (config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span)
+        # 显示按输入估计值算出的选档结果（而不是“当前配置”，避免切换失败时显示拼接组合）
+        selection = config.select_range(config.range_estimate_mt)
+        if selection:
+            pga, idac, span, _target, sel_overflow = selection
+            overflow = overflow or sel_overflow
+        else:
+            span = config.max_range_mt(pga, idac)
+            overflow = overflow or (config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span)
+        text = format_range_selection(pga, idac, span)
+        if (pga, idac) != (config.pga_gain, config.idac_index):
+            text += "（档位未下发）"
+        label.setText(text)
         label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
 
     def _on_shared_range_estimate_changed(self, value):
