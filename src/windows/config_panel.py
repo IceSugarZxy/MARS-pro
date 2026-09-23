@@ -76,11 +76,11 @@ class ConfigPanel(QWidget):
 
         # 全量程偏置校准自动流程状态
         self._offset_all_active = False
-        # 全档偏置校准目标：IDAC3~6 × PGA×1~×64 共 28 组（按 IDAC 分组，减少切档次数）
+        # 全档偏置校准目标：IDAC3~6 × PGA×1~×128 共 32 组（按 IDAC 分组，减少切档次数）
         self._offset_all_targets = [
             (pga, idac)
             for idac in range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1)
-            for pga in range(len(PGA_OPTION_TEXTS) - 1)
+            for pga in range(len(PGA_OPTION_TEXTS))
         ]
         self._offset_all_cursor = 0
         self._offset_all_original_pga = None

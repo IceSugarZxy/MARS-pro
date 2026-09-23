@@ -592,8 +592,8 @@ class ConfigManager(QObject):
     def range_table(self, pga_list=None, idac_list=None) -> dict:
         """返回 {(pga, idac): 量程 mT}，默认覆盖可用 PGA × IDAC。"""
         if pga_list is None:
-            # 默认只用 ×1~×64（×128 因固有偏置已越界，不可用）
-            pga_list = [i for i in range(len(PGA_GAIN_VALUES)) if i < len(PGA_GAIN_VALUES) - 1]
+            # 默认覆盖全部 PGA 档位（×1~×128）
+            pga_list = list(range(len(PGA_GAIN_VALUES)))
         if idac_list is None:
             idac_list = list(range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1))
         return {
@@ -614,7 +614,8 @@ class ConfigManager(QObject):
         target = estimate + float(margin_mt)
 
         candidates = []
-        for pga in range(len(PGA_GAIN_VALUES) - 1):
+        # 纳入全部 PGA 档位（含 ×128）；量程低于 MIN_USABLE_RANGE_MT 的组合会被自动排除
+        for pga in range(len(PGA_GAIN_VALUES)):
             for idac in range(IDAC_MIN_INDEX, IDAC_MAX_INDEX + 1):
                 span = self.max_range_mt(pga, idac)
                 if span >= MIN_USABLE_RANGE_MT:
