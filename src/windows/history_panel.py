@@ -4,10 +4,6 @@
 """
 
 import os
-import glob
-import re
-import csv
-from datetime import datetime
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
                               QTableWidgetItem, QLineEdit,
                               QHeaderView, QHBoxLayout, QMessageBox, QComboBox)
@@ -15,86 +11,17 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5 import uic
 from core.logger import get_logger
 from core.path_utils import get_data_dir
+from core.plot_data_reader import (TABLE_COLUMNS, is_plot_data_header,
+                                   read_plot_csv, read_plot_csv_header,
+                                   scan_plot_data_records)
 
 logger = get_logger('HistoryPanel')
 
-# 历史列表列定义，顺序必须与 history_panel.ui 中 data_table 的列一致
-TABLE_COLUMNS = ('sample_name', 'sample_code', 'time_str', 'tester', 'polar_num', 'airgap', 'remark')
-
-
-def _is_plot_data_header(row):
-    return len(row) >= 2 and "角度" in row[0] and "磁场" in row[1]
-
-
-def _apply_sample_info_row(sample_info, row):
-    if len(row) < 2:
-        return
-
-    key = row[0].strip()
-    value = row[1].strip()
-    if "样品名称" in key:
-        sample_info['sample_name'] = value
-    elif "样品编号" in key:
-        sample_info['sample_code'] = value
-    elif "材料" in key:
-        sample_info['material'] = value
-    elif "线圈编号" in key:
-        sample_info['coil_code'] = value
-    elif "备注" in key:
-        sample_info['remark'] = value
-    elif "保存时间" in key:
-        sample_info['save_time'] = value
-    elif "极数" in key:
-        sample_info['polar_num'] = value
-    elif "气隙" in key:
-        sample_info['airgap'] = value
-    elif "测试员" in key:
-        sample_info['tester'] = value
-    elif "磁化条件" in key:
-        sample_info['mag_condition'] = value
-    elif "探头" in key:
-        sample_info['probe'] = value
-
-
-def _read_plot_csv_header(file_path):
-    """Read only CSV metadata rows for the history table."""
-    sample_info = {}
-    with open(file_path, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if _is_plot_data_header(row):
-                break
-            _apply_sample_info_row(sample_info, row)
-    return sample_info
-
-
-def _read_plot_csv(file_path):
-    """Read saved plot CSV metadata and waveform data."""
-    sample_info = {}
-    angle_data = []
-    mag_data = []
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        rows = list(csv.reader(f))
-
-    data_started = False
-    for row in rows:
-        if len(row) >= 2 and "角度" in row[0] and "磁场" in row[1]:
-            data_started = True
-            continue
-
-        if not data_started:
-            _apply_sample_info_row(sample_info, row)
-            continue
-
-        if len(row) >= 2 and row[0].strip():
-            try:
-                angle_data.append(float(row[0].strip()))
-                mag_data.append(float(row[1].strip()))
-            except (ValueError, IndexError):
-                continue
-
-    return sample_info, angle_data, mag_data
+# CSV 解析与列表扫描统一放在 core.plot_data_reader，与数据比对面板共用。
+# 这里保留旧名，避免其它模块（或历史脚本）引用时失效。
+_is_plot_data_header = is_plot_data_header
+_read_plot_csv = read_plot_csv
+_read_plot_csv_header = read_plot_csv_header
 
 
 class LoadHistoryThread(QThread):
@@ -107,45 +34,11 @@ class LoadHistoryThread(QThread):
 
     def run(self):
         """后台加载历史数据"""
-        records = []
-
-        csv_files = glob.glob(os.path.join(self.plot_data_dir, "**", "*.csv"), recursive=True)
-        csv_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-
-        for file_path in csv_files:
-            filename = os.path.basename(file_path)
-            # 解析文件名：样品名称_时间戳.csv
-            match = re.match(r"(.+?)_(\d{8}_\d{6})\.csv", filename)
-            if match:
-                sample_name = match.group(1)
-                timestamp_str = match.group(2)
-                try:
-                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-                    time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                except:
-                    time_str = timestamp_str
-
-                try:
-                    sample_info = _read_plot_csv_header(file_path)
-                except Exception as e:
-                    logger.warning(f"读取CSV头信息失败: {e}")
-                    sample_info = {}
-
-                sample_name = sample_info.get('sample_name', sample_name)
-                time_str = sample_info.get('save_time', time_str)
-
-                record = {
-                    'sample_name': sample_name,
-                    'sample_code': sample_info.get('sample_code', ''),
-                    'time_str': time_str,
-                    'polar_num': sample_info.get('polar_num', ''),
-                    'airgap': sample_info.get('airgap', ''),
-                    'remark': sample_info.get('remark', ''),
-                    'tester': sample_info.get('tester', ''),
-                    'file_path': file_path
-                }
-                records.append(record)
-
+        try:
+            records = scan_plot_data_records(self.plot_data_dir)
+        except Exception as e:
+            logger.warning(f"扫描 plot_data 失败: {e}")
+            records = []
         self.finished.emit(records)
 
 
