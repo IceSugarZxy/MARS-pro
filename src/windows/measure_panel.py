@@ -8,7 +8,7 @@ import json
 import re
 import time
 import serial.tools.list_ports
-from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel, QRadioButton,
+from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel,
                               QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
                               QMessageBox, QSpinBox)
@@ -23,9 +23,10 @@ from core.config_manager import (
     RANGE_SELECT_MARGIN_MT,
     action_to_text,
     format_range_selection,
-    get_pga_mag_conversion_factor,
+    get_mag_adc_per_mt,
 )
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
+from core.data_process import SATURATION_RETRY_HEADROOM
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.analysis_detail_dialog import AnalysisDetailDialog
@@ -35,6 +36,8 @@ from windows.offset_calibration_dialog import OffsetCalibrationDialog
 logger = get_logger('MeasurePanel')
 
 STATUS_AUTO_RECOVER_MS = 2000
+# 削顶（ADC 顶轨）后自动降档重测的次数上限
+SATURATION_RETRY_LIMIT = 1
 DEFAULT_PLOT_COLOR = '#e74c3c'
 STAGE_LONG_PRESS_MS = 500
 # 串口连接成功后需要设置的 IDAC 电流档位
@@ -330,12 +333,12 @@ class MeasurePanel(QWidget):
         self._update_scheme_display(index)
 
     def _on_test_speed_changed(self, index):
-        """测试速度改变 → 同步发送 MODE 指令到固件"""
+        """测试速度改变 → 下发对应的采集参数（ACQCFG + ADCRATE）"""
         config = get_config_manager()
         config.test_speed = index
         logger.info(f"测试速度已更改: {index}")
         if self.serial_command and self.serial_manager and self.serial_manager.get_connection_status():
-            self.serial_command.set_mode_from_test_speed(index)
+            self.serial_command.apply_test_speed(index)
 
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
@@ -453,9 +456,14 @@ class MeasurePanel(QWidget):
             span = config.max_range_mt(pga, idac)
             overflow = config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span
         text = format_range_selection(pga, idac, span)
+        # 标签只显示两个挡位 + 量程数字；“档位未下发”等状态放到悬停提示，避免文字被截断
+        tooltip = text
+        if overflow:
+            tooltip += "（超出可用量程，读数可能溢出）"
         if (pga, idac) != (config.pga_gain, config.idac_index):
-            text += "（档位未下发）"
+            tooltip += "（档位未下发）"
         label.setText(text)
+        label.setToolTip(tooltip)
         label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
 
     def _on_config_idac_changed(self, index):
@@ -579,8 +587,39 @@ class MeasurePanel(QWidget):
                     detail = line.split(None, 1)[1] if " " in line else line
                     self._finish_pga_failure(self._pga_pending_index, detail.upper())
 
+    def _apply_connect_pga_gain(self) -> None:
+        """串口连接后把"上位机配置里的量程档位"下发到固件。
+
+        以前这里是反过来的：查询固件 PGA 再同步到本地，结果是上位机默认量程被
+        固件上一次残留的档位覆盖。2026-09-30 的削顶就是这样发生的：固件停在
+        ×64/IDAC6（IDAC6 下满量程只有 45 mT），界面却显示成"当前档位"，
+        没填磁场估计直接测 47 mT 样品就顶轨了。
+
+        改成和 IDAC 一致：以上位机配置为准（默认 ×1 最大量程），连接后直接下发
+        ``PGA<n>~``。下发失败只是告警并保留上一次确认的档位，不会阻断流程。
+        """
+        connected = bool(
+            self.serial_command
+            and self.serial_manager
+            and self.serial_manager.get_connection_status()
+        )
+        if not connected:
+            return
+        try:
+            index = get_config_manager().pga_gain
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"读取配置量程档位失败，跳过下发: {exc}")
+            return
+        logger.info(f"串口连接后下发量程档位: {PGA_OPTION_TEXTS[index]}（PGA{index}~）")
+        self._request_pga_gain_change(index)
+
     def _query_pga_gain_from_firmware(self) -> None:
-        """串口连接完成后查询固件当前 PGA 档位（PGA~）。"""
+        """查询固件当前 PGA 档位（PGA~）。
+
+        注意：串口连接流程已改为 ``_apply_connect_pga_gain()``（以上位机配置为准
+        下发档位），本方法及其配套的 ``_on_pga_query_timeout`` / ``_sync_pga_from_firmware``
+        目前没有调用点，保留给需要核对固件实际档位的场合使用。
+        """
         connected = bool(
             self.serial_command
             and self.serial_manager
@@ -691,8 +730,8 @@ class MeasurePanel(QWidget):
                 config.idac_index = index
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"记录 IDAC 档位到配置失败: {exc}")
-        # 后续步骤：PGA 档位查询与量程/偏置同步
-        self._query_pga_gain_from_firmware()
+        # 后续步骤：把上位机配置里的量程档位下发到固件（不再反过来被固件覆盖）
+        self._apply_connect_pga_gain()
 
     def _fail_idac_set(self, index: int, reason: str) -> None:
         """IDAC 设置失败：记录后继续执行 PGA 查询。"""
@@ -704,8 +743,8 @@ class MeasurePanel(QWidget):
             is_error=True,
             auto_recover=True,
         )
-        # 即使 IDAC 设置失败，仍继续后续的 PGA 查询同步
-        self._query_pga_gain_from_firmware()
+        # 即使 IDAC 设置失败，仍继续后续的量程档位下发
+        self._apply_connect_pga_gain()
 
     def _on_idac_confirm_timeout(self) -> None:
         """IDAC 设置超时：先重试 1 次，仍失败则继续 PGA 查询。"""
@@ -918,9 +957,9 @@ class MeasurePanel(QWidget):
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.enable_position_query_timer()
 
-            # 串口连接后同步当前采集模式
+            # 串口连接后同步当前速度档位的采集参数
             if self.serial_command:
-                self.serial_command.set_mode_from_test_speed(get_config_manager().test_speed)
+                self.serial_command.apply_test_speed(get_config_manager().test_speed)
 
             # 串口连接后：先设置 IDAC4~ 并确认，随后再查询/同步 PGA 档位
             self._idac_connect_started = False
@@ -1053,6 +1092,10 @@ class MeasurePanel(QWidget):
     def _start_rotation_button_clicked(self):
         """开始测量：先按输入估计值自动选档并调整硬件参数，再执行采集。"""
         logger.info("测量开始按钮被点击")
+        # 新一轮测量的重试预算（无数据重试 / 削顶降档重测）
+        self._measure_retry_count = 0
+        self._saturation_retry_count = 0
+        self._pending_selection_is_retry = False
         if not self._is_serial_connected():
             self._update_status("错误：串口未连接，请先打开设备电源并点击“连接”", is_error=True)
             self._warn_serial_not_connected()
@@ -1100,7 +1143,20 @@ class MeasurePanel(QWidget):
             self._request_pga_gain_change(pga)
             QTimer.singleShot(200, self._poll_pending_selection)
             return
+        self._on_selection_ready()
+
+    def _on_selection_ready(self):
+        """档位切换完成后的收尾。
+
+        首次测量走完整的 _begin_measurement（重置界面、新建进度对话框）；
+        削顶重测则沿用当前测量会话（保留样品信息与进度对话框），只重发 B~。
+        """
         self._pending_measure_selection = None
+        if getattr(self, '_pending_selection_is_retry', False):
+            self._pending_selection_is_retry = False
+            logger.info("档位已切换完成，重新发送 B~ 采集")
+            QTimer.singleShot(200, self._send_rotate_command)
+            return
         self._begin_measurement()
 
     def _poll_pending_selection(self):
@@ -1112,11 +1168,11 @@ class MeasurePanel(QWidget):
         idac_ok = (config.idac_index == idac) and not getattr(self, '_idac_set_pending', False)
         pga_ok = (self._pga_gain_confirmed == pga) and not getattr(self, '_pga_pending', False)
         if idac_ok and pga_ok:
-            self._pending_measure_selection = None
-            self._begin_measurement()
+            self._on_selection_ready()
             return
         if time.monotonic() > getattr(self, '_range_apply_deadline', 0.0):
             self._pending_measure_selection = None
+            self._pending_selection_is_retry = False
             self._update_status(
                 f"错误：档位切换超时（目标 IDAC{idac} / PGA{pga}），测量取消",
                 is_error=True,
@@ -1161,7 +1217,7 @@ class MeasurePanel(QWidget):
 
         self._update_status("正在测量...")
 
-        # 延迟 300ms 确保 MODE 切换等指令已被固件处理完毕
+        # 延迟 300ms 确保速度档位参数等指令已被固件处理完毕
         QTimer.singleShot(300, self._send_rotate_command)
 
     def _send_rotate_command(self):
@@ -1240,10 +1296,14 @@ class MeasurePanel(QWidget):
             self._update_status("偏置校准已取消", auto_recover=True)
 
     def _on_offset_progress(self, current, total):
-        """更新偏置校准进度条"""
+        """更新偏置校准进度。
+
+        进度条由对话框按固定的 5s 采集窗口走时推进；这里的点数只用于状态文本。
+        点数与百分比不成正比：H~ 实际速率随 ADCRATE 变化（约 8~31Hz），
+        按标称 600Hz 估算会让进度条严重偏慢。
+        """
         if self._offset_dialog:
-            pct = int(current / total * 100) if total > 0 else 0
-            self._offset_dialog.set_progress(min(pct, 99), "偏置校准进行中...")
+            self._offset_dialog.set_points_collected(current)
 
     def _on_offset_calibration_finished(self, success):
         """偏置校准完成"""
@@ -1263,7 +1323,7 @@ class MeasurePanel(QWidget):
         if self._offset_dialog:
             config = get_config_manager()
             offset_adc = getattr(config, 'offset', None)
-            factor = get_pga_mag_conversion_factor(config.pga_gain)
+            factor = get_mag_adc_per_mt(config.pga_gain, config.idac_index)
             offset_mt = offset_adc / factor if offset_adc is not None else None
             logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_adc} ADC ({offset_mt} mT)")
             self._offset_dialog.show_result(success, offset_mt)
@@ -1660,12 +1720,9 @@ class MeasurePanel(QWidget):
     def _on_measure_data_processed_legacy(self, angle_data, mag_data):
         analysis_results = None
         if angle_data and mag_data and self.data_process and self.data_process.measure_type != "vertical":
-            radio = self.findChild(QRadioButton, "radio_concentricity")
-            enable_concentricity = radio.isChecked() if radio else True
             analysis_results = self.wave_analyzer.analyze_waveform(
                 angle_data,
                 mag_data,
-                enable_concentricity,
             )
         self._on_measure_data_processed(angle_data, mag_data, analysis_results)
 
@@ -1682,6 +1739,13 @@ class MeasurePanel(QWidget):
         self.angle_data = angle_data or []
         self.mag_data = mag_data or []
 
+        # 无有效数据：先让固件停下来。否则它仍在推送的二进制流会被位置解析器
+        # 当成 M~ 回信吃掉（2026-09-30 实测：测量超时后残留数据流持续 90s+，
+        # 期间位置查询全部报 M~ position INCOMPLETE）。
+        if not self.angle_data and self.serial_command:
+            logger.warning("测量无有效数据：发送 S~ 停止固件采集流")
+            self.serial_command.claw_stop()
+
         # 无数据时自动重试 1 次
         if not self.angle_data and self.is_testing:
             retry = getattr(self, '_measure_retry_count', 0) + 1
@@ -1691,6 +1755,14 @@ class MeasurePanel(QWidget):
                 QTimer.singleShot(300, self._send_rotate_command)
                 return
             self._measure_retry_count = 0
+
+        # 削顶（ADC 顶轨）：读数系统性偏低、误差指标也不可信，自动放宽量程重测。
+        # 必须放在 _end_test() 之前，否则测量会话已被收尾（位置查询恢复、
+        # 采集中断），重测就要重新走一遍完整启动流程。
+        saturation = getattr(self.data_process, "last_saturation", None) or {}
+        if (self.angle_data and self.is_testing and saturation.get("saturated")
+                and self._retry_after_saturation(saturation)):
+            return
 
         if self.test_progress_dialog:
             if self.angle_data and self.mag_data:
@@ -1722,6 +1794,57 @@ class MeasurePanel(QWidget):
             self._update_status("警告：处理后的数据为空", is_error=True)
             if self.is_testing:
                 self._end_test()
+
+    def _retry_after_saturation(self, saturation: dict) -> bool:
+        """削顶后放宽量程重测一次；返回 True 表示已安排重测、本轮结果不展示。"""
+        if not saturation.get("saturated"):
+            return False
+        attempt = getattr(self, '_saturation_retry_count', 0)
+        if attempt >= SATURATION_RETRY_LIMIT:
+            logger.warning("削顶重测已达上限，保留本轮数据（读数偏低，仅供参考）")
+            self._update_status("警告：本轮波形削顶，读数偏低不可信", is_error=True,
+                                auto_recover=True)
+            return False
+
+        config = get_config_manager()
+        current_pga, current_idac = config.pga_gain, config.idac_index
+        current_span = config.max_range_mt(current_pga, current_idac)
+        # 真实峰值按顶轨占比反推（见 DataProcess._summarize_saturation），再留一点余量
+        estimate = max(
+            float(saturation.get('peak_estimate_mt') or 0.0),
+            float(saturation.get('clipped_mt') or 0.0),
+        ) * SATURATION_RETRY_HEADROOM
+        selection = config.select_range(estimate)
+        if selection is None:
+            return False
+
+        pga, idac, span, _target, _overflow = selection
+        if (pga, idac) == (current_pga, current_idac) or span <= current_span * 1.05:
+            logger.warning(
+                f"削顶但已无更大的可用档位（当前 {PGA_OPTION_TEXTS[current_pga]}，"
+                f"满量程 {current_span:.1f} mT），保留本轮数据"
+            )
+            self._update_status("警告：量程不足导致削顶，读数不可信", is_error=True,
+                                auto_recover=True)
+            return False
+
+        self._saturation_retry_count = attempt + 1
+        logger.warning(
+            f"削顶重测 {attempt + 1}/{SATURATION_RETRY_LIMIT}："
+            f"当前 {PGA_OPTION_TEXTS[current_pga]} 满量程仅 {current_span:.1f} mT，"
+            f"按 {estimate:.1f} mT 重新选档 → IDAC{idac} / "
+            f"{PGA_OPTION_TEXTS[pga]}（量程 {span:.1f} mT）"
+        )
+        self._update_status(
+            f"检测到削顶，自动降档到 {PGA_OPTION_TEXTS[pga]} 重测…",
+            is_error=True, auto_recover=True,
+        )
+        if self.serial_command:
+            self.serial_command.claw_stop()
+        self._pending_measure_selection = (pga, idac, span)
+        self._pending_selection_is_retry = True
+        QTimer.singleShot(300, self._apply_pending_selection)
+        return True
 
     def _close_test_progress_dialog(self):
         """Close test progress dialog."""

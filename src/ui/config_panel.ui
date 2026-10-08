@@ -572,7 +572,7 @@
          </size>
         </property>
         <property name="text">
-         <string>探头量程：</string>
+         <string>磁场估计(mT)：</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -622,7 +622,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>输入估计磁场（mT），自动加 10mT 后按最大量程表选择最接近的 PGA×IDAC 组合</string>
+         <string>输入预估场强(mT)。选档时自动加 10mT 余量，在 IDAC3~6 × PGA×1~×128 中取量程覆盖目标、且目标不超过该档实测线性上限的最小组合。</string>
         </property>
        </widget>
       </item>
@@ -867,17 +867,17 @@
         </property>
         <item>
          <property name="text">
-          <string>高分辨率 (MODE0)</string>
+          <string>高精度</string>
          </property>
         </item>
         <item>
          <property name="text">
-          <string>平衡 (MODE1)</string>
+          <string>均衡</string>
          </property>
         </item>
         <item>
          <property name="text">
-          <string>高速 (MODE2)</string>
+          <string>高速</string>
          </property>
         </item>
        </widget>

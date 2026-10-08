@@ -187,11 +187,8 @@ def analyze_files(file_paths: Iterable[str]) -> List[FileAnalysis]:
 
         if not all(_is_number(results.get(key)) for key in REQUIRED_RESULT_KEYS):
             angle_data, mag_data, sample_info = read_plot_data_csv(file_path)
-            results = analyzer.analyze_waveform(
-                angle_data,
-                mag_data,
-                enable_concentricity_calibration=True,
-            )
+            # 同轴度（偏心）修正已固定启用，无需再传开关
+            results = analyzer.analyze_waveform(angle_data, mag_data)
             if not results:
                 raise ValueError(f"{os.path.basename(file_path)} 分析结果为空")
 

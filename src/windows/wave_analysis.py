@@ -103,13 +103,12 @@ class WaveAnalysis:
 
         return N_interval, S_interval, SinglePolarValue
 
-    def analyze_waveform(self, angle_data, mag_data, enable_concentricity_calibration=True):
+    def analyze_waveform(self, angle_data, mag_data):
         """执行波形分析
         
         Args:
             angle_data: 角度数据列表
             mag_data: 磁场数据列表
-            enable_concentricity_calibration: 是否启用同心度校准（正弦拟合）
             
         Returns:
             dict: 分析结果字典
@@ -118,7 +117,10 @@ class WaveAnalysis:
         
         try:
             # 检查输入数据
-            if not angle_data or not mag_data or len(angle_data) != len(mag_data):
+            if angle_data is None or mag_data is None:
+                logger.info("波形分析错误：数据为空")
+                return {}
+            if len(angle_data) == 0 or len(mag_data) == 0 or len(angle_data) != len(mag_data):
                 logger.info("波形分析错误：数据为空或长度不一致")
                 return {}
             
@@ -126,66 +128,225 @@ class WaveAnalysis:
             x = np.array(angle_data)
             y = np.array(mag_data)
             
-            results = self._wave_analysis(x, y, enable_concentricity_calibration)
+            results = self._wave_analysis(x, y)
             return results
             
         except Exception as e:
             logger.info(f"波形分析过程中发生错误: {e}")
             return {}
     
-    def _wave_analysis(self, x, y, enable_concentricity_calibration=True):
+    def _detect_zero_angles(self, x, y):
+        """检测过零点并线性拟合出各自的角度。"""
+        zero_crossings = []
+        zero_angles = []
+        zero_value_tolerance = self._get_zero_value_tolerance(y)
+
+        # 角度首尾是同一个物理位置；如果边界点正好在零点，先纳入一个闭环零点，
+        # 后续归一化会把0度/360度的重复点合并为同一个物理过零点。
+        if abs(float(y[0])) <= zero_value_tolerance:
+            zero_angles.append(float(x[0]))
+        if len(y) > 1 and abs(float(y[-1])) <= zero_value_tolerance:
+            zero_angles.append(float(x[-1]))
+
+        for i in range(len(y) - 1):
+            if y[i] * y[i + 1] <= 0:
+                if len(zero_crossings) == 0 or (i - zero_crossings[-1] > 10):
+                    zero_crossings.append(i)
+
+        for zero_idx, idx in enumerate(zero_crossings, start=1):
+            try:
+                fit_start = max(0, idx - 10)
+                fit_end = min(len(x), idx + 11)
+                if fit_end - fit_start >= 2:
+                    coefficients = np.polyfit(x[fit_start:fit_end], y[fit_start:fit_end], 1)
+                    if coefficients[0] != 0:
+                        zero_angle = -coefficients[1] / coefficients[0]
+                        if x[0] <= zero_angle <= x[-1]:
+                            zero_angles.append(zero_angle)
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"  过零点{zero_idx}计算失败: {e}")
+                continue
+
+        return self._normalize_zero_angles(zero_angles, x)
+
+    def _interval_peaks(self, x, y, zero_angles):
+        """按过零点划分区间，取每个区间的极值，按极性分开返回。
+
+        Returns:
+            (N角度, N幅值, S角度, S幅值)
+        """
+        N_angles, N_values, S_angles, S_values = [], [], [], []
+        if len(zero_angles) < 2:
+            return np.array([]), np.array([]), np.array([]), np.array([])
+        span = float(x[-1] - x[0]) + float(x[1] - x[0])
+        for i in range(len(zero_angles)):
+            start_angle = zero_angles[i]
+            end_angle = zero_angles[(i + 1) % len(zero_angles)]
+            if i == len(zero_angles) - 1:
+                end_angle += span
+            if i == len(zero_angles) - 1 and end_angle > x[-1]:
+                mask = (x > start_angle) | (x < (end_angle - span))
+            else:
+                mask = (x > start_angle) & (x < end_angle)
+            y_interval = y[mask]
+            if len(y_interval) < 2:
+                continue
+            indices = np.where(mask)[0]
+            midpoint = start_angle + (end_angle - start_angle) / 2
+            sample_angle = ((midpoint - x[0]) % span) + x[0]
+            if float(np.interp(sample_angle, x, y)) >= 0:
+                local = int(np.argmax(y_interval))
+                N_angles.append(float(x[indices[local]]))
+                N_values.append(float(y[indices[local]]))
+            else:
+                local = int(np.argmin(y_interval))
+                S_angles.append(float(x[indices[local]]))
+                S_values.append(abs(float(y[indices[local]])))
+        return (np.array(N_angles), np.array(N_values),
+                np.array(S_angles), np.array(S_values))
+
+    @staticmethod
+    def _wrap_half_period(values, period):
+        """把角度偏差折算到 ±period/2 区间内。"""
+        return (values + period / 2.0) % period - period / 2.0
+
+    @staticmethod
+    def _fit_first_harmonic(theta, values):
+        """按 y = a·sin θ + b·cos θ + c 做最小二乘。
+
+        Returns:
+            (系数向量, 一圈一次幅值, a·sinθ+b·cosθ 的相位°/设计矩阵)。
+        """
+        design = np.column_stack([np.sin(theta), np.cos(theta), np.ones(len(theta))])
+        coef, *_ = np.linalg.lstsq(design, values, rcond=None)
+        amplitude = float(np.hypot(coef[0], coef[1]))
+        phase = float(np.rad2deg(np.arctan2(coef[1], coef[0])))
+        return coef, amplitude, phase, design
+
+    def _concentricity_angle_correction(self, x, zero_angles):
+        """同轴度修正（角度域）：剥离过零点偏差里的"一圈一次"偏心分量。
+
+        偏心使编码器角度 θ 与样品真实角度相差 δ(θ)，δ 是一圈一次的正弦量，
+        所以实测过零点相对等分栅格会出现一圈一次的偏移。扣掉它以后，
+        极间隔误差统计的就是样品本身（而不是夹具偏心）的不均匀度。
+
+        Returns:
+            (修正后的过零点角度数组, 诊断字典)。
+        """
+        cross = np.asarray(zero_angles, dtype=float)
+        info = {"angle_applied": False, "zero_crossings": int(len(cross))}
+        if len(cross) < 4:
+            return cross, info
+
+        step = float(x[1] - x[0]) if len(x) > 1 else 1.0
+        span = float(x[-1] - x[0]) + step          # 一整圈 = 360°
+        spacing = span / len(cross)
+        nominal = cross[0] + np.arange(len(cross)) * spacing
+        deviation = self._wrap_half_period(cross - nominal, span)
+        theta = 2.0 * np.pi * (cross - x[0]) / span
+
+        coef, amp, phase, design = self._fit_first_harmonic(theta, deviation)
+        # 修正前也扣掉均值，保证和修正后同一口径（都是相对最佳拟合栅格）
+        residual_before = float(np.std(deviation - float(np.mean(deviation))))
+        residual_after = float(np.std(deviation - design @ coef))
+        if amp > 5.0:       # 超过 5° 视为偏心量异常，宁可不修角度
+            logger.warning(f"同轴度修正：估计角度偏心 {amp:.2f}° 过大，跳过角度修正")
+            return cross, info
+
+        # 只扣一圈一次项，保留常数项，整圈总弧长不变
+        corrected = cross - (coef[0] * np.sin(theta) + coef[1] * np.cos(theta))
+        info.update({
+            "angle_applied": True,
+            "angle_amp_deg": round(amp, 4),
+            "angle_phase_deg": round(phase, 1),
+            "crossing_dev_std_deg_before": round(residual_before, 4),
+            "crossing_dev_std_deg_after": round(residual_after, 4),
+        })
+        return corrected, info
+
+    def _concentricity_amplitude_correction(self, x, n_angles, n_values, s_angles, s_values):
+        """同轴度修正（幅值域）：把 N、S 极值序列各自的"一圈一次"分量扣掉。
+
+        偏心对极值幅值的作用是一圈一次的：加性偏移 Δ(θ) 与灵敏度调制 m(θ)，
+        N 极表现为 +Δ + A·m，S 极表现为 −Δ + B·m，两者都是 θ 的一圈一次正弦。
+
+        注意：从**极值序列**里无法把 Δ 和 m 分开——两个效应对同一序列贡献的
+        都是 sinθ / cosθ 这一组基，是同一个方向（早先"联合拟合 Δ 与 m 再相除"
+        的写法就卡在这里：signed·sinθ 只在极对数谐波上有分量，一圈一次分量几乎为 0，
+        结果一圈一次几乎没被扣掉，反而被一个虚高的 Δ 和虚假的 m 扭曲了序列）。
+        既然目标就是让 N、S 两个序列尽可能平，直接在两个序列上各自拟合并扣掉
+        一圈一次项即可，既准确又严格保证方差只减不增。
+
+        Returns:
+            (修正后的 N 幅值数组, 修正后的 S 幅值数组, 诊断字典)。
+        """
+        n_values = np.asarray(n_values, dtype=float)
+        s_values = np.asarray(s_values, dtype=float)
+        info = {"amp_applied": False, "peak_count": int(len(n_values) + len(s_values))}
+        if len(n_values) < 4 or len(s_values) < 4:
+            return n_values, s_values, info
+
+        step = float(x[1] - x[0]) if len(x) > 1 else 1.0
+        span = float(x[-1] - x[0]) + step
+
+        def remove_first_harmonic(angles, values):
+            theta = 2.0 * np.pi * (np.asarray(angles, dtype=float) - x[0]) / span
+            # 极值点的角度本身就不均匀（极点位置有误差），所以必须带上常数项，
+            # 否则 sin/cos 与常数不正交，一圈一次幅值会被系统性低估/污染。
+            design = np.column_stack([np.sin(theta), np.cos(theta), np.ones(len(theta))])
+            coef, *_ = np.linalg.lstsq(design, values, rcond=None)
+            amplitude = float(np.hypot(coef[0], coef[1]))
+            phase = float(np.rad2deg(np.arctan2(coef[1], coef[0])))
+            one_x = coef[0] * np.sin(theta) + coef[1] * np.cos(theta)
+            return values - one_x, amplitude, phase
+
+        n_fixed, n_amp, n_phase = remove_first_harmonic(n_angles, n_values)
+        s_fixed, s_amp, s_phase = remove_first_harmonic(s_angles, s_values)
+        n_scale = abs(float(np.mean(n_values))) or 1.0
+        s_scale = abs(float(np.mean(s_values))) or 1.0
+        info.update({
+            "n_1x_mT": round(n_amp, 3),
+            "n_1x_pct": round(n_amp / n_scale * 100.0, 3),
+            "n_1x_phase_deg": round(n_phase, 1),
+            "s_1x_mT": round(s_amp, 3),
+            "s_1x_pct": round(s_amp / s_scale * 100.0, 3),
+            "s_1x_phase_deg": round(s_phase, 1),
+        })
+        if n_amp > 0.3 * n_scale or s_amp > 0.3 * s_scale:
+            logger.warning(
+                "同轴度修正：极值一圈一次幅值过大（N %.2f%% / S %.2f%%），跳过幅值修正"
+                % (n_amp / n_scale * 100.0, s_amp / s_scale * 100.0)
+            )
+            return n_values, s_values, info
+
+        info["amp_applied"] = True
+        return n_fixed, s_fixed, info
+
+    def _wave_analysis(self, x, y):
         """波形分析核心算法
         
         Args:
             x: 角度数据数组
             y: 磁场数据数组
-            enable_concentricity_calibration: 是否启用同心度校准（正弦拟合）
             
         Returns:
             dict: 分析结果字典
         """
         try:
             # =====================================================================
-            # Part 1: 过零点分析（先执行 - 定义极性区间）
+            # Part 0: 同轴度（偏心）修正——固定启用，不再由界面开关控制
+            #   角度域：扣掉过零点偏差里的一圈一次分量
+            #   幅值域：扣掉极值幅值里的一圈一次偏移与灵敏度调制
+            #   两个域都只剥离一圈一次项，波形本身不做重采样，避免插值带来
+            #   额外谐波失真（THD / 面积仍按原始波形计算）。
             # =====================================================================
-            zero_crossings = []
-            zero_angles = []
-            zero_value_tolerance = self._get_zero_value_tolerance(y)
+            zero_angles_raw = self._detect_zero_angles(x, y)
+            zero_angles, concentricity_info = self._concentricity_angle_correction(
+                x, zero_angles_raw)
 
-            # 角度首尾是同一个物理位置；如果边界点正好在零点，先纳入一个闭环零点，
-            # 后续归一化会把0度/360度的重复点合并为同一个物理过零点。
-            if abs(float(y[0])) <= zero_value_tolerance:
-                zero_angles.append(float(x[0]))
-            if len(y) > 1 and abs(float(y[-1])) <= zero_value_tolerance:
-                zero_angles.append(float(x[-1]))
-
-            # 检测过零点
-            for i in range(len(y) - 1):
-                if y[i] * y[i+1] <= 0:
-                    if len(zero_crossings) == 0 or (i - zero_crossings[-1] > 10):
-                        zero_crossings.append(i)
-
-            # 线性拟合计算过零点角度
-            for zero_idx, idx in enumerate(zero_crossings, start=1):
-                try:
-                    fit_start = max(0, idx - 10)
-                    fit_end = min(len(x), idx + 11)
-
-                    if fit_end - fit_start >= 2:
-                        x_fit = x[fit_start:fit_end]
-                        y_fit = y[fit_start:fit_end]
-                        coefficients = np.polyfit(x_fit, y_fit, 1)
-
-                        if coefficients[0] != 0:
-                            zero_angle = -coefficients[1] / coefficients[0]
-                            if x[0] <= zero_angle <= x[-1]:
-                                zero_angles.append(zero_angle)
-                except Exception as e:
-                    logger.debug(f"  过零点{zero_idx}计算失败: {e}")
-                    continue
-
-            zero_angles = self._normalize_zero_angles(zero_angles, x)
-
+            # =====================================================================
+            # Part 1: 过零点分析（上面的 zero_angles 即修正后的结果，用来定义极性区间）
+            # =====================================================================
             # =====================================================================
             # Part 2: 极值分析（后执行 - 在过零点定义的区间内查找极值）
             # =====================================================================
@@ -282,6 +443,21 @@ class WaveAnalysis:
                 S_peak_values = S_part[S_peaks]
                 S_peak_source_indices = S_indices[S_peaks] if len(S_peaks) > 0 else np.array([], dtype=int)
 
+            # 同轴度修正（幅值域）：N/S 极值幅值扣掉一圈一次偏移与灵敏度调制。
+            # peak_details 里 'value' 仍保留原始值（与波形曲线对得上），
+            # 'abs_value' / 'error_percent' 用修正后的幅值，和统计口径一致。
+            if len(N_peak_values) and len(S_peak_values):
+                N_peak_values, S_peak_values, amp_info = self._concentricity_amplitude_correction(
+                    x,
+                    x[np.asarray(N_peak_source_indices, dtype=int)],
+                    N_peak_values,
+                    x[np.asarray(S_peak_source_indices, dtype=int)],
+                    S_peak_values,
+                )
+                concentricity_info.update(amp_info)
+            else:
+                concentricity_info.update({"amp_applied": False, "peak_count": 0})
+
             peak_details = []
             for source_index, value in zip(N_peak_source_indices, N_peak_values):
                 peak_details.append({
@@ -366,51 +542,9 @@ class WaveAnalysis:
                         error = (SinglePolarValue[i] - mean_polar) / mean_polar * 100
                         SinglePolarError.append(error)
 
-                # 正弦函数拟合校准单极误差列表
-                if len(SinglePolarError) >= 4 and enable_concentricity_calibration:
-                    try:
-                        # 创建x轴数据（从0开始的索引）
-                        x_fit = np.arange(len(SinglePolarError))
-                        y_original = np.array(SinglePolarError)
-
-                        # 正弦函数拟合：y = A * sin(ω*x + φ) + C
-                        # 使用最小二乘法进行正弦拟合
-                        from scipy.optimize import curve_fit
-
-                        # 定义正弦函数模型
-                        def sin_func(x, A, omega, phi, C):
-                            return A * np.sin(omega * x + phi) + C
-
-                        # 初始参数估计
-                        y_mean = np.mean(y_original)
-                        y_amplitude = (np.max(y_original) - np.min(y_original)) / 2
-
-                        if y_amplitude <= 1e-12:
-                            logger.debug("  单极误差波动过小，跳过正弦拟合")
-                        else:
-                            # 尝试不同的初始参数
-                            initial_guess = [y_amplitude, 2*np.pi/len(x_fit), 0, y_mean]
-
-                            # 进行正弦拟合；部分数据能拟合出曲线但无法估计协方差，忽略该提示即可。
-                            with warnings.catch_warnings():
-                                warnings.simplefilter("ignore", OptimizeWarning)
-                                popt, _ = curve_fit(sin_func, x_fit, y_original, p0=initial_guess, maxfev=5000)
-
-                            A_fit, omega_fit, phi_fit, C_fit = popt
-
-                            # 计算拟合值
-                            y_fit = sin_func(x_fit, A_fit, omega_fit, phi_fit, C_fit)
-
-                            # 用原始单极误差减去拟合的正弦函数，削弱同心度导致的周期性波动
-                            y_adjusted = y_original - y_fit
-
-                            # 更新单极误差列表，后续累计误差基于校准后的单极误差重新累加
-                            SinglePolarError = y_adjusted.tolist()
-
-                    except Exception as e:
-                        logger.debug(f"  单极误差正弦拟合失败，使用原始单极误差: {e}")
-                else:
-                    logger.debug("  单极误差数据点不足，跳过正弦拟合")
+                # 偏心的一圈一次分量已在分析入口（Part 0）统一剥离：过零点走角度域、
+                # 极值幅值走幅值域。这里直接用修正后的过零点算间隔误差即可，
+                # 无需再对误差列表做正弦拟合。
 
                 # 误差和：基于当前单极误差列表逐项累加，包含起点0以保持累计范围定义完整
                 errorSum = 0
@@ -424,6 +558,9 @@ class WaveAnalysis:
             zero_crossing_details = []
             if len(zero_angles) >= 2:
                 span = float(x[-1] - x[0])
+                # 修正前后的过零点数量一一对应；数量不一致时退回用修正值
+                raw_angles = (list(zero_angles_raw) if len(zero_angles_raw) == len(zero_angles)
+                              else list(zero_angles))
                 for i, start_angle in enumerate(zero_angles):
                     end_angle = zero_angles[(i + 1) % len(zero_angles)]
                     if i == len(zero_angles) - 1:
@@ -433,7 +570,11 @@ class WaveAnalysis:
                     sample_angle = ((midpoint - x[0]) % span) + x[0] if span > 0 else midpoint
                     midpoint_value = float(np.interp(sample_angle, x, y))
                     zero_crossing_details.append({
-                        'angle': round(float(start_angle), 6),
+                        # angle 保留实测角度（与原始波形曲线对得上），
+                        # angle_corrected 是剥离一圈一次偏心后的角度，
+                        # interval_to_next 也按修正后角度计算。
+                        'angle': round(float(raw_angles[i]), 6),
+                        'angle_corrected': round(float(start_angle), 6),
                         'interval_to_next': round(interval, 6),
                         'pole': 'N' if midpoint_value >= 0 else 'S',
                     })
@@ -569,7 +710,27 @@ class WaveAnalysis:
                 'zero_crossing_details': zero_crossing_details,
                 'peak_details': peak_details,
                 'period_error_details': period_error_details,
+                # 同轴度（偏心）修正诊断：角度偏心、幅值偏移/调制及其相位
+                'concentricity': concentricity_info,
             }
+
+            if concentricity_info.get("angle_applied") or concentricity_info.get("amp_applied"):
+                logger.info(
+                    "同轴度修正（固定启用）: 角度偏心 %.3f°(相位 %s)→ 过零点偏差 std %.3f°→%.3f°; "
+                    "极值一圈一次幅值 N %.3f mT(%.2f%%, 相位 %s°), S %.3f mT(%.2f%%, 相位 %s°)"
+                    % (concentricity_info.get("angle_amp_deg", 0.0),
+                       concentricity_info.get("angle_phase_deg"),
+                       concentricity_info.get("crossing_dev_std_deg_before", float("nan")),
+                       concentricity_info.get("crossing_dev_std_deg_after", float("nan")),
+                       concentricity_info.get("n_1x_mT", 0.0),
+                       concentricity_info.get("n_1x_pct", 0.0),
+                       concentricity_info.get("n_1x_phase_deg"),
+                       concentricity_info.get("s_1x_mT", 0.0),
+                       concentricity_info.get("s_1x_pct", 0.0),
+                       concentricity_info.get("s_1x_phase_deg"))
+                )
+            else:
+                logger.info("同轴度修正：本次数据不满足修正条件，未做一圈一次剥离")
 
             # 记录最终指标，便于追踪分析结果。
             for key, value in results.items():

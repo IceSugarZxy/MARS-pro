@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-串口 B~ 指令响应延迟测试（支持 MODE 切换）
+串口 B~ 指令响应延迟测试（支持三档速度参数切换）
 
-测试各 MODE 下 B~ 发送到首字节返回的耗时及完整传输。
+测试各速度档位下 B~ 发送到首字节返回的耗时及完整传输。
 Usage:
-    python serial_latency_test.py COM4 3              # 默认 MODE0，3 轮
-    python serial_latency_test.py COM4 3 --mode 1     # MODE1，3 轮
-    python serial_latency_test.py COM4 2 --all        # 所有 MODE，各 2 轮
+    python serial_latency_test.py COM4 3              # 默认档位0（高精度），3 轮
+    python serial_latency_test.py COM4 3 --mode 1     # 档位1（均衡），3 轮
+    python serial_latency_test.py COM4 2 --all        # 全部档位，各 2 轮
 """
 
 import sys
@@ -23,10 +23,17 @@ TIMEOUT = 15.0  # 首字节等待超时（匹配软件 10s + 余量）
 DEFAULT_ROUNDS = 3
 CHUNK_SIZE = 1024
 
-MODE_INFO = {
-    0: {"name": "MODE0", "cmd": b"MODE0~\r\n", "points": 131072, "bytes": 262144},
-    1: {"name": "MODE1", "cmd": b"MODE1~\r\n", "points":  65536, "bytes": 131072},
-    2: {"name": "MODE2", "cmd": b"MODE2~\r\n", "points":  32768, "bytes":  65536},
+# 速度档位 → 采集参数指令（ACQCFG + ADCRATE）。固件已移除 MODE<n>~ 指令。
+SPEED_INFO = {
+    0: {"name": "档位0 高精度",
+        "cmds": [b"ACQCFG50,260,1,4~\r\n", b"ADCRATE2400~\r\n"],
+        "points": 131072, "bytes": 262144},
+    1: {"name": "档位1 均衡",
+        "cmds": [b"ACQCFG200,579,2,4~\r\n", b"ADCRATE7200~\r\n"],
+        "points":  65536, "bytes": 131072},
+    2: {"name": "档位2 高速",
+        "cmds": [b"ACQCFG200,879,4,4~\r\n", b"ADCRATE4800~\r\n"],
+        "points":  32768, "bytes":  65536},
 }
 
 # ============================================================================
@@ -40,20 +47,21 @@ def format_bytes(data: bytes, max_len: int = 32) -> str:
 
 
 def set_mode(ser: serial.Serial, mode: int):
-    """发送 MODE 切换指令。"""
-    info = MODE_INFO[mode]
+    """下发该档位的采集参数（ACQCFG + ADCRATE）。"""
+    info = SPEED_INFO[mode]
     ser.reset_input_buffer()
-    ser.write(info["cmd"])
-    ser.flush()
-    print(f"  🔧 {info['name']} 切换中 ... ", end="", flush=True)
-    time.sleep(0.5)
+    print(f"  🔧 {info['name']} 参数下发中 ... ", end="", flush=True)
+    for command in info["cmds"]:
+        ser.write(command)
+        ser.flush()
+        time.sleep(0.3)
     ser.reset_input_buffer()
     print("完成")
 
 
 def run_single_test(ser: serial.Serial, mode: int, round_num: int) -> dict:
     """单次 B~ 测试。"""
-    info = MODE_INFO[mode]
+    info = SPEED_INFO[mode]
     print(f"\n  {'─'*50}")
     print(f"  {info['name']} 第 {round_num} 轮")
     print(f"  {'─'*50}")
@@ -127,8 +135,8 @@ def run_single_test(ser: serial.Serial, mode: int, round_num: int) -> dict:
 
 
 def test_mode(ser: serial.Serial, mode: int, rounds: int) -> list:
-    """对指定 MODE 运行多轮测试。"""
-    info = MODE_INFO[mode]
+    """对指定速度档位运行多轮测试。"""
+    info = SPEED_INFO[mode]
     print(f"\n{'='*60}")
     print(f"  {info['name']}: {info['points']:,} 点, {info['bytes']:,} 字节, {rounds} 轮")
     print(f"{'='*60}")
@@ -163,7 +171,7 @@ def print_summary(all_results: list):
 
     for mode in sorted(by_mode.keys()):
         results = by_mode[mode]
-        info = MODE_INFO[mode]
+        info = SPEED_INFO[mode]
         print(f"\n  [{info['name']}] 期望 {info['bytes']:,} B ({info['points']:,} 点)")
         print(f"  {'轮次':<6} {'首字节延迟':<12} {'实际字节':<12} {'收全率':<10} {'耗时':<10} {'速率':<10}")
         print(f"  {'-'*60}")
@@ -221,7 +229,7 @@ def main():
 
     print(f"串口延迟测试")
     print(f"  端口: {port}  |  波特率: {BAUDRATE}")
-    print(f"  模式: {[MODE_INFO[m]['name'] for m in modes_to_test]}  |  每模式 {rounds} 轮")
+    print(f"  档位: {[SPEED_INFO[m]['name'] for m in modes_to_test]}  |  每档位 {rounds} 轮")
     print()
 
     try:

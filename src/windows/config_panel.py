@@ -30,7 +30,7 @@ from core.config_manager import (
     IDAC_OPTION_TEXTS,
     action_to_text,
     format_range_selection,
-    get_pga_mag_conversion_factor,
+    get_mag_adc_per_mt,
 )
 from windows.full_offset_calibration_dialog import FullOffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
@@ -309,12 +309,12 @@ class ConfigPanel(QWidget):
         self._update_scheme_display(index)
 
     def _on_test_speed_changed(self, index):
-        """测试速度改变 → 同步发送 MODE 指令到固件"""
+        """测试速度改变 → 下发对应的采集参数（ACQCFG + ADCRATE）"""
         config = get_config_manager()
         config.test_speed = index
         logger.info(f"测试速度已更改: {index}")
         if self.serial_command and self.serial_manager and self.serial_manager.get_connection_status():
-            self.serial_command.set_mode_from_test_speed(index)
+            self.serial_command.apply_test_speed(index)
 
     def _on_config_test_type_changed(self, index):
         """配置管理器测试类型改变，同步更新下拉框"""
@@ -401,7 +401,7 @@ class ConfigPanel(QWidget):
             logger.warning(f"显示串口未连接提示失败: {exc}")
 
     def _update_range_selection_label(self, overflow=False):
-        """刷新选档提示：只显示 IDAC / PGA 增益 / 理论量程。"""
+        """刷新选档提示：只显示两个挡位（IDAC / PGA 增益）+ 一个最大量程数字。"""
         label = self.findChild(QLabel, "label_range_selected")
         if not label:
             return
@@ -420,9 +420,14 @@ class ConfigPanel(QWidget):
             span = config.max_range_mt(pga, idac)
             overflow = overflow or (config.range_estimate_mt + RANGE_SELECT_MARGIN_MT > span)
         text = format_range_selection(pga, idac, span)
+        # 标签只显示两个挡位 + 量程数字；“档位未下发”等状态放到悬停提示
+        tooltip = text
+        if overflow:
+            tooltip += "（超出可用量程，读数可能溢出）"
         if (pga, idac) != (config.pga_gain, config.idac_index):
-            text += "（档位未下发）"
+            tooltip += "（档位未下发）"
         label.setText(text)
+        label.setToolTip(tooltip)
         label.setStyleSheet("color: #c0392b;" if overflow else "color: #2c3e50;")
 
     def _on_shared_range_estimate_changed(self, value):
@@ -678,9 +683,9 @@ class ConfigPanel(QWidget):
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.enable_position_query_timer()
 
-            # 串口连接后同步当前采集模式
+            # 串口连接后同步当前速度档位的采集参数
             if self.serial_command:
-                self.serial_command.set_mode_from_test_speed(get_config_manager().test_speed)
+                self.serial_command.apply_test_speed(get_config_manager().test_speed)
 
             logger.info(f"Serial connected: {com_port}")
         else:
@@ -1199,7 +1204,7 @@ class ConfigPanel(QWidget):
         self._offset_all_results.append(((pga, idac), bool(success), offset_value))
         offset_mt = None
         if success and offset_value is not None:
-            offset_mt = offset_value / get_pga_mag_conversion_factor(pga)
+            offset_mt = offset_value / get_mag_adc_per_mt(pga, idac)
         logger.info(
             "全档偏置校准：%s %s（offset=%s）",
             self._offset_all_target_text(pga, idac),

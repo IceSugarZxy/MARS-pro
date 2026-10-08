@@ -22,33 +22,23 @@ Z_AXIS_PULSES_PER_MM = 800.97518475
 # PGA 增益档位（对应固件 PGA<0~7>~：0=×1 ~ 7=×128）
 PGA_GAIN_VALUES = (1, 2, 4, 8, 16, 32, 64, 128)
 
-# 各档位量程命名（mT）：建议保守线性量程向下取整十（2026-09-07 标定）
+# 各档位「可用量程」= min(实测线性上限 PGA_LINEAR_LIMIT_MT, 数字满量程@IDAC6)，
+# 向下取整十。2026-09-30 重标定换算系数后重算。
 PGA_RANGE_TEXTS = (
-    "3120mT",  # ×1
-    "1570mT",  # ×2
-    "780mT",   # ×4
-    "390mT",   # ×8
-    "190mT",   # ×16
-    "90mT",    # ×32
-    "40mT",    # ×64
-    "20mT",    # ×128
+    "2360mT",  # ×1
+    "1440mT",  # ×2
+    "710mT",   # ×4
+    "280mT",   # ×8
+    "140mT",   # ×16
+    "70mT",    # ×32
+    "35mT",    # ×64
+    "22mT",    # ×128
 )
-# 各档位理论最大量程（mT，16bit 代码满量程 0x7FFF/0x8000 边界，2026-09-07 标定）
-PGA_THEORY_MAX_TEXTS = (
-    "6399mT",  # ×1
-    "3239mT",  # ×2
-    "1619mT",  # ×4
-    "811mT",   # ×8
-    "403mT",   # ×16
-    "199mT",   # ×32
-    "97mT",    # ×64
-    "46mT",    # ×128
-)
-PGA_OPTION_TEXTS = tuple(
-    "{0}量程 (理论{1})".format(range_text, theory_text)
-    for range_text, theory_text in zip(PGA_RANGE_TEXTS, PGA_THEORY_MAX_TEXTS)
-)
-PGA_DEFAULT_INDEX = 5  # ×32（固件默认增益）
+# 默认量程档位：0 = ×1，即 8 档里量程最大的一档。
+# 2026-09-30 由 ×32 改为 ×1：默认给最大量程，避免"没填磁场估计就沿用窄档"
+# 导致的削顶（当天 ×64/IDAC6 满量程仅 45 mT，却去测约 47 mT 的样品）。
+# 需要更细的分辨率时，在"磁场估计(mT)"里填预估值会自动选更合适的档。
+PGA_DEFAULT_INDEX = 0
 
 # 各 PGA 档位默认零场偏置（原始 ADC 计数，键 0~7 = ×1~×128）
 # 来源：2026-09-07 两轮一致性较好的零场标定（10mT 环境）取平均
@@ -64,18 +54,38 @@ PGA_DEFAULT_OFFSETS = {
     '7': -3387.012073047531,
 }
 
-# 各 PGA 档位磁场换算系数（ADC counts/mT）
-# 来源：2026-09-07 标定报告（10mT 轮确定档位比例 + 238mT 轮 ×1 绝对锚定），
-#       仅适用于当前 IDAC 配置；重标定后请同步更新本表。
+# 各 PGA 档位磁场换算系数（ADC counts/mT，基准 IDAC 档 = IDAC_REFERENCE_INDEX）
+# 这些数值只对应基准 IDAC 档；其它电流档必须再乘实测电流比例，
+# 请统一用 get_mag_adc_per_mt(pga, idac) 取得组合换算系数，不要直接使用本表。
+# 来源：
+#   2026-09-07 标定报告（10mT 轮确定档位比例 + 238mT 轮 ×1 绝对锚定）；
+#   2026-09-23 以 483mT 参考场重标定（IDAC3~6 × PGA×1~×64 全组合实采）：
+#     ×1/×2/×4 线性良好，四个 IDAC 档互相印证（读数 475.7 / 482.0 / 482.4 mT
+#       对一个 483mT 参考场 → 原表 ×1 偏高 1.50%、×2 偏高 0.21%、×4 偏高 0.13%）；
+#     ×8 及以上在 483mT 下已压缩（-13%/-61%/-87%），本场强无法定标，
+#       仍沿用 10mT 轮的比例（该轮各档比例接近理想 2 倍关系），按新 ×4 重新定基。
+#   2026-09-24 全组合复测（276.6mT 参考场）发现 ×8 一致偏高 0.60%：
+#     四个 IDAC 独立反推得 38.625/38.634/38.630/38.631（彼此差 0.02%），
+#     属增益档系数的同向系统偏差，故 ×8 由 38.40 上调为 38.63。
+#   2026-09-30 现场重标定（用户提供的 7 个参考场：60 / 472 / 840 / 1167 / 1414 /
+#     1548 / 1645 mT，按实测为准）：×1~×4 在 472~1645mT 全程线性，×8 及以上
+#     只在 60mT 未压缩。方法：只用线性段做自由拟合取**斜率**（截距当冗余参数，
+#     不依赖零场偏置——偏置会随环境漂移），×8 及以上用 60mT 同场比值从同 IDAC 的
+#     ×1 档传递（比值法对比例性偏置天然免疫）。结果整表相对 09-23 版本一致偏大
+#     约 17.4%~18.0%，IDAC 电流比复核为 0.4981/1/1.4987/1.9970。
+#     ×128 未直接测到 IDAC4，由 ×128/IDAC3 = 360.085 ÷ 0.4981 推算。
+# 拟合自检：用本表 + 电流比回算每个实测组合，偏差 ≤0.15%（×4/IDAC6 仅 2 个线性点，
+# 单独偏差 0.87% 属该点噪声）。
+# 重标定后请同步更新本表。
 PGA_MAG_ADC_PER_MT = {
-    0: 5.117,    # ×1
-    1: 10.10,    # ×2
-    2: 20.18,    # ×4
-    3: 40.13,    # ×8
-    4: 80.2,     # ×16
-    5: 160.3,    # ×32
-    6: 320.8,    # ×64
-    7: 640.9,    # ×128
+    0: 5.668,    # ×1
+    1: 11.336,   # ×2
+    2: 22.643,   # ×4
+    3: 45.307,   # ×8
+    4: 90.542,   # ×16
+    5: 180.980,  # ×32
+    6: 361.830,  # ×64
+    7: 722.772,  # ×128（由 ×128/IDAC3 推算）
 }
 
 # ==================== IDAC 电流档位 ====================
@@ -91,15 +101,16 @@ IDAC_CURRENT_UA = {
     5: 1000.0,
     6: 1500.0,
 }
-# 各档实际电流比例（以 IDAC4 为 1），由 28 组零场偏置实测反推：
-#   offset ∝ 增益 × 电流 → IDAC3/4/5/6 = 0.4982 / 1.0000 / 1.4987 / 1.9945
-#   （7 个增益上重复性 ±0.0002，与理想 0.5/1/1.5/2 偏差 ≤0.4%）
+# 各档实际电流比例（以 IDAC4 为 1）：
+#   2026-09-23 由 28 组零场偏置反推 0.4982 / 1.0000 / 1.4987 / 1.9945；
+#   2026-09-30 现场重标定按"线性段斜率之比"复核为 0.4981 / 1.0000 / 1.4987 / 1.9970
+#   （×1~×4 三个档一致，IDAC3/5 极差 ≤0.0001，IDAC6 因 ×4 档只有 2 个线性点略散）
 # 量程折算用这一组比例，而不是固件标称值。
 IDAC_CURRENT_RATIO = {
-    3: 0.4982,
+    3: 0.4981,
     4: 1.0000,
     5: 1.4987,
-    6: 1.9945,
+    6: 1.9970,
 }
 # 换算系数表的标定档位：量程折算以此为基准
 IDAC_REFERENCE_INDEX = 4
@@ -119,13 +130,22 @@ MIN_USABLE_RANGE_MT = 5.0
 RANGE_ESTIMATE_KEY = 'range_estimate_mt'
 
 
-def format_range_selection(pga_index: int, idac_index: int, range_mt: float) -> str:
-    """统一的选档显示文本：IDAC / PGA 增益 / 理论量程。"""
+def format_range_selection(pga_index: int, idac_index: int, range_mt: float = None) -> str:
+    """选档提示文本：只显示两个挡位（IDAC / PGA 增益），可选带一个最大量程数字。
+
+    例：IDAC6  ×4  779mT
+    """
     try:
         gain = PGA_GAIN_VALUES[int(pga_index)]
     except (TypeError, ValueError, IndexError):
         gain = '?'
-    return f"IDAC{int(idac_index)}  ×{gain}  理论量程 {float(range_mt):.0f} mT"
+    text = f"IDAC{int(idac_index)} ×{gain}"
+    if range_mt is None:
+        return text
+    try:
+        return f"{text} {float(range_mt):.0f}mT"
+    except (TypeError, ValueError):
+        return text
 
 
 def get_idac_current_ua(index: int) -> float:
@@ -161,6 +181,81 @@ def get_pga_mag_conversion_factor(index: int) -> float:
         return float(PGA_MAG_ADC_PER_MT[index])
     logger.warning(f"未知 PGA 档位 {index}，回退使用 ×1 换算系数")
     return float(PGA_MAG_ADC_PER_MT[0])
+
+
+def get_mag_adc_per_mt(pga_index: int, idac_index: int,
+                       reference_idac: int = IDAC_REFERENCE_INDEX) -> float:
+    """获取指定 (PGA, IDAC) 组合的磁场换算系数（ADC counts/mT）。
+
+    ADC 码数 ∝ PGA 增益 × IDAC 激励电流：换算系数表只对应基准 IDAC 档，
+    其它电流档需按实测电流比例折算，否则换算出来的 mT 会随 IDAC 档位整体偏大。
+    mT = (raw − 该组合零场偏置) ÷ get_mag_adc_per_mt(pga, idac)
+    """
+    factor = get_pga_mag_conversion_factor(pga_index)
+    ratio = get_idac_current_ratio(idac_index)
+    ref_ratio = get_idac_current_ratio(reference_idac)
+    if ratio <= 0 or ref_ratio <= 0:
+        return factor
+    return factor * ratio / ref_ratio
+
+
+# ==================== 各 PGA 档实测线性上限（mT） ====================
+# 前端在高增益/大场强下会软饱和：读数仍随场强上升，但不再与场强成比例，
+# 换算出来的 mT 会系统性偏低。选档时必须同时满足“数字量程 ≥ 目标”和
+# “目标 ≤ 该档实测线性上限”，否则会选到读不准的档位。
+# 依据 2026-09-23 实采（IDAC3~6 × PGA×1~×64，在 483 mT 与 1970 mT 两个场强下）：
+#   ×1 / ×2 ：1970 mT 下偏差 0.0% → 取 2000 mT（已验证点留少量余量）
+#   ×4       ：483 mT 偏差 0.0%，1970 mT 偏低 35% → 取 600 mT（已验证点留少量余量）
+#   ×8       ：483 mT 已偏低 13% → 取 240 mT（2026-09-07 报告在 238 mT 处仍线性）
+#   ×16 及以上：尚无已验证的线性点，按前端裕度随增益递减保守取半
+# 2026-09-30 重标定后按新参考尺度整体 ×1.18 换算（物理拐点未变，只是场强尺度改了）：
+#   换算后 ×8=283 / ×32=71，与当日实测（×8 在 472mT 偏低 8%、×32 在 472mT 偏低 75%，
+#   反推 2% 拐点约 ×8≈250、×32≈70）基本吻合，故采用这组值。
+#   注意：×16~×128 的拐点仍是外推值，建议后续做低场逐档扫描实测确认。
+# 重新标定或补测变场扫描后请同步更新本表。
+PGA_LINEAR_LIMIT_MT = {
+    0: 2360.0,   # ×1
+    1: 2360.0,   # ×2
+    2: 710.0,    # ×4
+    3: 283.0,    # ×8
+    4: 142.0,    # ×16（外推值，待低场扫描确认）
+    5: 71.0,     # ×32（与当日实测拐点吻合）
+    6: 35.0,     # ×64（外推值，待低场扫描确认）
+    7: 35.0,     # ×128（外推值，待低场扫描确认）
+}
+
+
+def get_pga_linear_limit_mt(index: int) -> float:
+    """获取指定 PGA 档位的实测线性上限（mT）。"""
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return 0.0
+    return float(PGA_LINEAR_LIMIT_MT.get(index, 0.0))
+
+
+def get_pga_full_scale_mt(pga_index: int, idac_index: int = None) -> float:
+    """(PGA, IDAC) 组合的数字满量程（mT）= 32768 ÷ 换算系数。
+
+    换算系数已含 IDAC 电流比例，所以电流越大满量程越小；默认按最大电流档
+    （IDAC6）给出保守值。
+    """
+    if idac_index is None:
+        idac_index = IDAC_MAX_INDEX
+    try:
+        factor = get_mag_adc_per_mt(int(pga_index), int(idac_index))
+    except (TypeError, ValueError):
+        return 0.0
+    return 32768.0 / factor if factor > 0 else 0.0
+
+
+# 档位下拉/日志文案：可用量程 + IDAC6（电流最大、满量程最小）下的数字满量程。
+# 旧文案写的是 IDAC4 基准的“理论量程”，比当前 IDAC 下的实际满量程大一倍
+# （例：×64 旧文案 91mT，但 IDAC6 下只有 45mT），容易让人误判这么大不会削顶。
+PGA_OPTION_TEXTS = tuple(
+    "{0}量程 (最大{1:.0f}mT)".format(text, get_pga_full_scale_mt(index))
+    for index, text in enumerate(PGA_RANGE_TEXTS)
+)
 
 
 # 动作类型定义
@@ -263,10 +358,11 @@ class ConfigManager(QObject):
         'suspend_z': '0',
         # 测试类型: 0=平面旋转, 1=外侧面旋转, 2=内侧面旋转, 3=外侧面垂直
         'test_type': '0',
-        # 测试速度: 0=高速测量, 1=高分辨率测量
-        'test_speed': '0',
-        # PGA 增益档位: 0=×1 ~ 7=×128（默认 5=×32，与固件默认一致）
-        'pga_gain': '5',
+        # 采集速度档位: 0=高精度, 1=均衡, 2=高速（换算见 serial_command.TEST_SPEED_TO_COMMANDS）
+        # 默认 1=均衡：高精度档转速较慢，不适合作为开机默认
+        'test_speed': '1',
+        # PGA 增益档位: 0=×1 ~ 7=×128（默认 0=×1，量程最大）
+        'pga_gain': str(PGA_DEFAULT_INDEX),
         # IDAC 电流档位: 3~6（默认 4 = 750µA，与旧版连接后设置一致）
         'idac_index': str(IDAC_DEFAULT_INDEX),
         # 二维偏置表（PGA:IDAC → 零场偏置 ADC）
@@ -573,21 +669,16 @@ class ConfigManager(QObject):
     def max_range_mt(self, pga_index: int = None, idac_index: int = None) -> float:
         """该 (PGA, IDAC) 组合的单侧最大量程（mT）。
 
-        量程 =（32768 − |该组合零场偏置|）÷ 该档换算系数 ÷（该档电流 ÷ 参考档电流）
+        量程 =（32768 − |该组合零场偏置|）÷ 该组合换算系数
+        组合换算系数已含该档电流比例，与测量换算共用同一来源（get_mag_adc_per_mt）。
         """
         pga = self.pga_gain if pga_index is None else pga_index
         idac = self.idac_index if idac_index is None else idac_index
-        factor = get_pga_mag_conversion_factor(pga)
+        factor = get_mag_adc_per_mt(pga, idac)
         if factor <= 0:
             return 0.0
         offset = self.get_offset_for(pga, idac)
-        # 用实测电流比例折算（以参考档 IDAC4 为 1）
-        current_ratio = get_idac_current_ratio(idac)
-        ref_ratio = get_idac_current_ratio(IDAC_REFERENCE_INDEX)
-        span = (32768.0 - abs(offset)) / factor
-        if current_ratio <= 0:
-            return span
-        return span * ref_ratio / current_ratio
+        return (32768.0 - abs(offset)) / factor
 
     def range_table(self, pga_list=None, idac_list=None) -> dict:
         """返回 {(pga, idac): 量程 mT}，默认覆盖可用 PGA × IDAC。"""
@@ -604,6 +695,8 @@ class ConfigManager(QObject):
     def select_range(self, estimate_mt: float, margin_mt: float = RANGE_SELECT_MARGIN_MT):
         """按估计磁场选档：目标 = 估计值 + 余量；取“量程 ≥ 目标”中量程最小的一档。
 
+        同时要求目标场强不超过该档的实测线性上限（PGA_LINEAR_LIMIT_MT），
+        否则前端软饱和会让读数系统性偏低（例如 483 mT 下 ×8 偏低 13%）。
         并列时优先电流更大的档位（信噪比更好）。
         返回 (pga, idac, range_mt, target_mt, overflow)；无可用档位时返回 None。
         """
@@ -623,7 +716,11 @@ class ConfigManager(QObject):
         if not candidates:
             return None
 
-        covering = [item for item in candidates if item[2] >= target]
+        # 量程够且目标仍在实测线性区内
+        covering = [
+            item for item in candidates
+            if item[2] >= target and target <= get_pga_linear_limit_mt(item[0])
+        ]
         overflow = False
         if covering:
             # 量程最小；同量程时电流更大者优先
@@ -716,7 +813,7 @@ class ConfigManager(QObject):
 
     @property
     def test_speed(self) -> int:
-        return self.get_int('test_speed', 0)
+        return self.get_int('test_speed', 1)
 
     @test_speed.setter
     def test_speed(self, value: int) -> None:

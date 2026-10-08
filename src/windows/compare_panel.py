@@ -236,7 +236,7 @@ class ComparePanel(QWidget):
         """分析数据"""
         try:
             wave_analyzer = WaveAnalysis()
-            results = wave_analyzer.analyze_waveform(angle_data, mag_data, enable_concentricity_calibration=True)
+            results = wave_analyzer.analyze_waveform(angle_data, mag_data)
             return results
         except Exception as e:
             logger.error(f"分析数据失败: {e}")

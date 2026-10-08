@@ -16,6 +16,7 @@ from .config_manager import (
     get_config_manager,
 )
 from .logger import get_logger
+from .offset_calibration_config import OFFSET_STREAM_COMMAND
 
 if TYPE_CHECKING:
     from .thread_manager import ThreadManager
@@ -30,6 +31,16 @@ NO_START_TIMEOUT_MS = 3000       # 未收到 START 则 3s 快速失败
 MAX_RELATIVE_STEPS = 500000  # 固件单次最大相对步数
 POSITION_CHECK_INTERVAL_MS = 3000  # 收到 START 后每 3s 查询一次位置
 MAX_STALE_CHECKS = 2            # 连续 2 次位置无变化 → 判定堵转超时
+
+# 速度档位 → 采集参数指令
+#   ACQCFG<start STEP_HZ>,<target STEP_HZ>,<分频>,<边沿数> + ADCRATE<SPS>
+#   每圈采样点数依次为 131072 / 65536 / 32768，与 data_process.SAMPLES_PER_REV 一致
+#   档位名（界面）：0=高精度、1=均衡、2=高速
+TEST_SPEED_TO_COMMANDS = {
+    0: ("ACQCFG50,260,1,4~", "ADCRATE2400~"),
+    1: ("ACQCFG200,579,2,4~", "ADCRATE7200~"),
+    2: ("ACQCFG200,879,4,4~", "ADCRATE4800~"),
+}
 
 
 class WorkState(Enum):
@@ -69,6 +80,14 @@ class SerialCommand(QObject):
         self._active_position_wait: Optional[dict] = None
         self._async_command_lock_state: Optional[dict] = None
         self._tx_sequence = 0
+
+        # 上一次已下发的速度档位：只有真正切换速度时才补发 PGA/IDAC。
+        # 用配置里的 test_speed 初始化，使"串口连接后同步采集参数"这一步
+        # 保持原行为（不覆盖固件当前档位），只有用户改速度才补发。
+        try:
+            self._last_test_speed_applied: Optional[int] = int(self.config.test_speed)
+        except Exception:  # noqa: BLE001
+            self._last_test_speed_applied = None
 
         self._pending_deltas: dict = {}  # 记录各轴本次移动的 delta，DONE 时用于更新位置缓存
 
@@ -565,24 +584,43 @@ class SerialCommand(QObject):
     # 旋转采集 / 停止
     # ========================================================================
 
-    # test_speed / MODE 一一对应（三档）
-    # 0=高分辨率 MODE0 (1200Hz, 131072 samples/rev)
-    # 1=平衡 MODE1   (2000Hz, 65536 samples/rev)
-    # 2=高速 MODE2   (3500Hz, 32768 samples/rev)
-    TEST_SPEED_TO_MODE = {0: 0, 1: 1, 2: 2}
+    def apply_test_speed(self, test_speed: int) -> None:
+        """按速度档位下发采集参数：ACQCFG → ADCRATE → PGA → IDAC。
 
-    def set_mode(self, mode: int) -> None:
-        """切换采集模式 (MODE0~MODE2~)。"""
-        if mode not in (0, 1, 2):
-            logger.warning(f"Invalid mode: {mode}, must be 0/1/2")
+        采集参数只走 ACQCFG（分频/边沿/转速）与 ADCRATE（数据率）两个接口。
+        实测这两条不会改动 PGA/IDAC，后面的挡位补发仅作为固件行为变化时的兜底，
+        并且只在速度真正变化时才发。
+        """
+        try:
+            index = int(test_speed)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid test_speed: {test_speed!r}")
             return
-        self.send_data(f"MODE{mode}~", source="set_mode")
+        commands = TEST_SPEED_TO_COMMANDS.get(index)
+        if commands is None:
+            logger.warning(f"Invalid test_speed: {test_speed}, must be 0/1/2")
+            return
+        acqcfg_command, adcrate_command = commands
+        changed = index != self._last_test_speed_applied
+        logger.info(f"应用采集参数（档位 {index}）：{acqcfg_command} + {adcrate_command}")
+        self.send_data(acqcfg_command, source="set_acqcfg")
+        self.send_data(adcrate_command, source="set_adcrate")
+        self._last_test_speed_applied = index
+        if changed:
+            self.resend_range_after_speed_change()
 
-    def set_mode_from_test_speed(self, test_speed: int) -> None:
-        """根据 test_speed 配置索引发送对应 MODE 命令。"""
-        mode = self.TEST_SPEED_TO_MODE.get(test_speed)
-        if mode is not None:
-            self.set_mode(mode)
+    def resend_range_after_speed_change(self) -> None:
+        """切换速度档位后补发上位机当前的 PGA/IDAC。"""
+        try:
+            config = get_config_manager()
+            pga_index = int(config.pga_gain)
+            idac_index = int(config.idac_index)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"切换速度档位后补发挡位失败: {exc}")
+            return
+        logger.info(f"切换速度档位后补发挡位: PGA{pga_index}~ / IDAC{idac_index}~")
+        self.send_data(f"PGA{pga_index}~", source="speed_change_resend_pga")
+        self.send_data(f"IDAC{idac_index}~", source="speed_change_resend_idac")
 
     def claw_rotate(self) -> None:
         """开始一圈旋转采集 (B~ 无参数)。"""
@@ -679,17 +717,18 @@ class SerialCommand(QObject):
         )
         self.data_process.clear_data_queue()
         # 延迟 300ms 确保固件准备就绪，与测量对齐
-        QTimer.singleShot(300, self._send_offset_b_command)
+        QTimer.singleShot(300, self._send_offset_h_command)
 
-    def _send_offset_b_command(self) -> None:
+    def _send_offset_h_command(self) -> None:
+        """偏置校准：发送 H~ 打开连续 Hall 流（不转 R 轴，数据即刻开始）。"""
         self.data_process.clear_data_queue()  # 发送前最后清一次队列
-        result = self.send_data("B~", source="offset_collection")
+        result = self.send_data(OFFSET_STREAM_COMMAND, source="offset_collection")
         logger.info(
-            "Offset flow: B~ collection command queued, result={result}"
+            "Offset flow: H~ stream open command queued, result={result}"
         )
         if not result:
-            logger.warning("Offset flow: B~ command was not queued successfully")
-        # 同步清空写队列，确保 B~ 在数据处理启动前已实际发送
+            logger.warning("Offset flow: H~ command was not queued successfully")
+        # 同步清空写队列，确保 H~ 在数据处理启动前已实际发送
         if self.serial_manager:
             flushed = self.serial_manager.flush_write_queue()
             logger.info(f"Offset flow: write queue flushed ({flushed} commands)")
@@ -796,14 +835,25 @@ class SerialCommand(QObject):
         self.counter_measurer()
 
     def cancel_offset_calibration(self) -> None:
-        """用户取消偏置校准：立即停止采集并丢弃本次残缺数据。"""
+        """用户取消偏置校准：请求中止采集并丢弃本次残缺数据。
+
+        H~ 流的关闭统一放在结束回调里做，保证"一轮一开一关"配对，
+        避免取消时先关一次、回调再关一次导致流被重新打开。
+        """
         self._offset_cancel_requested = True
         self.data_process.request_offset_abort()
-        self.send_data("S~", source="offset_cancel")
         logger.warning("Offset flow: 用户取消偏置校准")
 
     def _on_offset_calibration_finished(self, success: bool) -> None:
-        # 失败时自动重试（固件偶发 B~ 不响应，最多重试 2 次）
+        # H~ 是开关式指令：每轮采集结束先关流，再决定是否重试。
+        # 若先重试再关流，重试发的那条 H~ 会被固件当成"关闭"，永远收不到数据。
+        stop_result = self.send_data(OFFSET_STREAM_COMMAND, source="offset_finish_stop")
+        logger.info(
+            "Offset flow: H~ stream closed, "
+            f"result={stop_result}, success={success}"
+        )
+
+        # 失败时自动重试（固件偶发 H~ 不响应，最多重试 2 次）
         if not success:
             if not getattr(self, '_offset_cancel_requested', False):
                 retry = getattr(self, '_offset_retry_count', 0) + 1
@@ -825,11 +875,6 @@ class SerialCommand(QObject):
             self.data_process._offset_calibrating = False
             self.data_process._measurement_active = False
             logger.info(f"Offset flow: calibration finished, success={success}")
-            stop_result = self.send_data("S~", source="offset_finish_stop")
-            logger.info(
-                "Offset flow: finish handler sent stop command, "
-                f"result={stop_result}, success={success}"
-            )
         self._offset_calibrating = False
         self.data_process._offset_calibrating = False
         queue_before_clear = self.data_process.data_queue.qsize()

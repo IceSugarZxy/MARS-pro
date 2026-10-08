@@ -9,7 +9,7 @@ import re
 import csv
 from datetime import datetime
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QTableWidget,
-                              QTableWidgetItem, QLineEdit, QRadioButton,
+                              QTableWidgetItem, QLineEdit,
                               QHeaderView, QHBoxLayout, QMessageBox, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5 import uic
@@ -431,9 +431,8 @@ class HistoryPanel(QWidget):
                     # 进行波形分析
                     from windows.wave_analysis import WaveAnalysis
                     wave_analyzer = WaveAnalysis()
-                    radio = measure_panel.findChild(QRadioButton, "radio_concentricity")
-                    enable_concentricity = radio.isChecked() if radio else True
-                    results = wave_analyzer.analyze_waveform(angle_data, mag_data, enable_concentricity)
+                    # 同轴度（偏心）修正固定启用，不再由界面开关控制
+                    results = wave_analyzer.analyze_waveform(angle_data, mag_data)
                     measure_panel._update_display_with_results(results)
 
                     if hasattr(measure_panel, "show_history_file_status"):

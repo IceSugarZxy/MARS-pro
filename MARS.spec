@@ -32,10 +32,20 @@ for relative_path in [
     if os.path.exists(source_path):
         datas.append((source_path, '.'))
 
-# 仅包含 7/29 的波形数据
-plot_data_0729 = os.path.join(SPEC_DIR, 'data', 'plot_data', '20260729')
-if os.path.isdir(plot_data_0729):
-    datas.append((plot_data_0729, os.path.join('data', 'plot_data', '20260729')))
+# 随包附带的历史波形数据（打包进 dist/data/plot_data/<日期>，运行时"历史数据"面板可直接加载）
+#   默认：打包"今天"的 plot_data
+#   可用环境变量 MARS_BUNDLE_DATA 指定，多个日期用逗号分隔；
+#   设为 none / 空字符串则不带任何历史数据
+#   例：set MARS_BUNDLE_DATA=20260930,20260729
+import datetime as _dt
+
+_bundle_dates = os.environ.get('MARS_BUNDLE_DATA', _dt.date.today().strftime('%Y%m%d'))
+_plot_root = os.path.join(SPEC_DIR, 'data', 'plot_data')
+if _bundle_dates and _bundle_dates.strip().lower() != 'none' and os.path.isdir(_plot_root):
+    for _date in [d.strip() for d in _bundle_dates.split(',') if d.strip()]:
+        _src = os.path.join(_plot_root, _date)
+        if os.path.isdir(_src):
+            datas.append((_src, os.path.join('data', 'plot_data', _date)))
 
 # 日志目录（运行时自动创建，此处仅保留占位）
 logs_dir = os.path.join(SPEC_DIR, 'logs')
@@ -67,6 +77,26 @@ hiddenimports = [
     'serial.tools.list_ports',
 ]
 
+# 明确排除用不到的重型依赖：matplotlib/PIL 只是 pyqtgraph 的 exporter 子模块
+# 被连带收集进来的（源码里没有任何地方 import matplotlib），排除后 dist 少约 35 MB。
+# 如果以后真的要用 matplotlib 出图，把对应项从这里删掉即可。
+excludes = [
+    'matplotlib',
+    'PIL',
+    'contourpy',
+    'kiwisolver',
+    'dateutil',
+    'pandas',
+    'tkinter',
+    'PyQt5.QtWebEngineWidgets',
+    'PyQt5.QtQuick',
+    'PyQt5.QtQml',
+    'PyQt5.QtMultimedia',
+    'PyQt5.QtBluetooth',
+    'PyQt5.QtNetworkAuth',
+    'PyQt5.QtWebSockets',
+]
+
 # ============================================================================
 # Build
 # ============================================================================
@@ -79,7 +109,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

@@ -34,11 +34,13 @@ from .config_manager import (
     IDAC_MIN_INDEX,
     IDAC_MAX_INDEX,
     get_config_manager,
-    get_pga_mag_conversion_factor,
+    get_mag_adc_per_mt,
 )
 from .path_utils import get_data_dir
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
+    OFFSET_HALL_SMOOTH_SECONDS,
+    OFFSET_HALL_STREAM_HZ,
     OFFSET_MAX_PROCESS_SECONDS,
     OFFSET_STABLE_WINDOW_SECONDS,
 )
@@ -48,9 +50,10 @@ logger = get_logger('DataProcess')
 # ============================================================================
 # 常量定义
 # ============================================================================
-# v1.x 固件：B~ 采集 = 精确 1 圈 (360°)，数据量取决于 MODE
+# v1.x 固件：B~ 采集 = 精确 1 圈 (360°)，每圈点数由 ACQCFG 的分频/边沿决定
 FULL_ROTATION_ANGLE = 360.0
-MODE_EXPECTED_POINTS = {0: 131072, 1: 65536, 2: 32768}
+# 速度档位 → 每圈采样点数（高精度 / 均衡 / 高速）
+SAMPLES_PER_REV = {0: 131072, 1: 65536, 2: 32768}
 # 闭合校准：v1.x 数据已是精确一圈，首尾即为闭合边界
 CLOSURE_ROUGH_START_FRACTION = 0.0
 CLOSURE_ROUGH_END_FRACTION = 1.0
@@ -62,12 +65,43 @@ CLOSURE_MAX_DIRECTION_SPAN_POINTS = 1000
 CLOSURE_EXTREMUM_VALUE_TOLERANCE_RATIO = 0.002  # 峰/谷端点判定容差，占整体幅值比例
 CLOSURE_COARSE_CANDIDATE_COUNT = 5000
 CLOSURE_FINE_RADIUS_POINTS = 120
+# 闭合点相对标称端点的最大允许偏移（占整圈点数）。
+# 固件按"精确 1 圈"出流，正常闭合点就落在端点附近：实测各轮偏移 -1 ~ -37 点。
+# 窗口一旦放宽到 1/4 磁周期就会出事——峰值附近波形很平，离端点一整个象限的位置
+# 也能做到"磁值几乎相等"，于是把一整段真实数据裁掉。
+# 2026-09-30 实测：均衡档那轮裁掉 1495 点（8.2°）后仍按 360° 映射，
+# 收尾间隔被算成 28.4°（应 36.1°），S间隔误差从 2.66% 虚高到 11.01%。
+CLOSURE_MAX_OFFSET_FRACTION = 0.002
+# 闭合点评分上限（score = |首尾磁值差| / 峰峰值）。超过阈值说明没找到可信闭合点，
+# 直接回退到标称端点、不做裁切，避免用一段错位的数据冒充整圈。
+CLOSURE_SCORE_REJECT = 0.05
 OFFSET_INITIAL_DATA_TIMEOUT_SECONDS = 5.0   # 首数据超时 5s
 OFFSET_NO_DATA_TIMEOUT_SECONDS = 2.0        # 数据中断 2s 判定结束
 OFFSET_QUEUE_POLL_SECONDS = 0.02
 OFFSET_COLLECT_LOG_INTERVAL_SECONDS = 1.0
+# 测量首数据等待：B~ 之后固件要先把 R 轴送回参考位才开始出流。
+# 参考实测（7697 步/圈）：高速档(879 步/s)≈9s、均衡档(579 步/s)≈13s、
+# 高精度档(目标 260 步/s)≈30s，若从起步 50 步/s 慢速起步最坏可达百秒以上。
+# 纯超时判定：等不到首数据就按这个时限失败（不再查询轴状态）
+MEASURE_START_TIMEOUT_SECONDS = 30.0
+# ---------------------------------------------------------------------------
+# 削顶（ADC 饱和）检测：B~ 二进制流是 16bit 有符号码值 -32768~32767。
+# 前级增益选得过高时波形峰值会顶在码值上下轨，形成平顶——此时换算出来的
+# 磁场读数系统性偏低，各项误差指标也不可信，必须降档重测。
+# 判定：码值离轨 16 以内算饱和；饱和点占比超过阈值即认为该轮削顶。
+ADC_FULL_SCALE = 32768
+ADC_SATURATION_MARGIN = 16
+SATURATION_RATIO_THRESHOLD = 0.0005
+# 削顶后重测的放宽系数：在"顶轨占比反推的峰值"上再留一点余量
+SATURATION_RETRY_HEADROOM = 1.2
 # M~ 响应轴位置解析正则（兼容 pos= 和 pos = 两种格式）
 M_POS_PATTERN = re.compile(r"([XYZ]):\s*\w+\s+pos\s*=\s*(-?\d+)")
+# H~ 连续流输出行：":hall16,curr16,hall24,curr24"
+# hall16 = Hall 24bit>>8，与 B~ 二进制流的 2 字节样本同刻度，可直接当偏置使用
+# 分隔符兼容逗号与空格，避免固件改动分隔方式时漏数据
+H_STREAM_PATTERN = re.compile(
+    r":\s*(-?\d+)\s*[,\s]\s*(-?\d+)\s*[,\s]\s*(-?\d+)\s*[,\s]\s*(-?\d+)"
+)
 # 运动完成检测正则
 MOTION_DONE_PATTERN = re.compile(r"([XYZ])\s+DONE")
 # 运动启动确认正则（固件收到指令后立即回）
@@ -103,8 +137,8 @@ class DataProcess(QObject):
     # ========================================================================
     SAMPLING_FREQ = 27000  # 采样频率 (Hz)
     CUTOFF_RATIO = 70  # 截止频率与采样频率的比值
-    # 磁场换算系数不再使用固定常数，改为按 PGA 档位查表：
-    # config_manager.PGA_MAG_ADC_PER_MT（2026-09-07 标定）
+    # 磁场换算系数不再使用固定常数，改为按 (PGA, IDAC) 组合查表：
+    # config_manager.get_mag_adc_per_mt（2026-09-07 标定，2026-09-23 以 483mT 重锚）
 
     def __init__(self, data_queue: queue.Queue):
         """
@@ -136,7 +170,6 @@ class DataProcess(QObject):
 
         # 测量类型：'rotation' - 旋转测量，'vertical' - 垂直测量
         self.measure_type: str = "rotation"
-        self.enable_concentricity_calibration: bool = True
 
         # 位置数据：最后处理的位置数据 (x_position, z_position)
         self.position_data: Optional[tuple] = None
@@ -154,6 +187,9 @@ class DataProcess(QObject):
         self._sample_info: dict = {}
         self._wave_analyzer = WaveAnalysis()
 
+        # 最近一轮测量的削顶诊断结果（供测量面板判断是否降档重测）
+        self.last_saturation: dict = {"saturated": False}
+
         logger.info(f"初始化数据处理模块完成：√")
 
     @staticmethod
@@ -162,13 +198,124 @@ class DataProcess(QObject):
         raw = (high << 8) | low
         return raw - 0x10000 if raw >= 0x8000 else raw
 
+    @staticmethod
+    def _is_saturated(raw_value: int) -> int:
+        """判断单个原始码值是否顶到上下轨：返回 +1（正轨）/ -1（负轨）/ 0（正常）。"""
+        if raw_value >= ADC_FULL_SCALE - ADC_SATURATION_MARGIN:
+            return 1
+        if raw_value <= -ADC_FULL_SCALE + ADC_SATURATION_MARGIN:
+            return -1
+        return 0
+
+    def _summarize_saturation(self, total_points: int, high_count: int, low_count: int) -> dict:
+        """汇总一轮测量的削顶情况。
+
+        Returns:
+            dict: saturated / high_points / low_points / ratio / clipped_mt /
+                  full_scale_mt / factor / pga / idac
+        """
+        info = {
+            "saturated": False,
+            "high_points": int(high_count),
+            "low_points": int(low_count),
+            "total_points": int(total_points),
+            "pga": int(self.config.pga_gain),
+            "idac": int(self.config.idac_index),
+        }
+        factor = float(self._mag_conversion_factor or 0.0)
+        info["factor"] = round(factor, 3)
+        info["full_scale_mt"] = round(ADC_FULL_SCALE / factor, 2) if factor > 0 else 0.0
+        if total_points <= 0:
+            return info
+        saturated_points = int(high_count) + int(low_count)
+        ratio = saturated_points / float(total_points)
+        info["ratio"] = round(ratio, 6)
+        # 顶轨读数对应的磁场下限
+        info["clipped_mt"] = round(info["full_scale_mt"], 3)
+        info["saturated"] = ratio >= SATURATION_RATIO_THRESHOLD
+        # 用"顶轨样本占比"反推真实峰值：波形近似正弦时，超过满量程 F 的比例
+        #   ρ = (2/π)·arccos(F/A)  →  A = F ÷ cos(π·ρ/2)
+        # 顶得越多说明真实峰值越高，据此选档比固定倍数更靠谱。
+        full_scale = info["full_scale_mt"]
+        if info["saturated"] and full_scale > 0:
+            rho = min(max(ratio, 1e-6), 0.98)
+            info["peak_estimate_mt"] = round(
+                full_scale / float(np.cos(np.pi * rho / 2.0)), 2)
+        else:
+            info["peak_estimate_mt"] = full_scale
+        return info
+
     def _get_default_offset(self) -> float:
         """偏置缺失时的兜底值（0 = 不校正）。"""
         return 0.0
 
+    @staticmethod
+    def _log_analysis_summary(results: dict) -> None:
+        """把关键误差指标打到 INFO 日志。
+
+        结果原先只在 DEBUG 级输出，日志里看不到；现场出问题时又不一定保存了
+        数据文件，所以这里补一条 INFO 摘要，便于直接对着日志复盘。
+        """
+        if not results:
+            logger.warning("波形分析未返回有效结果，无指标可记录")
+            return
+
+        def fmt(value, digits=2):
+            try:
+                return f"{float(value):.{digits}f}"
+            except (TypeError, ValueError):
+                return "--"
+
+        conc = results.get("concentricity") or {}
+        logger.info(
+            "分析指标: N极误差 %s%% / S极误差 %s%% / N间隔误差 %s%% / S间隔误差 %s%% / "
+            "单极误差 %s%% / 累计误差 %s%% / THD %s%% / 极对数 %s | "
+            "N均值 %s mT, S均值 %s mT, NS/2 %s mT | "
+            "同轴度: 角度偏心 %s°(相位 %s°), 极值一圈一次 N %s%% / S %s%%"
+            % (fmt(results.get("N_se")), fmt(results.get("S_se")),
+               fmt(results.get("N_interval_std")), fmt(results.get("S_interval_std")),
+               fmt(results.get("SinglePolarError")), fmt(results.get("PolarErrorSum")),
+               fmt(results.get("THD_error")), results.get("pole_num", "--"),
+               fmt(results.get("N_mean")), fmt(results.get("S_mean")),
+               fmt(results.get("NS_2")),
+               fmt(conc.get("angle_amp_deg"), 3), fmt(conc.get("angle_phase_deg"), 1),
+               fmt(conc.get("n_1x_pct"), 2), fmt(conc.get("s_1x_pct"), 2),
+               )
+        )
+
+        # 偏差最大的几处：偏心是"整圈一次"的平滑项，扣掉之后仍剩大幅偏差的地方
+        # 通常是样品的局部特征（接缝/弱磁极）或探头在该角度处的间隙异常，
+        # 打出来便于判断到底是样品问题还是装夹问题。
+        peaks = results.get("peak_details") or []
+        worst_peaks = sorted(
+            [item for item in peaks
+             if isinstance(item.get("error_percent"), (int, float))
+             and np.isfinite(item["error_percent"])],
+            key=lambda item: abs(item["error_percent"]), reverse=True)[:3]
+        if worst_peaks:
+            logger.info(
+                "极值偏差最大三处: "
+                + ", ".join(f"{item['pole']}极@{float(item['angle']):.1f}° "
+                            f"{float(item['error_percent']):+.1f}%" for item in worst_peaks)
+            )
+
+        crosses = results.get("zero_crossing_details") or []
+        intervals = [float(item["interval_to_next"]) for item in crosses
+                     if item.get("interval_to_next") is not None]
+        if len(intervals) > 2:
+            mean_interval = float(np.mean(intervals))
+            order = np.argsort([-abs(value - mean_interval) for value in intervals])[:3]
+            logger.info(
+                "过零间隔偏差最大三处: "
+                + ", ".join(
+                    f"{float(crosses[i]['angle']):.1f}° 处 {intervals[i]:.3f}°"
+                    f"({(intervals[i] - mean_interval) / mean_interval * 100:+.1f}%)"
+                    for i in order)
+            )
+
     def _get_mag_conversion_factor(self) -> float:
-        """当前 PGA 档位的磁场换算系数（ADC counts/mT）。"""
-        return get_pga_mag_conversion_factor(self.config.pga_gain)
+        """当前 (PGA, IDAC) 组合的磁场换算系数（ADC counts/mT）。"""
+        return get_mag_adc_per_mt(self.config.pga_gain, self.config.idac_index)
 
     def set_offset_save_pga(self, index: Optional[int]) -> None:
         """设置偏置校准结果的写入档位；None 表示写当前档位。"""
@@ -226,10 +373,12 @@ class DataProcess(QObject):
         )
 
     def _on_idac_index_changed(self, index: int) -> None:
-        """IDAC 档位切换后重新匹配该 (PGA, IDAC) 组合的零场偏置。"""
+        """IDAC 档位切换后重新匹配该 (PGA, IDAC) 组合的零场偏置与换算系数。"""
         self.mag_offset = self.config.offset or 0
+        self._mag_conversion_factor = self._get_mag_conversion_factor()
         logger.info(
-            f"IDAC 档位已切换为 IDAC{index}，自动匹配偏置: {self.mag_offset:.1f} ADC"
+            f"IDAC 档位已切换为 IDAC{index}，自动匹配偏置: {self.mag_offset:.1f} ADC，"
+            f"换算系数: {self._mag_conversion_factor:.3f} ADC/mT"
         )
 
     def set_sample_info(self, sample_info: dict) -> None:
@@ -275,8 +424,26 @@ class DataProcess(QObject):
         """
         return self._sample_info.copy()
 
-    def _emit_measurement_results(self, measure_list: List[float]) -> None:
+    def _emit_measurement_results(self, measure_list: List[float],
+                                   sat_high: int = 0, sat_low: int = 0) -> None:
         """Persist measurement data and emit processed results (即使为空也 emit，用于触发重试)。"""
+        self.last_saturation = self._summarize_saturation(
+            len(measure_list), sat_high, sat_low)
+        if self.last_saturation.get("saturated"):
+            info = self.last_saturation
+            logger.warning(
+                "检测到削顶（ADC 顶轨）: 正轨 %d 点 / 负轨 %d 点，占 %.3f%%；"
+                "当前档位 %s（%s），满量程仅 %.1f mT；本轮回读峰值不可信，"
+                "按顶轨占比反推真实峰值约 %.1f mT"
+                % (info["high_points"], info["low_points"], info["ratio"] * 100.0,
+                   PGA_OPTION_TEXTS[info["pga"]], f"IDAC{info['idac']}",
+                   info["full_scale_mt"], info.get("peak_estimate_mt", 0.0))
+            )
+        elif len(measure_list) > 0:
+            logger.info(
+                "削顶检查通过: 正轨 %d 点 / 负轨 %d 点（阈值 %.3f%%）"
+                % (sat_high, sat_low, SATURATION_RATIO_THRESHOLD * 100.0)
+            )
         if measure_list:
             logger.info(f"测量数据接收完成，共 {len(measure_list)} 个数据点")
         else:
@@ -302,7 +469,8 @@ class DataProcess(QObject):
                         f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
                     )
                     analysis_results = self._wave_analyzer.analyze_waveform(
-                        alg_angle, alg_mag, self.enable_concentricity_calibration)
+                        alg_angle, alg_mag)
+                    self._log_analysis_summary(analysis_results)
                 except Exception as e:
                     logger.warning(f"波形分析失败: {e}")
                     analysis_results = None
@@ -356,6 +524,26 @@ class DataProcess(QObject):
         except Exception as e:
             logger.error(f"低通滤波失败: {e}")
             return data_list
+
+    @staticmethod
+    def _moving_average(data_list: List[float], window: int) -> List[float]:
+        """移动平均平滑。
+
+        H~ 连续流的采样率（约 600 Hz）与 B~ 采集不同，不能复用按 27000 Hz
+        设计的巴特沃斯滤波器，偏置只要直流分量，短窗移动平均足够。
+        """
+        if window <= 1 or len(data_list) < window:
+            return data_list
+        cumulative = [0.0]
+        for value in data_list:
+            cumulative.append(cumulative[-1] + float(value))
+        smoothed = []
+        half = window // 2
+        for index in range(len(data_list)):
+            low = max(0, index - half)
+            high = min(len(data_list), index + half + 1)
+            smoothed.append((cumulative[high] - cumulative[low]) / (high - low))
+        return smoothed
 
     # ========================================================================
     # 队列操作
@@ -624,9 +812,13 @@ class DataProcess(QObject):
             no_data_count = 0
             total_bytes_read = 0
             data_started = False
+            sat_high_count = 0
+            sat_low_count = 0
 
-            # 两段超时：启动 10s (20×0.5s)，中断 2s (4×0.5s)
-            max_empty_start = 20
+            # 两段超时（每轮空轮询 0.5s）：
+            #   启动：等固件把 R 轴送回参考位并开始出流（低速档很慢，见常量说明）
+            #   中断：数据流一旦开始，2s 无数据即判定一圈结束
+            max_empty_start = int(MEASURE_START_TIMEOUT_SECONDS / 0.5)
             max_empty_done = 4
             max_empty_count = max_empty_start
             logger.info(
@@ -636,7 +828,8 @@ class DataProcess(QObject):
             while True:
                 if self._stop_measure_processing:
                     logger.info("Measurement processing stopped by request")
-                    self._emit_measurement_results(measure_list)
+                    self._emit_measurement_results(
+                        measure_list, sat_high_count, sat_low_count)
                     break
 
                 if len(temp_buffer) >= 2:
@@ -646,13 +839,19 @@ class DataProcess(QObject):
                     for i in range(batch_size):
                         byte1 = temp_buffer[i * 2]
                         byte2 = temp_buffer[i * 2 + 1]
-                        adc = self._decode_s16(byte1, byte2) - self.mag_offset
+                        raw_code = self._decode_s16(byte1, byte2)
+                        sat_flag = self._is_saturated(raw_code)
+                        if sat_flag > 0:
+                            sat_high_count += 1
+                        elif sat_flag < 0:
+                            sat_low_count += 1
+                        adc = raw_code - self.mag_offset
                         measure_list.append(round(adc / self._mag_conversion_factor, 4))
 
                     del temp_buffer[0:batch_size * 2]
 
-                    # 进度更新（已知各 MODE 数据量）
-                    expected = MODE_EXPECTED_POINTS.get(self.config.test_speed, len(measure_list))
+                    # 进度更新（已知各速度档位的每圈点数）
+                    expected = SAMPLES_PER_REV.get(self.config.test_speed, len(measure_list))
                     self.signal_measure_data_progress.emit(len(measure_list), expected)
 
                 if len(temp_buffer) < 2:
@@ -689,7 +888,8 @@ class DataProcess(QObject):
 
                         if self._stop_measure_processing:
                             logger.info("Measurement processing stopped by request while waiting for data")
-                            self._emit_measurement_results(measure_list)
+                            self._emit_measurement_results(
+                                measure_list, sat_high_count, sat_low_count)
                             break
 
                         if no_data_count >= max_empty_count:
@@ -705,18 +905,23 @@ class DataProcess(QObject):
 
                             if len(temp_buffer) >= 2:
                                 # 捞到数据了，处理掉并继续等待
-                                logger.info(f"Measure recovered {len(temp_buffer)} bytes at timeout boundary, continuing")
+                                logger.info(
+                                    f"Measure recovered {len(temp_buffer)} bytes at timeout "
+                                    "boundary, continuing"
+                                )
                                 no_data_count = 0
                                 continue
 
                             logger.warning(
                                 f"Measurement receive timeout: {no_data_count} empty polls, "
                                 f"points={len(measure_list)}, buffer_remain={len(temp_buffer)}, "
-                                f"total_bytes={total_bytes_read}, queue_size={self.data_queue.qsize()}, "
+                                f"total_bytes={total_bytes_read}, "
+                                f"queue_size={self.data_queue.qsize()}, "
                                 f"measurement_active={self._measurement_active}, "
                                 f"offset_calibrating={self._offset_calibrating}"
                             )
-                            self._emit_measurement_results(measure_list)
+                            self._emit_measurement_results(
+                                measure_list, sat_high_count, sat_low_count)
                             break
 
         except Exception as e:
@@ -729,12 +934,16 @@ class DataProcess(QObject):
         用于校准磁场测量的偏置值。在无被测磁场时采集数据，
         计算平均值作为偏置，后续测量时需要减去此偏置值。
 
+        数据来源：固件 H~ 连续流（ASCII 行 ":hall16,curr16,hall24,curr24"，
+        约 600 Hz）。其中 hall16 = Hall 24bit>>8，与 B~ 二进制流的 2 字节样本
+        同刻度，因此算出的偏置可直接用于正式测量。
+
         处理流程：
         1. 持续从队列获取数据直到队列为空
-        2. 处理缓冲区中的所有数据
+        2. 按行解析缓冲区，取出 hall16
         3. 等待一小段时间看是否有新数据
-        4. 重复直到真的没有新数据
-        5. 对数据进行低通滤波
+        4. 采集满 OFFSET_MAX_PROCESS_SECONDS（一轮 5 s）后结束
+        5. 对数据做短窗移动平均
         6. 按配置取中间稳定窗口数据的平均值作为偏置
         7. 保存到配置文件
 
@@ -749,13 +958,18 @@ class DataProcess(QObject):
             got_data = False
             raw_bytes_received = 0
             queue_items_received = 0
+            malformed_lines = 0
             last_collect_log_time = start_time
+            smooth_window = max(
+                1, int(round(OFFSET_HALL_STREAM_HZ * OFFSET_HALL_SMOOTH_SECONDS))
+            )
 
             logger.info(
-                "Offset flow: processor started, "
+                "Offset flow: processor started (H~ stream), "
                 f"initial_queue_size={self.data_queue.qsize()}, "
                 f"max_process={OFFSET_MAX_PROCESS_SECONDS:.1f}s, "
-                f"no_data_timeout={OFFSET_NO_DATA_TIMEOUT_SECONDS:.1f}s"
+                f"no_data_timeout={OFFSET_NO_DATA_TIMEOUT_SECONDS:.1f}s, "
+                f"smooth_window={smooth_window} points"
             )
 
             while True:
@@ -779,15 +993,26 @@ class DataProcess(QObject):
                 except queue.Empty:
                     pass
 
-                # 2. 处理缓冲区：有符号 16-bit 大端序解码
-                while len(temp_buffer) >= 2:
-                    byte1 = temp_buffer[0]
-                    byte2 = temp_buffer[1]
-                    offset_list.append(self._decode_s16(byte1, byte2))
-                    del temp_buffer[0:2]
+                # 2. 处理缓冲区：按行解析 H~ 文本流 ":hall16,curr16,hall24,curr24"
+                while True:
+                    newline_index = temp_buffer.find(b"\n")
+                    if newline_index < 0:
+                        break
+                    line = bytes(temp_buffer[:newline_index])
+                    del temp_buffer[0:newline_index + 1]
+                    text_line = line.decode("utf-8", errors="ignore").strip()
+                    if not text_line:
+                        continue
+                    match = H_STREAM_PATTERN.search(text_line)
+                    if match:
+                        offset_list.append(int(match.group(1)))
+                    else:
+                        malformed_lines += 1
+                        if malformed_lines <= 3:
+                            logger.debug(f"Offset flow: 非 H~ 数据行已忽略: {text_line[:80]}")
 
                 # 进度更新
-                expected = MODE_EXPECTED_POINTS.get(self.config.test_speed, len(offset_list))
+                expected = max(1, int(round(OFFSET_HALL_STREAM_HZ * OFFSET_COLLECTION_SECONDS)))
                 self.signal_offset_data_progress.emit(len(offset_list), expected)
 
                 current_time = time.time()
@@ -807,11 +1032,22 @@ class DataProcess(QObject):
                 no_data_elapsed = current_time - last_data_time
 
                 if elapsed >= OFFSET_MAX_PROCESS_SECONDS:
-                    logger.warning(
-                        "Offset flow: max process time reached, "
-                        f"points={len(offset_list)}, raw_bytes={raw_bytes_received}, "
-                        f"queue_items={queue_items_received}, elapsed={elapsed:.2f}s"
-                    )
+                    if offset_list:
+                        logger.info(
+                            "Offset flow: collection window finished, "
+                            f"points={len(offset_list)}, raw_bytes={raw_bytes_received}, "
+                            f"malformed_lines={malformed_lines}, "
+                            f"queue_items={queue_items_received}, elapsed={elapsed:.2f}s"
+                        )
+                    else:
+                        logger.warning(
+                            "Offset flow: H~ 流未产生有效数据, "
+                            f"raw_bytes={raw_bytes_received}, "
+                            f"malformed_lines={malformed_lines}, "
+                            f"queue_items={queue_items_received}, elapsed={elapsed:.2f}s, "
+                            f"measurement_active={self._measurement_active}, "
+                            f"offset_calibrating={self._offset_calibrating}"
+                        )
                     break
 
                 if got_data and no_data_elapsed >= OFFSET_NO_DATA_TIMEOUT_SECONDS:
@@ -845,11 +1081,11 @@ class DataProcess(QObject):
 
             # 处理完成，计算偏置值
             if len(offset_list) > 0:
-                # 进行低通滤波
-                filtered_offset_list = self._lowpass_filter(offset_list)
+                # 移动平均平滑（H~ 流的采样率与 B~ 不同，不用按 27kHz 设计的低通）
+                filtered_offset_list = self._moving_average(offset_list, smooth_window)
                 total_len = len(filtered_offset_list)
 
-                # Use the stable middle window: for 5s collection, keep the middle 3s.
+                # 取中段稳定窗口：5 s 采集保留中间 3 s
                 trim_ratio = 0.0
                 if OFFSET_COLLECTION_SECONDS > 0 and OFFSET_STABLE_WINDOW_SECONDS > 0:
                     trim_ratio = max(
@@ -1095,9 +1331,11 @@ class DataProcess(QObject):
         start_index = max(0, min(total_length - 1, start_index))
         rough_end_index = max(start_index + 1, min(total_length - 1, rough_end_index))
         rough_points = rough_end_index - start_index
+        # 只在标称端点附近搜（见 CLOSURE_MAX_OFFSET_FRACTION 的说明），
+        # 不再放到 1/4 磁周期——那样会锁到峰值平台上的错误位置，裁掉一整段数据。
         search_radius = max(
             CLOSURE_MIN_DIRECTION_SPAN_POINTS,
-            int(round(estimated_period_points * CLOSURE_SEARCH_PERIOD_FRACTION)),
+            int(round(rough_points * CLOSURE_MAX_OFFSET_FRACTION)),
         )
         slope_span = max(
             CLOSURE_MIN_DIRECTION_SPAN_POINTS,
@@ -1114,7 +1352,7 @@ class DataProcess(QObject):
             f"粗截取范围={start_index}-{rough_end_index}, "
             f"粗截取点数={rough_points}, "
             f"估算周期点数={estimated_period_points:.1f}, "
-            f"1/4周期搜索半径={search_radius}, "
+            f"搜索半径={search_radius}, "
             f"趋势判断跨度={slope_span}, "
             f"粗尾点索引={rough_end_index}"
         )
@@ -1164,8 +1402,17 @@ class DataProcess(QObject):
 
         if not np.isfinite(best_score):
             logger.warning(
-                "闭合点局部搜索失败：粗尾点前后各1/4磁周期范围内没有找到与起点趋势一致的候选点，"
+                "闭合点局部搜索失败：标称端点附近没有找到与起点趋势一致的候选点，"
                 "将回退为粗截取。"
+            )
+            return rough_end_index, False, float("nan")
+
+        if best_score > CLOSURE_SCORE_REJECT:
+            logger.warning(
+                "闭合点选择失败：标称端点附近最佳候选 score=%.4f 超过阈值 %.2f"
+                "（首尾磁值差 %.3f mT），回退为标称端点、不做裁切。"
+                % (best_score, CLOSURE_SCORE_REJECT,
+                   float(data_array[rough_end_index] - data_array[start_index]))
             )
             return rough_end_index, False, float("nan")
 
@@ -1364,6 +1611,7 @@ class DataProcess(QObject):
                     zero_details = analysis_results.get('zero_crossing_details')
                     zero_count = len(zero_details) if isinstance(zero_details, list) else ''
                     writer.writerow(['过零点个数', zero_count])
+                    writer.writerow(['一圈一次角度偏心', (analysis_results.get('concentricity') or {}).get('angle_amp_deg', '')])
 
                 writer.writerow([])  # 空行分隔
 

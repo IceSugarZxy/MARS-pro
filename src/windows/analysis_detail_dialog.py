@@ -116,6 +116,7 @@ class AnalysisDetailDialog(QDialog):
         details = list(self.analysis_results.get("zero_crossing_details", []))
         intervals = [item.get("interval_to_next") for item in details]
         mean_interval = self._mean(intervals)
+        concentricity = self.analysis_results.get("concentricity") or {}
         self._plot_zero_crossing_waveform(details)
         self._plot_zero_crossing_intervals(details, mean_interval)
 
@@ -128,11 +129,14 @@ class AnalysisDetailDialog(QDialog):
             ("间隔峰峰值", self._peak_to_peak(intervals), "°"),
             ("N极间隔误差", self.analysis_results.get("N_interval_std"), "%"),
             ("S极间隔误差", self.analysis_results.get("S_interval_std"), "%"),
+            ("一圈一次偏心(角度)", concentricity.get("angle_amp_deg"), "°"),
+            ("偏心相位", concentricity.get("angle_phase_deg"), "°"),
         ])
         self._set_detail_table(
-            ["过零角度(°)", "下一过零间隔(°)", "区间极性"],
+            ["过零角度(°)", "同轴度修正后角度(°)", "下一过零间隔(°)", "区间极性"],
             [[
                 item.get("angle"),
+                item.get("angle_corrected"),
                 item.get("interval_to_next"),
                 item.get("pole", ""),
             ] for item in details]
@@ -239,6 +243,7 @@ class AnalysisDetailDialog(QDialog):
 
     def _populate_extreme_point(self):
         self._plot_waveform()
+        concentricity = self.analysis_results.get("concentricity") or {}
         details = list(self.analysis_results.get("peak_details", []))
         if details:
             n_points = [item for item in details if item.get("pole") == "N"]
@@ -272,6 +277,8 @@ class AnalysisDetailDialog(QDialog):
             ("S极平均值", self.analysis_results.get("S_mean"), "mT"),
             ("S极误差", self.analysis_results.get("S_se"), "%"),
             ("NS/2", self.analysis_results.get("NS_2"), "mT"),
+            ("N极一圈一次幅值", concentricity.get("n_1x_pct"), "%"),
+            ("S极一圈一次幅值", concentricity.get("s_1x_pct"), "%"),
         ])
         self._set_detail_table(
             ["极性", "角度(°)", "磁场值(mT)", "绝对峰值(mT)", "相对均值误差(%)"],
