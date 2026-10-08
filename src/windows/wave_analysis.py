@@ -12,6 +12,9 @@ from scipy.signal import find_peaks
 from scipy.fft import fft
 from core.logger import get_logger
 
+# 兼容 numpy 2.0+：np.trapz 已被移除，改用 np.trapezoid（旧版回退到 np.trapz）
+_TRAPZ = getattr(np, "trapezoid", None) or np.trapz
+
 logger = get_logger('WaveAnalysis')
 
 
@@ -629,10 +632,10 @@ class WaveAnalysis:
                 y_filtered = y[mask]
 
                 N_part = np.where(y_filtered < 0, 0, y_filtered)
-                N_area = round(np.trapz(N_part, x_filtered), 2)
+                N_area = round(_TRAPZ(N_part, x_filtered), 2)
 
                 S_part = np.where(y_filtered > 0, 0, y_filtered)
-                S_area = abs(round(np.trapz(S_part, x_filtered), 2))
+                S_area = abs(round(_TRAPZ(S_part, x_filtered), 2))
 
                 NS_area = round(N_area + S_area, 2)
             except Exception as e:
