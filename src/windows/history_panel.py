@@ -12,6 +12,7 @@ from PyQt5 import uic
 from core.logger import get_logger
 from core.path_utils import get_data_dir
 from core.plot_data_reader import (TABLE_COLUMNS, is_plot_data_header,
+                                   pole_count_text,
                                    read_plot_csv, read_plot_csv_header,
                                    scan_plot_data_records)
 
@@ -164,7 +165,12 @@ class HistoryPanel(QWidget):
             row = table.rowCount()
             table.insertRow(row)
             for column, field in enumerate(TABLE_COLUMNS):
-                item = QTableWidgetItem(str(record.get(field, '') or ''))
+                if field == 'polar_num':
+                    # CSV 存的是极对数，界面统一显示极数（×2）
+                    value = pole_count_text(record.get(field, ''))
+                else:
+                    value = str(record.get(field, '') or '')
+                item = QTableWidgetItem(value)
                 if column == 0:
                     item.setData(Qt.UserRole, record.get('file_path', ''))
                 table.setItem(row, column, item)
@@ -197,8 +203,8 @@ class HistoryPanel(QWidget):
             # 测试员筛选
             if search_tester and search_tester not in record['tester'].lower():
                 continue
-            # 极数筛选
-            if search_polar and search_polar not in record['polar_num']:
+            # 极数筛选（列表显示的是极数，按显示口径比较）
+            if search_polar and search_polar not in pole_count_text(record['polar_num']):
                 continue
             # 气隙筛选
             if search_airgap and search_airgap not in record['airgap']:
@@ -301,7 +307,8 @@ class HistoryPanel(QWidget):
                     if sample_info.get('polar_num'):
                         polar_num_edit = measure_panel.findChild(QLineEdit, "polar_num_edit")
                         if polar_num_edit:
-                            polar_num_edit.setText(sample_info['polar_num'])
+                            # CSV 存的是极对数，样品信息里统一显示极数（×2）
+                            polar_num_edit.setText(pole_count_text(sample_info['polar_num']))
                     if sample_info.get('airgap'):
                         airgap_edit = measure_panel.findChild(QLineEdit, "airgap_edit")
                         if airgap_edit:

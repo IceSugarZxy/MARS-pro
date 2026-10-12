@@ -5,8 +5,10 @@ MARS Pro — PyInstaller 打包配置 (onedir 文件夹分发)
 
 import os
 
-SPEC_FILE = globals().get('__file__', os.path.join(os.getcwd(), 'MARS.spec'))
-SPEC_DIR = os.path.dirname(os.path.abspath(SPEC_FILE))
+# 解析 spec 自身所在目录，保证从任意工作目录调用 `pyinstaller MARS.spec` 都能定位工程。
+# PyInstaller 执行 spec 时会注入 SPECPATH（spec 所在目录）；直接执行时退回 __file__。
+_spec_ref = globals().get('SPECPATH') or globals().get('__file__') or os.getcwd()
+SPEC_DIR = os.path.abspath(_spec_ref if os.path.isdir(_spec_ref) else os.path.dirname(_spec_ref))
 
 block_cipher = None
 APP_NAME = 'MARS_Pro'
@@ -33,15 +35,26 @@ for relative_path in [
         datas.append((source_path, '.'))
 
 # 随包附带的历史波形数据（打包进 dist/data/plot_data/<日期>，运行时"历史数据"面板可直接加载）
-#   默认：打包"今天"的 plot_data
+#   默认：自动取 data/plot_data 下最近的一天（日期文件夹按 YYYYMMDD 命名）
 #   可用环境变量 MARS_BUNDLE_DATA 指定，多个日期用逗号分隔；
 #   设为 none / 空字符串则不带任何历史数据
 #   例：set MARS_BUNDLE_DATA=20260930,20260729
-import datetime as _dt
-
-_bundle_dates = os.environ.get('MARS_BUNDLE_DATA', _dt.date.today().strftime('%Y%m%d'))
 _plot_root = os.path.join(SPEC_DIR, 'data', 'plot_data')
-if _bundle_dates and _bundle_dates.strip().lower() != 'none' and os.path.isdir(_plot_root):
+
+
+def _latest_plot_date(root):
+    """取 plot_data 下最新的日期文件夹（YYYYMMDD）。"""
+    try:
+        names = [d for d in os.listdir(root)
+                 if len(d) == 8 and d.isdigit() and os.path.isdir(os.path.join(root, d))]
+    except OSError:
+        return ''
+    return max(names) if names else ''
+
+
+_bundle_env = os.environ.get('MARS_BUNDLE_DATA')
+_bundle_dates = _latest_plot_date(_plot_root) if _bundle_env is None else _bundle_env.strip()
+if _bundle_dates and _bundle_dates.lower() != 'none' and os.path.isdir(_plot_root):
     for _date in [d.strip() for d in _bundle_dates.split(',') if d.strip()]:
         _src = os.path.join(_plot_root, _date)
         if os.path.isdir(_src):

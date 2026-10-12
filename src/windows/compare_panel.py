@@ -21,7 +21,7 @@ from core.defect_fingerprint import MAX_RUNS, PALETTE, analyze_runs, compare_sta
 from core.logger import get_logger
 from core.path_utils import get_data_dir
 from core.plot_data_reader import (TABLE_COLUMNS, read_plot_csv,
-                                   scan_plot_data_records)
+                                   pole_count_text, scan_plot_data_records)
 from windows.fingerprint_dialog import FingerprintResultDialog
 
 logger = get_logger('ComparePanel')
@@ -266,7 +266,12 @@ class ComparePanel(QWidget):
                 table.setItem(row, CHECK_COLUMN, check_item)
 
                 for offset, field in enumerate(TABLE_COLUMNS):
-                    item = QTableWidgetItem(str(record.get(field, '') or ''))
+                    if field == 'polar_num':
+                        # CSV 存的是极对数，列表统一显示极数（×2）
+                        value = pole_count_text(record.get(field, ''))
+                    else:
+                        value = str(record.get(field, '') or '')
+                    item = QTableWidgetItem(value)
                     item.setData(Qt.UserRole, path)
                     table.setItem(row, CHECK_COLUMN + 1 + offset, item)
         finally:
@@ -293,7 +298,8 @@ class ComparePanel(QWidget):
                 continue
             if tester and tester not in str(record.get('tester', '')).lower():
                 continue
-            if polar and polar not in str(record.get('polar_num', '')):
+            # 列表显示的是极数，筛选按显示口径比较
+            if polar and polar not in pole_count_text(record.get('polar_num', '')):
                 continue
             if airgap and airgap not in str(record.get('airgap', '')):
                 continue
@@ -542,7 +548,8 @@ class ComparePanel(QWidget):
             if value:
                 polars[path] = value
         if len(polars) == len(paths) and len(set(polars.values())) > 1:
-            detail = "\n".join("%s：极数 %s" % (os.path.basename(p), polars[p]) for p in paths)
+            detail = "\n".join("%s：极数 %s" % (os.path.basename(p), pole_count_text(polars[p]))
+                               for p in paths)
             QMessageBox.warning(self, "极数不一致",
                                 "勾选的数据极数不一致，无法比对：\n\n" + detail)
             return

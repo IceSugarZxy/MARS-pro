@@ -22,6 +22,20 @@ from datetime import datetime
 # 列表列定义，顺序必须与 history_panel.ui / compare_panel.ui 中表格的列一致
 TABLE_COLUMNS = ('sample_name', 'sample_code', 'time_str', 'tester', 'polar_num', 'airgap', 'remark')
 
+
+def pole_count_text(polar_num) -> str:
+    """界面显示的“极数” = 极对数 × 2。
+
+    CSV 里存的 polar_num 是极对数（与波形分析口径一致，保存时不做换算），
+    但界面统一按“极数”展示；解析不出数字时原样返回（空串 / "--" 等）。
+    """
+    text = str(polar_num or '').strip()
+    try:
+        return str(int(float(text)) * 2)
+    except (TypeError, ValueError):
+        return text
+
+
 # 文件名形如 样品名称_20260930_103313.csv
 FILENAME_PATTERN = re.compile(r"(.+?)_(\d{8}_\d{6})\.csv")
 

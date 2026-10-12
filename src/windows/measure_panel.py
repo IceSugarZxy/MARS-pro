@@ -1899,11 +1899,11 @@ class MeasurePanel(QWidget):
             # THD失真率
             self.findChild(QLineEdit, "thd_error_edit").setText(f"{results.get('THD_error', 0):.2f}")
 
-            # 极数
+            # 极数（样品信息这里按极数显示：分析结果 pole_num 是极对数，×2 才是极数）
             pole_num = results.get('pole_num')
             if pole_num is not None:
                 try:
-                    self.findChild(QLineEdit, "polar_num_edit").setText(str(int(pole_num)))
+                    self.findChild(QLineEdit, "polar_num_edit").setText(str(int(pole_num) * 2))
                 except (ValueError, TypeError):
                     self.findChild(QLineEdit, "polar_num_edit").setText("--")
         except Exception as e:
