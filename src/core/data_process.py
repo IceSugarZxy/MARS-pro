@@ -37,6 +37,7 @@ from .config_manager import (
     get_mag_adc_per_mt,
 )
 from .path_utils import get_data_dir
+from . import chuck_compensation
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
     OFFSET_HALL_SMOOTH_SECONDS,
@@ -127,6 +128,7 @@ class DataProcess(QObject):
     signal_position_data_process_finished = pyqtSignal(tuple)           # 位置数据处理完成信号 (x, y, z)
     signal_offset_data_process = pyqtSignal()                           # 偏置数据处理信号
     signal_offset_data_process_finished = pyqtSignal(bool)              # 偏置数据处理完成信号
+    signal_empty_capture_finished = pyqtSignal(bool, object)            # 空测一圈采集完成(成功, 信息)
     signal_measure_data_process = pyqtSignal()                          # 测量数据处理信号
     signal_measure_data_process_finished = pyqtSignal(object, object)   # 测量数据处理完成信号
     signal_measure_data_progress = pyqtSignal(int, int)                 # 测量数据处理进度信号 (当前数据量, 总数据量)
@@ -162,6 +164,9 @@ class DataProcess(QObject):
         self._offset_save_idac_override: Optional[int] = None
         # 用户取消偏置校准标志：置位后丢弃本次残缺数据
         self._offset_abort_requested = False
+        # 空测一圈采集（B~）目标：置位后整圈数据不用于常规显示/分析，
+        # 而是"分箱平均 → 爪盘补偿曲线"；None 表示常规测量
+        self._empty_capture_target = None
         # 切换 PGA 档位时自动匹配对应档位的偏置
         self.config.signal_pga_gain_changed.connect(self._on_pga_gain_changed)
         # 切换 IDAC 档位时同样重新匹配（二维偏置表的另一维）
@@ -362,6 +367,25 @@ class DataProcess(QObject):
         """清除偏置校准中止标志。"""
         self._offset_abort_requested = False
 
+    def set_empty_capture_target(self, pga_index, idac_index, speed_index,
+                                 step_deg: float = 1.0) -> None:
+        """设置"空测一圈采集"目标；传 None 取消。
+
+        置位后，下一次 B~ 整圈数据会走 :meth:`_finish_empty_capture`：
+        按角度分箱平均成爪盘补偿曲线（此时 measure_list 已是
+        ``(原始码值 − 直流偏置) / 换算系数``，所以曲线天然含残余直流），
+        按 ``PGA:IDAC:速度`` 存进配置；直流偏置表本身不动。
+        """
+        if pga_index is None:
+            self._empty_capture_target = None
+            return
+        self._empty_capture_target = {
+            'pga': int(pga_index),
+            'idac': int(idac_index),
+            'speed': int(speed_index),
+            'step_deg': float(step_deg),
+        }
+
     def _on_pga_gain_changed(self, index: int) -> None:
         """PGA 档位切换后自动匹配该档位保存的零场偏置。"""
         self.mag_offset = self.config.offset or 0
@@ -424,9 +448,98 @@ class DataProcess(QObject):
         """
         return self._sample_info.copy()
 
+    def _apply_chuck_compensation(self, measure_list: List[float]) -> List[float]:
+        """扣掉爪盘（空测）单周期补偿曲线。
+
+        在"减去 ADC 偏置、换算成 mT"之后调用：measure_list 是精确一圈，第 i 点对应
+        角度 i·360/n（与界面绘制、CSV 保存的角度口径一致）。曲线先按当前
+        ``PGA:IDAC:速度`` 精确匹配，没有时回退到通配键 ``*``（爪盘波动是物理
+        磁场，与量程/速度无关）；两者都没有时原样返回、不做补偿。
+        """
+        if not measure_list:
+            return measure_list
+        curve = self.config.get_chuck_compensation()
+        if not curve:
+            logger.debug(
+                "爪盘补偿：当前档位 PGA%s/IDAC%s/速度%s 没有补偿曲线，跳过"
+                % (self.config.pga_gain, self.config.idac_index, self.config.test_speed)
+            )
+            return measure_list
+
+        step_deg, values = curve
+        n = len(measure_list)
+        angles = np.arange(n, dtype=float) * (360.0 / n)
+        comp = chuck_compensation.sample_curve(values, step_deg, angles)
+        logger.info(
+            "爪盘补偿：PGA%s/IDAC%s/速度%s 扣除单周期曲线，n=%d，"
+            "补偿量 %.4f~%.4f mT（均值 %.4f）"
+            % (self.config.pga_gain, self.config.idac_index, self.config.test_speed,
+               n, float(np.min(comp)), float(np.max(comp)), float(np.mean(comp)))
+        )
+        return [v - c for v, c in zip(measure_list, comp)]
+
+    def _finish_empty_capture(self, measure_list: List[float]) -> None:
+        """把空测整圈数据转成爪盘补偿曲线并按档位存进配置。
+
+        measure_list 已是 ``(原始码值 − 直流偏置) / 换算系数``（mT），按角度分箱
+        平均即得该档位的单周期曲线；曲线含空测残余直流，应用后空测应归零，
+        所以直流偏置表不再单独更新（按约定保持原样）。
+        """
+        target = self._empty_capture_target or {}
+        self._empty_capture_target = None
+        self._measurement_active = False
+
+        info = {
+            'pga': target.get('pga'),
+            'idac': target.get('idac'),
+            'speed': target.get('speed'),
+            'points': len(measure_list),
+            'dc': None,
+            'ptp': None,
+        }
+        if len(measure_list) < 1000:
+            logger.warning("空测采集：数据点不足（%d），放弃" % len(measure_list))
+            self.signal_empty_capture_finished.emit(False, info)
+            return
+
+        n = len(measure_list)
+        angles = np.arange(n, dtype=float) * (360.0 / n)
+        step_deg = target.get('step_deg') or chuck_compensation.DEFAULT_STEP_DEG
+        curve = chuck_compensation.build_curve(angles, measure_list, step_deg)
+        info['dc'] = float(np.mean(curve))
+        info['ptp'] = float(np.ptp(curve))
+
+        # 三点校验：曲线按转速分开存（不同转速一圈点数不同），这里顺带核对点数
+        expected = SAMPLES_PER_REV.get(target['speed'])
+        info['key'] = chuck_compensation.comp_key(
+            target['pga'], target['idac'], target['speed'])
+        info['expected_points'] = expected
+        info['points_ok'] = (expected is None or n == expected)
+        if not info['points_ok']:
+            logger.warning(
+                "空测采集：实际点数 %d 与速度 %s 的标称点数 %s 不一致，"
+                "仍按实际点数分箱并存入 %s"
+                % (n, target['speed'], expected, info['key']))
+
+        ok = self.config.set_chuck_compensation(
+            target['pga'], target['idac'], target['speed'], curve, step_deg)
+        logger.info(
+            "空测采集：%s（PGA%s/IDAC%s/速度%s），%d 点 → 曲线 %d 点，"
+            "DC=%.4f mT 峰峰=%.4f mT，写配置 %s"
+            % (info['key'], target['pga'], target['idac'], target['speed'], n, curve.size,
+               info['dc'], info['ptp'], "OK" if ok else "失败")
+        )
+        logger.info("空测采集：当前已存曲线档位 %s"
+                    % sorted(self.config.chuck_compensation_table.keys()))
+        self.signal_empty_capture_finished.emit(bool(ok), info)
+
     def _emit_measurement_results(self, measure_list: List[float],
                                    sat_high: int = 0, sat_low: int = 0) -> None:
         """Persist measurement data and emit processed results (即使为空也 emit，用于触发重试)。"""
+        # 空测一圈采集：整圈数据不进常规显示/分析，改用生成爪盘补偿曲线
+        if self._empty_capture_target is not None:
+            self._finish_empty_capture(measure_list)
+            return
         self.last_saturation = self._summarize_saturation(
             len(measure_list), sat_high, sat_low)
         if self.last_saturation.get("saturated"):
@@ -456,7 +569,9 @@ class DataProcess(QObject):
             analysis_results = None
             logger.info(f"垂直测量：原始 {len(measure_list)} 点 → 角度/磁场各 {len(angle_data)} 点")
         else:
-            # 旋转测量：全部原始数据映射到 0-360°，波形分析单独运行
+            # 旋转测量：先扣掉爪盘（空测）单周期补偿——此时已完成"减偏置 + 换算 mT"，
+            # 再把全部数据映射到 0-360°，波形分析单独运行
+            measure_list = self._apply_chuck_compensation(measure_list)
             n = len(measure_list)
             if n > 0:
                 angle_data = [i * 360.0 / n for i in range(n)]
@@ -1580,39 +1695,9 @@ class DataProcess(QObject):
                     writer.writerow(['样品名称', sample_name])
                     writer.writerow(['保存时间', current_time])
 
-                # 写入分析结果
-                if analysis_results:
-                    writer.writerow([])  # 空行分隔
-                    writer.writerow(['=== 分析结果 ==='])
-                    writer.writerow(['N极最大值', analysis_results.get('N_max', '')])
-                    writer.writerow(['N极最小值', analysis_results.get('N_min', '')])
-                    writer.writerow(['N极平均值', analysis_results.get('N_mean', '')])
-                    writer.writerow(['N极误差', analysis_results.get('N_se', '')])
-                    writer.writerow(['S极最大值', analysis_results.get('S_max', '')])
-                    writer.writerow(['S极最小值', analysis_results.get('S_min', '')])
-                    writer.writerow(['S极平均值', analysis_results.get('S_mean', '')])
-                    writer.writerow(['S极误差', analysis_results.get('S_se', '')])
-                    writer.writerow(['NS_2', analysis_results.get('NS_2', '')])
-                    writer.writerow(['单极平均值', analysis_results.get('SinglePolarMean', '')])
-                    writer.writerow(['单极误差', analysis_results.get('SinglePolarError', '')])
-                    writer.writerow(['极误差和', analysis_results.get('PolarErrorSum', '')])
-                    writer.writerow(['N极间隔最大值', analysis_results.get('N_interval_max', '')])
-                    writer.writerow(['N极间隔最小值', analysis_results.get('N_interval_min', '')])
-                    writer.writerow(['N极间隔平均值', analysis_results.get('N_interval_mean', '')])
-                    writer.writerow(['N极间隔误差', analysis_results.get('N_interval_std', '')])
-                    writer.writerow(['S极间隔最大值', analysis_results.get('S_interval_max', '')])
-                    writer.writerow(['S极间隔最小值', analysis_results.get('S_interval_min', '')])
-                    writer.writerow(['S极间隔平均值', analysis_results.get('S_interval_mean', '')])
-                    writer.writerow(['S极间隔误差', analysis_results.get('S_interval_std', '')])
-                    writer.writerow(['N极面积', analysis_results.get('N_area', '')])
-                    writer.writerow(['S极面积', analysis_results.get('S_area', '')])
-                    writer.writerow(['NS面积', analysis_results.get('NS_area', '')])
-                    writer.writerow(['THD失真率', analysis_results.get('THD_error', '')])
-                    zero_details = analysis_results.get('zero_crossing_details')
-                    zero_count = len(zero_details) if isinstance(zero_details, list) else ''
-                    writer.writerow(['过零点个数', zero_count])
-                    writer.writerow(['一圈一次角度偏心', (analysis_results.get('concentricity') or {}).get('angle_amp_deg', '')])
-
+                # 不再写入“=== 分析结果 ===”快照段：
+                # 分析指标在查看历史数据/比对时会按当前算法重算，写进文件只会随代码
+                # 变更而过时（参数 analysis_results 保留仅为兼容调用方）。
                 writer.writerow([])  # 空行分隔
 
                 # 写入数据表头

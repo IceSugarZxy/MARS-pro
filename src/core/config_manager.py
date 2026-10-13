@@ -10,6 +10,9 @@ from typing import Optional, Dict, Any, List
 from PyQt5.QtCore import QObject, pyqtSignal
 import logging
 from .path_utils import get_config_path
+from .chuck_compensation import (CONFIG_KEY as CHUCK_COMPENSATION_KEY,
+                                 GLOBAL_KEY as CHUCK_COMPENSATION_GLOBAL_KEY,
+                                 comp_key, dump_table, parse_table)
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +370,8 @@ class ConfigManager(QObject):
         'idac_index': str(IDAC_DEFAULT_INDEX),
         # 二维偏置表（PGA:IDAC → 零场偏置 ADC）
         PGA_IDAC_OFFSETS_KEY: '{}',
+        # 爪盘(空测)单周期补偿曲线：{"PGA:IDAC:速度": {"step_deg":1.0,"values":[...]}}
+        CHUCK_COMPENSATION_KEY: '{}',
         # 量程估计值（mT），两个界面共用
         RANGE_ESTIMATE_KEY: '',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
@@ -592,6 +597,43 @@ class ConfigManager(QObject):
         if ok:
             self.signal_pga_offset_changed.emit(pga)
         return ok
+
+    # ==================== 爪盘（空测）单周期补偿曲线 ====================
+
+    @property
+    def chuck_compensation_table(self) -> dict:
+        """全部补偿曲线：``{"PGA:IDAC:速度": (step_deg, values)}``。"""
+        return parse_table(self.get(CHUCK_COMPENSATION_KEY, ''))
+
+    def get_chuck_compensation(self, pga_index: int = None, idac_index: int = None,
+                               speed_index: int = None):
+        """取指定采集档位的补偿曲线 ``(step_deg, values)``；没有该档位的曲线时返回 None。
+
+        先按 ``PGA:IDAC:速度`` 精确匹配；没有时回退到通配键 ``*``（爪盘波动是物理
+        磁场，与量程无关，可用一条曲线覆盖所有档位）。两者都没有则返回 None。
+        """
+        pga = self.pga_gain if pga_index is None else pga_index
+        idac = self.idac_index if idac_index is None else idac_index
+        speed = self.test_speed if speed_index is None else speed_index
+        try:
+            key = comp_key(pga, idac, speed)
+        except (TypeError, ValueError):
+            return None
+        table = self.chuck_compensation_table
+        return table.get(key) or table.get(CHUCK_COMPENSATION_GLOBAL_KEY)
+
+    def set_chuck_compensation(self, pga_index: int, idac_index: int, speed_index: int,
+                               values, step_deg: float = 1.0) -> bool:
+        """保存某一采集档位的补偿曲线。"""
+        return self.set_chuck_compensation_key(
+            comp_key(pga_index, idac_index, speed_index), values, step_deg)
+
+    def set_chuck_compensation_key(self, key: str, values, step_deg: float = 1.0) -> bool:
+        """按任意键保存补偿曲线（``*`` 为覆盖所有档位的通配键）。"""
+        table = self.chuck_compensation_table
+        table[str(key)] = (float(step_deg), values)
+        self._config[CHUCK_COMPENSATION_KEY] = dump_table(table)
+        return self.save()
 
     @property
     def idac_index(self) -> int:

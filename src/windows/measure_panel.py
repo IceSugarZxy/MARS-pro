@@ -38,6 +38,8 @@ logger = get_logger('MeasurePanel')
 STATUS_AUTO_RECOVER_MS = 2000
 # 削顶（ADC 顶轨）后自动降档重测的次数上限
 SATURATION_RETRY_LIMIT = 1
+# 空测一圈采集（B~）的预计耗时（秒），按采集速度档位给出，仅用于进度条走时
+EMPTY_CAPTURE_SECONDS = {0: 60.0, 1: 25.0, 2: 16.0}
 DEFAULT_PLOT_COLOR = '#e74c3c'
 STAGE_LONG_PRESS_MS = 500
 # 串口连接成功后需要设置的 IDAC 电流档位
@@ -1263,37 +1265,73 @@ class MeasurePanel(QWidget):
             self.serial_command.slider_reset()
 
     def _offset_button_clicked(self):
-        """偏置校准"""
-        logger.info("偏置校准按钮被点击")
-        if self.serial_command:
-            logger.info(
-                "Offset flow: MeasurePanel request received, "
-                f"dialog_present={self._offset_dialog is not None}"
-            )
-            # 停止位置查询定时器，防止干扰偏置校准
-            self.serial_command.disable_position_query_timer()
-            logger.info("Offset flow: MeasurePanel disabled position query timer")
+        """爪盘补偿校准：转一圈空测（B~），生成当前档位的单周期补偿曲线。
 
-            # 显示校准对话框
-            self._offset_dialog = OffsetCalibrationDialog(self)
-            self._offset_dialog.start_progress(duration=OFFSET_PROGRESS_SECONDS)
-            self._offset_dialog.cancel_requested.connect(
-                self._on_offset_cancel_clicked
-            )
-            self._offset_dialog.show()
-            logger.info("Offset flow: MeasurePanel progress dialog shown")
-            self.serial_command.offset_calibration()
-            logger.info("Offset flow: MeasurePanel command dispatched")
+        曲线 = 整圈 ``(原始码值 − 直流偏置) / 换算系数`` 按角度分箱平均，
+        本身已含空测残余直流，应用后空测应归零；直流偏置表不再改动。
+        """
+        logger.info("偏置校准按钮被点击（空测一圈 B~）")
+        if not self.serial_command or not self.data_process:
+            return
+        if self.serial_manager is None or not self.serial_manager.get_connection_status():
+            QMessageBox.warning(self, "提示", "请先连接串口")
+            return
+        if self.is_testing:
+            QMessageBox.information(self, "提示", "正在测量中，请先停止测量再校准")
+            return
+        if self._offset_dialog is not None:
+            QMessageBox.information(self, "提示", "已有一次校准在进行中")
+            return
+
+        config = get_config_manager()
+        # 停止位置查询定时器，避免 M~ 回信混入二进制测量流
+        self.serial_command.disable_position_query_timer()
+        # 走测量数据通路：屏蔽文本解析、激活测量模式
+        self.serial_command._is_measuring = True
+        self.data_process._measurement_active = True
+        self.data_process._stop_measure_processing = False
+        self.data_process.clear_data_queue()
+        self.data_process.set_empty_capture_target(
+            config.pga_gain, config.idac_index, config.test_speed)
+
+        self._offset_dialog = OffsetCalibrationDialog(self)
+        self._offset_dialog.start_progress(
+            duration=EMPTY_CAPTURE_SECONDS.get(config.test_speed, 30.0))
+        self._offset_dialog.cancel_requested.connect(self._on_offset_cancel_clicked)
+        self._offset_dialog.finished.connect(self._clear_offset_dialog)
+        self._offset_dialog.show()
+        self._update_status("正在采集空测一圈…")
+        logger.info("Offset flow: empty capture dialog shown, target=PGA%s/IDAC%s/速度%s"
+                    % (config.pga_gain, config.idac_index, config.test_speed))
+        # 延迟 300ms 确保档位指令已被固件处理完
+        QTimer.singleShot(300, self._send_empty_capture_command)
+
+    def _send_empty_capture_command(self):
+        """延迟发送 B~ 并启动数据处理器（空测采集模式）。"""
+        if not (self.serial_command and self.serial_manager
+                and self.serial_manager.get_connection_status()):
+            logger.error("空测采集：串口未连接，放弃")
+            self._finish_empty_capture_ui(False)
+            return
+        self.data_process.clear_data_queue()
+        self.serial_command.claw_rotate()
+        flushed = self.serial_manager.flush_write_queue()
+        logger.info(f"空测采集：B~ 已发送，同步刷新 {flushed} 条指令")
+        self.data_process.signal_measure_data_process.emit()
 
     def _on_offset_cancel_clicked(self):
-        """偏置校准进行中点击取消：立即停止采集并关闭对话框。"""
-        logger.info("Offset flow: 用户取消偏置校准")
-        if self._offset_dialog is not None:
-            self._offset_dialog.close()
-            self._offset_dialog = None
+        """空测采集进行中点击取消：停止转动、丢弃本次数据并关闭对话框。"""
+        logger.info("Offset flow: 用户取消空测采集")
         if self.serial_command is not None:
-            self.serial_command.cancel_offset_calibration()
-            self._update_status("偏置校准已取消", auto_recover=True)
+            try:
+                self.serial_command.claw_stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"空测采集取消失败（停止转动）: {exc}")
+        if self.data_process is not None:
+            self.data_process.set_empty_capture_target(None)
+            self.data_process._stop_measure_processing = True
+            self.data_process._measurement_active = False
+        self._finish_empty_capture_ui(False, cancelled=True)
 
     def _on_offset_progress(self, current, total):
         """更新偏置校准进度。
@@ -1327,6 +1365,50 @@ class MeasurePanel(QWidget):
             offset_mt = offset_adc / factor if offset_adc is not None else None
             logger.info(f"Offset flow: MeasurePanel showing result, offset={offset_adc} ADC ({offset_mt} mT)")
             self._offset_dialog.show_result(success, offset_mt)
+
+    def _clear_offset_dialog(self, *_args):
+        """对话框关闭（确定/取消）后清引用，允许下次重新校准。"""
+        self._offset_dialog = None
+
+    def _on_empty_capture_finished(self, success, info):
+        """空测一圈采集完成（data_process 线程回调）。"""
+        logger.info("Offset flow: empty capture finished, success=%s, info=%s" % (success, info))
+        self._finish_empty_capture_ui(bool(success), info=info)
+
+    def _finish_empty_capture_ui(self, success, info=None, cancelled=False):
+        """空测采集收尾：恢复文本解析/位置查询，更新对话框与状态栏。"""
+        if self.serial_command is not None:
+            self.serial_command._is_measuring = False
+            try:
+                self.serial_command.enable_position_query_timer()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"空测采集收尾：恢复位置查询失败: {exc}")
+        if self.data_process is not None:
+            self.data_process._measurement_active = False
+
+        dialog = self._offset_dialog
+        if dialog is not None:
+            if cancelled:
+                dialog.close()
+                self._offset_dialog = None
+            elif success:
+                dialog.show_result(True)
+                if info and info.get('dc') is not None:
+                    message = "曲线已保存 [%s]：DC %.3f / 峰峰 %.3f mT（%d 点）" % (
+                        info.get('key', ''), info['dc'], info['ptp'], info['points'])
+                    if info.get('points_ok') is False:
+                        message += "；⚠点数与标称不符"
+                    dialog.label_status.setText(message)
+            else:
+                dialog.show_result(False)
+
+        if cancelled:
+            self._update_status("空测采集已取消", auto_recover=True)
+        elif success:
+            self._update_status("空测补偿曲线已保存", auto_recover=True)
+        else:
+            self._update_status("空测采集失败", auto_recover=True)
+
     def _test_position_button_clicked(self):
         """测试位置"""
         logger.info("测试位置按钮被点击")
@@ -1671,11 +1753,6 @@ class MeasurePanel(QWidget):
                 self._on_measure_data_processed,
                 Qt.QueuedConnection,
             )
-        elif hasattr(self.data_process, "signal_measure_data_process_finished"):
-            self.data_process.signal_measure_data_process_finished.connect(
-                self._on_measure_data_processed_legacy,
-                Qt.QueuedConnection,
-            )
 
         if hasattr(self.data_process, "signal_measure_data_progress"):
             self.data_process.signal_measure_data_progress.connect(
@@ -1701,6 +1778,12 @@ class MeasurePanel(QWidget):
                 Qt.QueuedConnection,
             )
 
+        if hasattr(tm.data_process, "signal_empty_capture_finished"):
+            tm.data_process.signal_empty_capture_finished.connect(
+                self._on_empty_capture_finished,
+                Qt.QueuedConnection,
+            )
+
         if hasattr(self.serial_manager, "signal_connection_status_changed"):
             self.serial_manager.signal_connection_status_changed.connect(
                 self._on_serial_status_changed,
@@ -1716,15 +1799,6 @@ class MeasurePanel(QWidget):
     def _on_position_data_updated(self, position_data):
         """保留位置数据槽函数，测量配置区不再显示当前位置。"""
         return
-
-    def _on_measure_data_processed_legacy(self, angle_data, mag_data):
-        analysis_results = None
-        if angle_data and mag_data and self.data_process and self.data_process.measure_type != "vertical":
-            analysis_results = self.wave_analyzer.analyze_waveform(
-                angle_data,
-                mag_data,
-            )
-        self._on_measure_data_processed(angle_data, mag_data, analysis_results)
 
     def _on_measure_progress(self, current, total):
         """更新测量进度条"""

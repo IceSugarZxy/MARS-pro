@@ -178,22 +178,29 @@ def read_saved_analysis_results(file_path: str) -> Tuple[Dict[str, str], Dict[st
 
 
 def analyze_files(file_paths: Iterable[str]) -> List[FileAnalysis]:
+    """逐份按当前算法重算波形分析。
+
+    不再优先采用 CSV 里保存的“=== 分析结果 ===”快照——那是测量当时算的，
+    换了数据处理/分析代码后就会过时。这里统一走
+    ``analyze_run``（= _process_measure_algorithm 闭合点裁切 → analyze_waveform），
+    与实时测量界面、数据比对面板完全同一条链路。
+    """
+    import queue as _queue
+
+    from core.data_process import DataProcess
+    from core.defect_fingerprint import analyze_run
+
+    proc = DataProcess(_queue.Queue())
     analyzer = WaveAnalysis()
     analyses: List[FileAnalysis] = []
     for file_path in file_paths:
-        sample_info, results = read_saved_analysis_results(file_path)
-        angle_data: List[float] = []
-        mag_data: List[float] = []
-
-        if not all(_is_number(results.get(key)) for key in REQUIRED_RESULT_KEYS):
-            angle_data, mag_data, sample_info = read_plot_data_csv(file_path)
-            # 同轴度（偏心）修正已固定启用，无需再传开关
-            results = analyzer.analyze_waveform(angle_data, mag_data)
-            if not results:
-                raise ValueError(f"{os.path.basename(file_path)} 分析结果为空")
-
+        run = analyze_run(file_path, proc, analyzer)
+        if run.get("error"):
+            raise ValueError(f"{os.path.basename(file_path)} 分析失败: {run['error']}")
+        angle_data, mag_data, sample_info = read_plot_data_csv(file_path)
         display_name = os.path.basename(file_path)
-        analyses.append(FileAnalysis(file_path, display_name, sample_info, angle_data, mag_data, results))
+        analyses.append(FileAnalysis(file_path, display_name, sample_info,
+                                     angle_data, mag_data, run["analysis"]))
     return analyses
 
 

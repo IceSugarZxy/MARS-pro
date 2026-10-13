@@ -328,12 +328,21 @@ class HistoryPanel(QWidget):
                     if sample_info.get('probe'):
                         pass  # 量程选项已移除，跳过探头字段恢复
 
-                    # 进行波形分析
+                    # 进行波形分析：与实时测量、数据比对走完全相同的链路
+                    # （defect_fingerprint.analyze_run 内部就是
+                    #   _process_measure_algorithm 闭合点裁切 → analyze_waveform），
+                    # 这样同一份数据在任何入口看到的指标都一致，且始终跟随最新算法。
+                    import queue as _queue
+
+                    from core.data_process import DataProcess
+                    from core.defect_fingerprint import analyze_run
                     from windows.wave_analysis import WaveAnalysis
-                    wave_analyzer = WaveAnalysis()
-                    # 同轴度（偏心）修正固定启用，不再由界面开关控制
-                    results = wave_analyzer.analyze_waveform(angle_data, mag_data)
-                    measure_panel._update_display_with_results(results)
+
+                    run = analyze_run(file_path, DataProcess(_queue.Queue()),
+                                      WaveAnalysis())
+                    if run.get("error"):
+                        logger.warning(f"历史数据波形分析失败: {run['error']}")
+                    measure_panel._update_display_with_results(run.get("analysis") or {})
 
                     if hasattr(measure_panel, "show_history_file_status"):
                         measure_panel.show_history_file_status(file_path)
