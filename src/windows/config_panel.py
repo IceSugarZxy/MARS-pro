@@ -38,6 +38,21 @@ from windows.scheme_edit_dialog import SchemeEditDialog
 logger = get_logger('ConfigPanel')
 
 STAGE_LONG_PRESS_MS = 500
+LIGHT_CAL_RESPONSE_TIMEOUT_MS = 4000
+SERIAL_COMMAND_BUTTONS = (
+    "btn_zeroing",
+    "btn_offset_all",
+    "btn_test_pos",
+    "btn_suspend",
+    "btn_set_light_base",
+    "btn_set_light_threshold",
+    "stage_btn_up",
+    "stage_btn_down",
+    "stage_btn_left",
+    "stage_btn_right",
+    "stage_btn_forward",
+    "stage_btn_back",
+)
 
 
 class ConfigPanel(QWidget):
@@ -60,6 +75,13 @@ class ConfigPanel(QWidget):
         self._connection_timeout_timer = QTimer(self)
         self._connection_timeout_timer.setSingleShot(True)
         self._connection_timeout_timer.timeout.connect(self._on_connection_timeout)
+
+        self._light_cal_pending = None
+        self._light_cal_rx_buffer = ""
+        self._light_cal_timer = QTimer(self)
+        self._light_cal_timer.setSingleShot(True)
+        self._light_cal_timer.setInterval(LIGHT_CAL_RESPONSE_TIMEOUT_MS)
+        self._light_cal_timer.timeout.connect(self._on_light_cal_timeout)
 
         self._port_refresh_timer = QTimer(self)
         self._port_refresh_timer.setInterval(2000)
@@ -95,6 +117,7 @@ class ConfigPanel(QWidget):
         self._offset_all_cancel_pending = False
         self._offset_all_results = []
         self._offset_all_progress = None
+        self._serial_connected = False
         self._offset_all_pga_timer = QTimer(self)
         self._offset_all_pga_timer.setSingleShot(True)
         self._offset_all_pga_timer.setInterval(2500)
@@ -626,6 +649,9 @@ class ConfigPanel(QWidget):
         super().hideEvent(event)
 
     def _on_serial_data_received(self, data: bytes) -> None:
+        if self._light_cal_pending is not None:
+            self._feed_light_cal_rx(data)
+
         # 全档偏置校准进行中：等待 IDAC / PGA 回信时先喂给自动流程解析
         if self._offset_all_active and self._offset_all_wait_idac:
             self._feed_offset_all_idac_rx(data)
@@ -645,6 +671,122 @@ class ConfigPanel(QWidget):
         serial_rx_text.moveCursor(QTextCursor.End)
         serial_rx_text.insertPlainText(text)
         serial_rx_text.moveCursor(QTextCursor.End)
+
+    def _set_light_cal_status(self, text: str, color: str = "#7f8c8d") -> None:
+        label = self.findChild(QLabel, "label_light_cal_status")
+        if label:
+            label.setText(text)
+            label.setStyleSheet(
+                f"color: {color}; font-weight: bold; font-size: 12px;"
+            )
+
+    def _set_light_cal_buttons_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled and self._serial_connected and self._light_cal_pending is None)
+        for name in ("btn_set_light_base", "btn_set_light_threshold"):
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(enabled)
+
+    def _set_serial_command_buttons_enabled(self, enabled: bool) -> None:
+        """串口未连接时禁用所有会下发设备指令的按钮。"""
+        self._serial_connected = bool(enabled)
+        for name in SERIAL_COMMAND_BUTTONS:
+            btn = self.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(self._serial_connected)
+        self._set_light_cal_buttons_enabled(self._serial_connected)
+
+        if not self._serial_connected:
+            btn = getattr(self, "_stage_pressed_button", None)
+            if btn is not None:
+                btn.releaseMouse()
+            self._stage_pressed_button = None
+            timer = getattr(self, "_stage_press_timer", None)
+            if timer is not None:
+                timer.stop()
+            self._stage_long_pressed = False
+
+    def _on_set_light_base(self) -> None:
+        self._send_light_cal_command("LSBASE~", "base", "正在记录静态基准…")
+
+    def _on_set_light_threshold(self) -> None:
+        self._send_light_cal_command("LSTH~", "threshold", "正在记录下压点并计算阈值…")
+
+    def _send_light_cal_command(self, command: str, kind: str, pending_text: str) -> None:
+        if self._light_cal_pending is not None:
+            return
+        if not self._is_serial_connected():
+            self._set_light_cal_status("请先连接设备", "#c0392b")
+            self._set_light_cal_buttons_enabled(False)
+            return
+
+        self._light_cal_pending = kind
+        self._light_cal_rx_buffer = ""
+        self._set_light_cal_buttons_enabled(False)
+        self._set_light_cal_status(pending_text, "#3498db")
+        if self.serial_command is None or not self.serial_command.send_data(
+            command, source=f"light_cal_{kind}"
+        ):
+            self._finish_light_cal(False, "指令发送失败，请检查串口连接")
+            return
+        self._light_cal_timer.start()
+
+    def _feed_light_cal_rx(self, data: bytes) -> None:
+        self._light_cal_rx_buffer += data.decode("utf-8", errors="replace")
+        while "\n" in self._light_cal_rx_buffer:
+            line, self._light_cal_rx_buffer = self._light_cal_rx_buffer.split("\n", 1)
+            line = line.strip()
+            if line.startswith("LIGHTSW"):
+                self._handle_light_cal_line(line)
+
+    def _handle_light_cal_line(self, line: str) -> None:
+        if line.startswith("LIGHTSW:"):
+            values = dict(re.findall(r"([A-Z_]+)=(-?\d+)", line))
+            static_value = values.get("STATIC", "?")
+            press_value = values.get("PRESS", "?")
+            threshold = values.get("THRESH", "?")
+            if self._light_cal_pending == "base":
+                message = f"基准已设置：STATIC={static_value}，THRESH={threshold}"
+                if press_value == "65535":
+                    message += "，下压点未标定"
+            elif self._light_cal_pending == "threshold":
+                message = (
+                    f"阈值已设置：PRESS={press_value}，"
+                    f"THRESH={threshold}，STATIC={static_value}"
+                )
+            else:
+                message = (
+                    f"LIGHT_SW：STATIC={static_value}，PRESS={press_value}，"
+                    f"THRESH={threshold}"
+                )
+            self._finish_light_cal(True, message)
+            return
+
+        detail = line[len("LIGHTSW"):].strip() or line
+        error_messages = {
+            "ADC INVALID": "光电传感器采样无效，请检查传感器后重试",
+            "NEED BASE": "请先设定基准，再设定阈值",
+            "SAME POINT": "基准与当前下压值相同，请改变位置后重试",
+            "BUSY": "设备忙，请停止运动或采集后重试",
+            "SAVE FAIL": "设备 Flash 保存失败，原配置保持不变",
+            "RANGE": "指令格式错误，请确认设备固件支持无参数 LSBASE/LSTH",
+        }
+        self._finish_light_cal(False, error_messages.get(detail, f"设置失败：{detail}"))
+
+    def _finish_light_cal(self, success: bool, message: str) -> None:
+        self._light_cal_timer.stop()
+        self._light_cal_pending = None
+        self._light_cal_rx_buffer = ""
+        self._set_light_cal_status(message, "#27ae60" if success else "#c0392b")
+        self._set_light_cal_buttons_enabled(self._is_serial_connected())
+
+    def _on_light_cal_timeout(self) -> None:
+        if self._light_cal_pending is None:
+            return
+        self._finish_light_cal(
+            False,
+            "未收到设备回信，请确认固件为 LIGHTSW_CAL_R20 或更高版本",
+        )
 
     def _on_connect_clicked(self):
         if self.thread_manager and self.thread_manager.serial_manager:
@@ -670,6 +812,7 @@ class ConfigPanel(QWidget):
                 port = self.serial_manager.serial_port.portName()
 
             self._set_serial_button_state(True)
+            self._set_serial_command_buttons_enabled(True)
 
             com_port = str(port or self._pending_connection_port or self._get_serial_port_from_ui()).strip().strip('"')
             self._save_serial_port(com_port)
@@ -690,6 +833,11 @@ class ConfigPanel(QWidget):
             logger.info(f"Serial connected: {com_port}")
         else:
             self._set_serial_button_state(False)
+            self._light_cal_timer.stop()
+            self._light_cal_pending = None
+            self._light_cal_rx_buffer = ""
+            self._set_serial_command_buttons_enabled(False)
+            self._set_light_cal_status("基准/阈值：请连接设备后设置")
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.disable_position_query_timer()
@@ -713,6 +861,14 @@ class ConfigPanel(QWidget):
         if connect_btn:
             connect_btn.clicked.connect(self._on_connect_clicked)
 
+        btn_set_light_base = self.findChild(QPushButton, "btn_set_light_base")
+        if btn_set_light_base:
+            btn_set_light_base.clicked.connect(self._on_set_light_base)
+        btn_set_light_threshold = self.findChild(QPushButton, "btn_set_light_threshold")
+        if btn_set_light_threshold:
+            btn_set_light_threshold.clicked.connect(self._on_set_light_threshold)
+        self._set_serial_command_buttons_enabled(False)
+
         # 快捷操作
         self.findChild(QPushButton, "btn_zeroing").clicked.connect(self._on_zeroing)
         btn_offset_all = self.findChild(QPushButton, "btn_offset_all")
@@ -730,7 +886,7 @@ class ConfigPanel(QWidget):
 
     def _connect_stage_buttons(self):
         """台控：按发送 ±500000 步，松停止。
-        
+
         使用事件过滤器接管 press/release，确保鼠标移出按钮后松手也能发送 O~。
         Qt 原生 released 信号仅在鼠标位于按钮区域内松手时触发，不可靠。
         """
@@ -956,7 +1112,7 @@ class ConfigPanel(QWidget):
         for name in ("btn_offset_all",):
             btn = self.findChild(QPushButton, name)
             if btn:
-                btn.setEnabled(enabled)
+                btn.setEnabled(enabled and self._serial_connected)
         combo = self.findChild(QComboBox, "combo_sensor_range")
         if combo:
             combo.setEnabled(enabled)

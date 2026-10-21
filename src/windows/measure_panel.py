@@ -92,6 +92,21 @@ MEASUREMENT_LOCKED_BUTTONS = (
     "btn_suspend_position",
 )
 
+SERIAL_COMMAND_BUTTONS = (
+    "btn_start_rotation",
+    "btn_stop_rotation",
+    "btn_zeroing",
+    "btn_offset",
+    "btn_test_position",
+    "btn_suspend_position",
+    "stage_btn_up",
+    "stage_btn_down",
+    "stage_btn_left",
+    "stage_btn_right",
+    "stage_btn_forward",
+    "stage_btn_back",
+)
+
 
 class MeasurePanel(QWidget):
     """测量面板 - 从 measure_panel.ui 加载"""
@@ -144,6 +159,7 @@ class MeasurePanel(QWidget):
         self._status_auto_recover_timer.timeout.connect(self._clear_status_message)
 
         self._pending_connection_port = None
+        self._serial_connected = False
         self._connection_timeout_timer = QTimer(self)
         self._connection_timeout_timer.setSingleShot(True)
         self._connection_timeout_timer.timeout.connect(self._on_connection_timeout)
@@ -154,6 +170,7 @@ class MeasurePanel(QWidget):
 
         # 连接按钮事件
         self._connect_buttons()
+        self._set_serial_command_buttons_enabled(False)
 
         # 初始化绘图显示
         self._init_plot_display()
@@ -946,6 +963,7 @@ class MeasurePanel(QWidget):
                 port = self.serial_manager.serial_port.portName()
 
             self._set_serial_button_state(True)
+            self._set_serial_command_buttons_enabled(True)
 
             com_port = str(port or self._pending_connection_port or self._get_serial_port_from_ui()).strip().strip('"')
             self._save_serial_port(com_port)
@@ -977,6 +995,7 @@ class MeasurePanel(QWidget):
             self._idac_confirm_timer.stop()
             self._idac_connect_started = False
             self._set_serial_button_state(False)
+            self._set_serial_command_buttons_enabled(False)
 
             if self.thread_manager and getattr(self.thread_manager, "serial_command", None):
                 self.thread_manager.serial_command.disable_position_query_timer()
@@ -1034,6 +1053,25 @@ class MeasurePanel(QWidget):
             button = self.findChild(QPushButton, button_name)
             if button:
                 button.clicked.connect(lambda checked=False, item_type=detail_type: self._show_analysis_detail(item_type))
+
+    def _set_serial_command_buttons_enabled(self, enabled: bool) -> None:
+        """串口未连接时禁用所有会下发设备指令的按钮。"""
+        self._serial_connected = bool(enabled)
+        for name in SERIAL_COMMAND_BUTTONS:
+            button = self.findChild(QPushButton, name)
+            if button:
+                button.setEnabled(self._serial_connected)
+        self._set_measurement_locked_buttons_enabled(not self.is_testing)
+
+        if not self._serial_connected:
+            button = getattr(self, "_stage_pressed_button", None)
+            if button is not None:
+                button.releaseMouse()
+            self._stage_pressed_button = None
+            timer = getattr(self, "_stage_press_timer", None)
+            if timer is not None:
+                timer.stop()
+            self._stage_long_pressed = False
 
     def _has_current_waveform_analysis(self):
         return bool(
@@ -1488,7 +1526,7 @@ class MeasurePanel(QWidget):
 
     def _connect_stage_buttons(self):
         """台控：按发送 ±500000 步，松停止。
-        
+
         使用事件过滤器接管 press/release，确保鼠标移出按钮后松手也能发送 O~。
         """
         stage_specs = {
@@ -1629,7 +1667,7 @@ class MeasurePanel(QWidget):
         for button_name in MEASUREMENT_LOCKED_BUTTONS:
             button = self.findChild(QPushButton, button_name)
             if button:
-                button.setEnabled(enabled)
+                button.setEnabled(bool(enabled and self._serial_connected))
 
     def _end_test(self):
         """结束测试"""
