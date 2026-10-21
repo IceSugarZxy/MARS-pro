@@ -234,7 +234,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>将探头压至期望触发位置后点击。记录当前 ADC 原始值作为下压点，阈值按基准与下压点差值自动计算，并保存到设备 Flash。</string>
+         <string>固定设置下降量阈值 20 并保存到设备 Flash，对应第一级下降 20 ADC、第二级下降 40 ADC。</string>
         </property>
         <property name="text">
          <string>贴靠阈值</string>

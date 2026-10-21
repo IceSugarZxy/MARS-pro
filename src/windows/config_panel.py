@@ -710,7 +710,11 @@ class ConfigPanel(QWidget):
         self._send_light_cal_command("LSBASE~", "base", "正在记录静态基准…")
 
     def _on_set_light_threshold(self) -> None:
-        self._send_light_cal_command("LSTH~", "threshold", "正在记录下压点并计算阈值…")
+        self._send_light_cal_command(
+            "LSTH20~",
+            "threshold",
+            "正在设置下降量阈值 20 ADC…",
+        )
 
     def _send_light_cal_command(self, command: str, kind: str, pending_text: str) -> None:
         if self._light_cal_pending is not None:
@@ -743,21 +747,22 @@ class ConfigPanel(QWidget):
         if line.startswith("LIGHTSW:"):
             values = dict(re.findall(r"([A-Z_]+)=(-?\d+)", line))
             static_value = values.get("STATIC", "?")
-            press_value = values.get("PRESS", "?")
             threshold = values.get("THRESH", "?")
+            diff_value = values.get("DIFF", values.get("ABS_DIFF", "?"))
             if self._light_cal_pending == "base":
-                message = f"基准已设置：STATIC={static_value}，THRESH={threshold}"
-                if press_value == "65535":
-                    message += "，下压点未标定"
+                message = (
+                    f"基准已设置：STATIC={static_value}，"
+                    f"THRESH={threshold}，DIFF={diff_value}"
+                )
             elif self._light_cal_pending == "threshold":
                 message = (
-                    f"阈值已设置：PRESS={press_value}，"
-                    f"THRESH={threshold}，STATIC={static_value}"
+                    f"阈值已设置：THRESH={threshold}，"
+                    f"STATIC={static_value}，DIFF={diff_value}"
                 )
             else:
                 message = (
-                    f"LIGHT_SW：STATIC={static_value}，PRESS={press_value}，"
-                    f"THRESH={threshold}"
+                    f"LIGHT_SW：STATIC={static_value}，"
+                    f"THRESH={threshold}，DIFF={diff_value}"
                 )
             self._finish_light_cal(True, message)
             return
@@ -765,11 +770,9 @@ class ConfigPanel(QWidget):
         detail = line[len("LIGHTSW"):].strip() or line
         error_messages = {
             "ADC INVALID": "光电传感器采样无效，请检查传感器后重试",
-            "NEED BASE": "请先设定基准，再设定阈值",
-            "SAME POINT": "基准与当前下压值相同，请改变位置后重试",
             "BUSY": "设备忙，请停止运动或采集后重试",
             "SAVE FAIL": "设备 Flash 保存失败，原配置保持不变",
-            "RANGE": "指令格式错误，请确认设备固件支持无参数 LSBASE/LSTH",
+            "RANGE": "阈值格式错误，请检查 LSBASE~ 和 LSTH20~",
         }
         self._finish_light_cal(False, error_messages.get(detail, f"设置失败：{detail}"))
 
@@ -785,7 +788,7 @@ class ConfigPanel(QWidget):
             return
         self._finish_light_cal(
             False,
-            "未收到设备回信，请确认固件为 LIGHTSW_CAL_R20 或更高版本",
+            "未收到设备回信，请确认固件为 LIGHTSW_DROP2_R20 或更高版本",
         )
 
     def _on_connect_clicked(self):
