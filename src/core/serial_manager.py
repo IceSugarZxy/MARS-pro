@@ -446,7 +446,8 @@ class SerialManager(QObject):
                     drain_wait_result = self.serial_port.waitForBytesWritten(SERIAL_WRITE_DRAIN_TIMEOUT_MS)
                 bytes_to_write_after_wait = self.serial_port.bytesToWrite()
                 latency_text = f"{latency_ms:.1f}ms" if latency_ms is not None else "n/a"
-                tx_log = logger.debug
+                is_motion_tx = bool(data) and chr(data[0]) in "XYZO"
+                tx_log = logger.info if is_motion_tx else logger.debug
                 tx_log(
                     "Serial TX write: "
                     f"id={tx_id}, source={source}, bytes={written}, "
@@ -454,7 +455,11 @@ class SerialManager(QObject):
                     f"preview={self._payload_preview(data)}"
                 )
                 wait_text = "n/a" if drain_wait_result is None else str(drain_wait_result)
-                drain_logger = logger.debug if bytes_to_write_after_wait == 0 else logger.warning
+                drain_logger = (
+                    logger.info if is_motion_tx and bytes_to_write_after_wait == 0
+                    else logger.debug if bytes_to_write_after_wait == 0
+                    else logger.warning
+                )
                 drain_logger(
                     "Serial TX drain: "
                     f"id={tx_id}, source={source}, flush_result={flush_result}, "
@@ -486,11 +491,14 @@ class SerialManager(QObject):
         except Exception:
             pass
 
-        logger.debug(
+        preview = str(meta.get("preview") or "")
+        is_motion_tx = bool(preview) and preview[0] in "XYZO"
+        write_log = logger.info if is_motion_tx else logger.debug
+        write_log(
             "Serial TX bytesWritten: "
             f"id={meta.get('id')}, source={meta.get('source')}, bytes={byte_count}, "
             f"bytes_to_write={bytes_to_write}, elapsed={elapsed_text}, "
-            f"preview={meta.get('preview')}"
+            f"preview={preview}"
         )
 
     def _on_error_occurred(self, error) -> None:

@@ -11,7 +11,7 @@ import serial.tools.list_ports
 from PyQt5.QtWidgets import (QWidget, QPushButton, QLineEdit, QLabel,
                               QComboBox, QHBoxLayout, QListWidget,
                               QListWidgetItem, QAbstractItemView, QToolButton, QSizePolicy,
-                              QMessageBox, QSpinBox)
+                              QMessageBox, QDoubleSpinBox)
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot, QEvent, QPoint
 from PyQt5.QtGui import QPainter, QColor, QIcon, QPixmap, QPolygon, QTransform
 from PyQt5 import uic
@@ -27,6 +27,7 @@ from core.config_manager import (
 )
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from core.data_process import SATURATION_RETRY_HEADROOM
+from core.plot_data_reader import pole_pairs_text_from_count
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.analysis_detail_dialog import AnalysisDetailDialog
@@ -90,6 +91,7 @@ MEASUREMENT_LOCKED_BUTTONS = (
     "btn_offset",
     "btn_test_position",
     "btn_suspend_position",
+    "btn_center_position",
 )
 
 SERIAL_COMMAND_BUTTONS = (
@@ -99,6 +101,7 @@ SERIAL_COMMAND_BUTTONS = (
     "btn_offset",
     "btn_test_position",
     "btn_suspend_position",
+    "btn_center_position",
     "stage_btn_up",
     "stage_btn_down",
     "stage_btn_left",
@@ -1040,6 +1043,9 @@ class MeasurePanel(QWidget):
         self.findChild(QPushButton, "btn_offset").clicked.connect(self._offset_button_clicked)
         self.findChild(QPushButton, "btn_test_position").clicked.connect(self._test_position_button_clicked)
         self.findChild(QPushButton, "btn_suspend_position").clicked.connect(self._suspend_position_button_clicked)
+        self.findChild(QPushButton, "btn_center_position").clicked.connect(
+            self._center_position_button_clicked
+        )
 
         # 底部按钮
         self.findChild(QPushButton, "btn_save").clicked.connect(self._save_data_button_clicked)
@@ -1459,6 +1465,24 @@ class MeasurePanel(QWidget):
         if self.serial_command:
             self.serial_command.suspend_position()
 
+    def _center_position_button_clicked(self):
+        """查询三轴，按需回零 Y，再依次执行 X、Z。"""
+        logger.info("圆心定位按钮被点击")
+        config = get_config_manager()
+        if not config.center_saved:
+            QMessageBox.warning(self, "圆心定位", "尚未保存圆心位置，请先到配置界面保存。")
+            return
+        if not self.serial_command:
+            logger.warning("串口命令未初始化")
+            return
+        if self.serial_command.center_position():
+            self._update_status("圆心定位：Y 轴回零，随后依次执行 X、Z", auto_recover=True)
+        else:
+            QMessageBox.warning(
+                self, "圆心定位",
+                "圆心定位未启动，请检查当前轴位置或等待上一项运动结束。",
+            )
+
     # ========================================================================
     # 台控按钮（QPainter 三角图标 + 按住移动/松手停止）
     # ========================================================================
@@ -1599,33 +1623,33 @@ class MeasurePanel(QWidget):
         self.serial_command.position_query(source="stage_short_press")
 
     def _get_distance_value(self):
-        """读取短按距离(mm 整数，来自带 mm 后缀的输入框)。"""
-        spin = self.findChild(QSpinBox, "distance_edit")
+        """读取短按距离(mm，支持一位小数)。"""
+        spin = self.findChild(QDoubleSpinBox, "distance_edit")
         if spin is None:
             return None
-        value = spin.value()
+        value = float(spin.value())
         if value <= 0:
             self._update_status("错误：距离值必须大于 0", is_error=True)
             return None
         return value
 
     def _init_stage_distance(self):
-        """从配置载入短按距离(mm 整数)，限制整数输入并连接保存。"""
+        """从配置载入短按距离(mm)，支持一位小数并连接保存。"""
         config = get_config_manager()
-        spin = self.findChild(QSpinBox, "distance_edit")
+        spin = self.findChild(QDoubleSpinBox, "distance_edit")
         if spin:
-            spin.setValue(int(round(config.stage_step_distance)))
+            spin.setValue(float(config.stage_step_distance))
             spin.editingFinished.connect(self._on_stage_distance_edited)
 
     def _on_stage_distance_edited(self):
         """校验输入的距离值，合法则持久化，非法则回退为配置值。"""
         config = get_config_manager()
-        spin = self.findChild(QSpinBox, "distance_edit")
+        spin = self.findChild(QDoubleSpinBox, "distance_edit")
         if spin is None:
             return
         value = self._get_distance_value()
         if value is None:
-            spin.setValue(int(round(config.stage_step_distance)))
+            spin.setValue(float(config.stage_step_distance))
             return
         config.stage_step_distance = value
         spin.setValue(value)
@@ -1753,6 +1777,18 @@ class MeasurePanel(QWidget):
                 return False
 
             sample_info = self._collect_sample_info_from_ui()
+            # CSV 内部统一存极对数。波形分析结果优先；没有分析结果时，将界面上
+            # 的极数（极对数 × 2）换回极对数，避免历史页再次 ×2。
+            pole_pairs = None
+            if self.analysis_results:
+                try:
+                    pole_pairs = int(float(self.analysis_results.get('pole_num')))
+                except (TypeError, ValueError):
+                    pole_pairs = None
+            sample_info['polar_num'] = (
+                str(pole_pairs) if pole_pairs and pole_pairs > 0
+                else pole_pairs_text_from_count(sample_info.get('polar_num'))
+            )
             self.data_process.set_sample_info(sample_info)
             file_path = self.data_process.save_plot_measure_data(
                 self.angle_data,

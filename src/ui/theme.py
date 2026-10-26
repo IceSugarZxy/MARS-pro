@@ -592,7 +592,9 @@ def get_base_stylesheet() -> str:
     /* 测试配置面板按钮 - 悬停效果（覆盖内联样式） */
     QPushButton#btn_offset:hover, QPushButton#btn_zeroing:hover,
     QPushButton#btn_test_pos:hover,
-    QPushButton#btn_suspend:hover, QPushButton#btn_test_pos_save:hover, QPushButton#btn_suspend_save:hover,
+    QPushButton#btn_suspend:hover, QPushButton#btn_test_pos_save:hover,
+    QPushButton#btn_suspend_save:hover, QPushButton#btn_center_position_save:hover,
+    QPushButton#btn_center_position:hover,
     QToolButton#btn_test_edit_scheme:hover, QToolButton#btn_suspend_edit_scheme:hover {{
         background-color: rgb(224,224,224) !important;
     }}
@@ -601,6 +603,7 @@ def get_base_stylesheet() -> str:
     QPushButton#btn_start_rotation:hover, QPushButton#btn_stop_rotation:hover,
     QPushButton#btn_zeroing:hover, QPushButton#btn_offset:hover,
     QPushButton#btn_test_position:hover, QPushButton#btn_suspend_position:hover,
+    QPushButton#btn_center_position:hover,
     QPushButton#btn_up:hover, QPushButton#btn_down:hover, QPushButton#btn_left:hover,
     QPushButton#btn_right:hover, QPushButton#btn_save:hover {{
         background-color: rgb(224,224,224) !important;

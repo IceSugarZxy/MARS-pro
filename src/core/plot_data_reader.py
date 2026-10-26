@@ -5,6 +5,7 @@
 
     样品名称,xxx
     保存时间,20260930_103313
+    极数口径,极对数
     === 分析结果 ===
     N极最大值,336.68
     角度(度),磁场强度
@@ -22,6 +23,11 @@ from datetime import datetime
 # 列表列定义，顺序必须与 history_panel.ui / compare_panel.ui 中表格的列一致
 TABLE_COLUMNS = ('sample_name', 'sample_code', 'time_str', 'tester', 'polar_num', 'airgap', 'remark')
 
+# 新文件明确标注 CSV 的 polar_num 存的是极对数。2026-10-12 至修复前，保存按钮
+# 曾误把界面上的极数（极对数 × 2）写入 CSV；这段时间的旧文件只能按日期兼容。
+POLE_PAIRS_UNIT = '极对数'
+POLE_COUNT_LEGACY_START_DATE = '20261012'
+
 
 def pole_count_text(polar_num) -> str:
     """界面显示的“极数” = 极对数 × 2。
@@ -34,6 +40,55 @@ def pole_count_text(polar_num) -> str:
         return str(int(float(text)) * 2)
     except (TypeError, ValueError):
         return text
+
+
+def pole_pairs_text_from_count(pole_count) -> str:
+    """把界面上的极数转换成 CSV 使用的极对数；非法或奇数极数返回空串。"""
+    text = str(pole_count or '').strip()
+    try:
+        count = int(float(text))
+    except (TypeError, ValueError):
+        return ''
+    if count < 2 or count % 2:
+        return ''
+    return str(count // 2)
+
+
+def normalize_stored_pole_pairs(polar_num, pole_unit='', save_time='') -> str:
+    """把历史 CSV 里的极数值统一转换成极对数文本。
+
+    新文件带“极数口径=极对数”标记，可直接按极对数读取。旧文件没有标记：
+    2026-10-12 之前存的是极对数；此后至本次修复前，保存按钮误存了极数。
+    兼容分支只处理没有单位标记的旧文件，新文件不会受日期推断影响。
+    """
+    text = str(polar_num or '').strip()
+    try:
+        value = int(float(text))
+    except (TypeError, ValueError):
+        return text
+
+    unit = str(pole_unit or '').strip().lower()
+    if ('极对' in unit) or ('pair' in unit):
+        return str(value)
+    if ('极数' in unit) or ('count' in unit):
+        return str(value // 2) if value >= 2 and value % 2 == 0 else text
+
+    save_date = str(save_time or '').strip()[:8]
+    if (not unit and save_date.isdigit()
+            and save_date >= POLE_COUNT_LEGACY_START_DATE
+            and value >= 2 and value % 2 == 0):
+        return str(value // 2)
+    return text
+
+
+def _normalize_sample_info_poles(sample_info: dict) -> None:
+    """原地统一解析结果中的极数口径。"""
+    if sample_info.get('polar_num'):
+        sample_info['polar_num'] = normalize_stored_pole_pairs(
+            sample_info['polar_num'],
+            sample_info.get('pole_unit', ''),
+            sample_info.get('save_time', ''),
+        )
 
 
 # 文件名形如 样品名称_20260930_103313.csv
@@ -64,6 +119,8 @@ def apply_sample_info_row(sample_info: dict, row) -> None:
         sample_info['remark'] = value
     elif "保存时间" in key:
         sample_info['save_time'] = value
+    elif "极数口径" in key or "极数单位" in key:
+        sample_info['pole_unit'] = value
     elif "极数" in key:
         sample_info['polar_num'] = value
     elif "气隙" in key:
@@ -84,6 +141,7 @@ def read_plot_csv_header(file_path: str) -> dict:
             if is_plot_data_header(row):
                 break
             apply_sample_info_row(sample_info, row)
+    _normalize_sample_info_poles(sample_info)
     return sample_info
 
 
@@ -113,6 +171,7 @@ def read_plot_csv(file_path: str):
             except (ValueError, IndexError):
                 continue
 
+    _normalize_sample_info_poles(sample_info)
     return sample_info, angle_data, mag_data
 
 
@@ -141,6 +200,7 @@ def read_plot_csv_mag(file_path: str):
             except (ValueError, IndexError):
                 continue
 
+    _normalize_sample_info_poles(sample_info)
     return mags, sample_info, sample_info.get('save_time', '')
 
 

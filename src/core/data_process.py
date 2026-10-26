@@ -38,6 +38,7 @@ from .config_manager import (
 )
 from .path_utils import get_data_dir
 from . import chuck_compensation
+from .plot_data_reader import POLE_PAIRS_UNIT
 from .offset_calibration_config import (
     OFFSET_COLLECTION_SECONDS,
     OFFSET_HALL_SMOOTH_SECONDS,
@@ -769,6 +770,16 @@ class DataProcess(QObject):
                     )
 
                 text = data.decode('utf-8', errors='ignore')
+                critical_markers = (
+                    "ALL STOP", "FAULT:", "VBUS LOST", "LIGHT SW TRIGGERED",
+                    "VBUS:", "LIGHT_SW:", "LIGHT_CFG:",
+                )
+                if any(marker in text for marker in critical_markers):
+                    logger.warning(
+                        "Motion critical RX: "
+                        f"queue={self.data_queue.qsize()}, "
+                        f"text={text.strip().replace(chr(10), ' | ')}"
+                    )
                 # 1) 优先检测 DONE
                 match = MOTION_DONE_PATTERN.search(text)
                 if match:
@@ -825,6 +836,11 @@ class DataProcess(QObject):
         x_position: Optional[str] = None
         y_position: Optional[str] = None
         z_position: Optional[str] = None
+        critical_status = []
+        critical_tokens = (
+            "FAULT:", "VBUS:", "LIGHT_SW:", "LIGHT_CFG:",
+            "ALL_STOP:", "X_LIM:", "Y_LIM:", "Z_LIM:",
+        )
 
         DataProcess._position_buffer.clear()
 
@@ -865,6 +881,10 @@ class DataProcess(QObject):
 
                 try:
                     text = DataProcess._position_buffer.decode('utf-8', errors='ignore')
+                    for line in text.splitlines():
+                        stripped = line.strip()
+                        if stripped.upper().startswith(critical_tokens):
+                            critical_status.append(stripped)
                     matches = M_POS_PATTERN.findall(text)
                     for axis, pos in matches:
                         if axis == 'X':
@@ -875,9 +895,14 @@ class DataProcess(QObject):
                             z_position = pos
 
                     if x_position is not None and y_position is not None and z_position is not None:
+                        status_suffix = (
+                            " | " + " ; ".join(critical_status)
+                            if critical_status else ""
+                        )
                         logger.info(
                             f"M~ position OK: X={x_position}, Y={y_position}, Z={z_position}, "
                             f"elapsed={time_module.time() - (deadline - 1.0):.3f}s"
+                            f"{status_suffix}"
                         )
                         break
                 except UnicodeDecodeError:
@@ -1686,6 +1711,7 @@ class DataProcess(QObject):
                     writer.writerow(['探头', self._sample_info.get('probe', '')])
                     writer.writerow(['样品编号', self._sample_info.get('sample_code', '')])
                     writer.writerow(['材料', self._sample_info.get('material', '')])
+                    writer.writerow(['极数口径', POLE_PAIRS_UNIT])
                     writer.writerow(['极数', self._sample_info.get('polar_num', '')])
                     writer.writerow(['气隙', self._sample_info.get('airgap', '')])
                     writer.writerow(['备注', self._sample_info.get('remark', '')])

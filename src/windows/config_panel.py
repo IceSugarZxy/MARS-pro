@@ -44,6 +44,7 @@ SERIAL_COMMAND_BUTTONS = (
     "btn_offset_all",
     "btn_test_pos",
     "btn_suspend",
+    "btn_center_position",
     "btn_set_light_base",
     "btn_set_light_threshold",
     "stage_btn_up",
@@ -498,7 +499,23 @@ class ConfigPanel(QWidget):
             if suspend_y_display:
                 suspend_y_display.setText(str(config.suspend_z))
 
-            logger.info(f"已加载保存的位置: 水平({config.test_x}, {config.test_z}), 挂起({config.suspend_x}, {config.suspend_z})")
+            # 更新圆心位置显示
+            center_x_display = self.findChild(QLineEdit, "center_x_value")
+            center_z_display = self.findChild(QLineEdit, "center_z_value")
+            center_text = (
+                (str(config.center_x), str(config.center_z))
+                if config.center_saved else ("--", "--")
+            )
+            if center_x_display:
+                center_x_display.setText(center_text[0])
+            if center_z_display:
+                center_z_display.setText(center_text[1])
+
+            logger.info(
+                f"已加载保存的位置: 水平({config.test_x}, {config.test_z}), "
+                f"挂起({config.suspend_x}, {config.suspend_z}), "
+                f"圆心({center_text[0]}, {center_text[1]})"
+            )
         except Exception as e:
             logger.error(f"加载保存位置失败: {e}")
 
@@ -881,6 +898,12 @@ class ConfigPanel(QWidget):
         self.findChild(QPushButton, "btn_suspend").clicked.connect(self._on_suspend)
         self.findChild(QPushButton, "btn_test_pos_save").clicked.connect(self._on_test_pos_save)
         self.findChild(QPushButton, "btn_suspend_save").clicked.connect(self._on_suspend_save)
+        self.findChild(QPushButton, "btn_center_position_save").clicked.connect(
+            self._on_center_position_save
+        )
+        self.findChild(QPushButton, "btn_center_position").clicked.connect(
+            self._on_center_position
+        )
         # 方案编辑
         self.findChild(QToolButton, "btn_test_edit_scheme").clicked.connect(self._on_edit_test_scheme)
         self.findChild(QToolButton, "btn_suspend_edit_scheme").clicked.connect(self._on_suspend_edit_scheme)
@@ -1050,13 +1073,16 @@ class ConfigPanel(QWidget):
             self.update_position(x, y, z)
 
     def update_position(self, x, y, z):
-        """更新位置显示（水平=X, 竖直=Y）"""
+        """更新当前位置显示（左右=X, 上下=Y, 前后=Z）。"""
         x_display = self.findChild(QLineEdit, "position_x")
         y_display = self.findChild(QLineEdit, "position_y")
+        z_display = self.findChild(QLineEdit, "position_z")
         if x_display:
             x_display.setText(str(x) if x is not None else "--")
         if y_display:
             y_display.setText(str(y) if y is not None else "--")
+        if z_display:
+            z_display.setText(str(z) if z is not None else "--")
 
     def _on_zeroing(self):
         """零位校准"""
@@ -1456,6 +1482,45 @@ class ConfigPanel(QWidget):
             logger.info("移动到挂起位置")
         else:
             logger.warning("串口命令未初始化")
+
+    def _on_center_position(self):
+        """查询三轴，按需回零 Y，再依次执行 X、Z。"""
+        config = get_config_manager()
+        if not config.center_saved:
+            QMessageBox.warning(self, "圆心定位", "尚未保存圆心位置，请先定位并保存。")
+            return
+        if not self.serial_command:
+            logger.warning("串口命令未初始化")
+            return
+        if not self.serial_command.center_position():
+            QMessageBox.warning(
+                self, "圆心定位",
+                "圆心定位未启动，请检查当前轴位置或等待上一项运动结束。",
+            )
+
+    def _on_center_position_save(self):
+        """保存当前左右 X、前后 Z 轴位置为圆心。"""
+        try:
+            x_display = self.findChild(QLineEdit, "position_x")
+            z_display = self.findChild(QLineEdit, "position_z")
+            if not x_display or not z_display:
+                return
+            x = int(x_display.text())
+            z = int(z_display.text())
+            config = get_config_manager()
+            if not config.set_center_position(x, z):
+                raise OSError("配置文件保存失败")
+
+            center_x_display = self.findChild(QLineEdit, "center_x_value")
+            center_z_display = self.findChild(QLineEdit, "center_z_value")
+            if center_x_display:
+                center_x_display.setText(str(x))
+            if center_z_display:
+                center_z_display.setText(str(z))
+            logger.info(f"保存圆心位置: X={x}, Z={z}")
+        except (TypeError, ValueError, OSError):
+            QMessageBox.warning(self, "圆心定位", "当前位置无效或配置保存失败。")
+            logger.warning("无效的位置数据，无法保存圆心位置")
 
     def _on_test_pos_save(self):
         """保存当前测试位置（水平=X, 竖直=Y）"""

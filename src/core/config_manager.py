@@ -359,6 +359,10 @@ class ConfigManager(QObject):
         # 挂起位置
         'suspend_x': '0',
         'suspend_z': '0',
+        # 圆心位置（左右 X、前后 Z；center_saved 防止未标定时误移动到原点）
+        'center_x': '0',
+        'center_z': '0',
+        'center_saved': '0',
         # 测试类型: 0=平面旋转, 1=外侧面旋转, 2=内侧面旋转, 3=外侧面垂直
         'test_type': '0',
         # 采集速度档位: 0=高精度, 1=均衡, 2=高速（换算见 serial_command.TEST_SPEED_TO_COMMANDS）
@@ -385,7 +389,7 @@ class ConfigManager(QObject):
         # 贴靠动作回弹距离(mm)
         'retract_distance': '0.3',
         # 方向键短按移动距离(mm)
-        'stage_step_distance': '1.0',
+        'stage_step_distance': '0.5',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -418,6 +422,13 @@ class ConfigManager(QObject):
                         file_keys.add(key)
             for key, value in self.DEFAULT_CONFIG.items():
                 self._config.setdefault(key, value)
+            # 临时版本的圆心曾错把上下 Y 存为 center_y。旧文件没有 center_z，
+            # 不能把默认 0 当成真实前后位置，必须重新保存圆心。
+            if 'center_y' in file_keys and 'center_z' not in file_keys:
+                self._config.pop('center_y', None)
+                self._config['center_z'] = '0'
+                self._config['center_saved'] = '0'
+                logger.info("旧版 center_y 圆心配置已废弃，等待重新保存 X/Z 圆心")
             # 旧版本只有单值 offset：按当前档位增益倍数外推，填充 8 档偏置表
             if PGA_OFFSETS_KEY not in file_keys and 'offset' in file_keys:
                 try:
@@ -845,6 +856,30 @@ class ConfigManager(QObject):
         self.set('suspend_z', value)
 
     @property
+    def center_x(self) -> int:
+        return self.get_int('center_x', 0)
+
+    @property
+    def center_z(self) -> int:
+        return self.get_int('center_z', 0)
+
+    @property
+    def center_saved(self) -> bool:
+        has_axes = 'center_x' in self._config and 'center_z' in self._config
+        return has_axes and str(self.get('center_saved', '0')).strip().lower() in (
+            '1', 'true', 'yes', 'on',
+        )
+
+    def set_center_position(self, x: int, z: int) -> bool:
+        """一次写入并持久化圆心 X/Z 坐标。"""
+        self._config['center_x'] = str(int(x))
+        self._config['center_z'] = str(int(z))
+        self._config['center_saved'] = '1'
+        # 旧版圆心曾误存纵向 Y；该值不能冒充前后 Z。
+        self._config.pop('center_y', None)
+        return self.save()
+
+    @property
     def test_type(self) -> int:
         return self.get_int('test_type', 0)
 
@@ -905,7 +940,7 @@ class ConfigManager(QObject):
     @property
     def stage_step_distance(self) -> float:
         """方向键短按移动距离(mm)。"""
-        return max(0.0, self.get_float('stage_step_distance', 1.0))
+        return max(0.0, self.get_float('stage_step_distance', 0.5))
 
     @stage_step_distance.setter
     def stage_step_distance(self, value: float) -> None:

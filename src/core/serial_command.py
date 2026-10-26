@@ -31,6 +31,10 @@ NO_START_TIMEOUT_MS = 3000       # 未收到 START 则 3s 快速失败
 MAX_RELATIVE_STEPS = 500000  # 固件单次最大相对步数
 POSITION_CHECK_INTERVAL_MS = 3000  # 收到 START 后每 3s 查询一次位置
 MAX_STALE_CHECKS = 2            # 连续 2 次位置无变化 → 判定堵转超时
+POSITION_TOLERANCE_MM = 0.02    # 到位容差，避免编码器停在目标附近时误判堵转
+CENTER_POSITION_CHECK_INTERVAL_MS = 800
+CENTER_AXIS_RETRY_LIMIT = 1
+CENTER_AXIS_START_DELAY_MS = 150
 
 # 速度档位 → 采集参数指令
 #   ACQCFG<start STEP_HZ>,<target STEP_HZ>,<分频>,<边沿数> + ADCRATE<SPS>
@@ -78,6 +82,7 @@ class SerialCommand(QObject):
 
         self._movement_sequence: Optional[dict] = None
         self._active_position_wait: Optional[dict] = None
+        self._center_waiting_for_position = False
         self._async_command_lock_state: Optional[dict] = None
         self._tx_sequence = 0
 
@@ -207,6 +212,7 @@ class SerialCommand(QObject):
         delta: int,
         callback: Callable[[bool], None],
         timeout_ms: int = POSITION_WAIT_TIMEOUT_MS,
+        position_check_interval_ms: int = POSITION_CHECK_INTERVAL_MS,
     ) -> None:
         self._active_position_wait = {
             "axis": axis,
@@ -219,6 +225,7 @@ class SerialCommand(QObject):
             "position_at_last_check": None,   # 上一次 M~ 查询时记录的位置
             "last_m_query_time": 0.0,         # 上次发送 M~ 的时间戳
             "stale_count": 0,                 # 连续位置无变化次数
+            "position_check_interval_ms": position_check_interval_ms,
         }
         self._work_state = WorkState.WAITING_POSITION
         logger.info(
@@ -264,6 +271,12 @@ class SerialCommand(QObject):
             ev_axis = result[1]
 
             if event == "DONE":
+                if self._movement_sequence and self._movement_sequence.get("name") == "center position":
+                    logger.info(
+                        f"Center RX: {ev_axis} DONE, waiting_axis={axis}, "
+                        f"start_received={wait_state['start_received']}, "
+                        f"last_position={wait_state['last_known_position']}"
+                    )
                 if ev_axis == axis:
                     self._on_motion_done_detected(ev_axis)
                     return
@@ -285,19 +298,41 @@ class SerialCommand(QObject):
                 pos = result[2]
                 if ev_axis == axis and wait_state["tracking"]:
                     wait_state["last_known_position"] = pos
-                    logger.debug(f"{axis} position update: {pos}")
+                    if self._movement_sequence and self._movement_sequence.get("name") == "center position":
+                        logger.info(
+                            f"Center Y progress: axis={axis}, position={pos}, "
+                            f"target={wait_state['target']}, delta={wait_state['delta']:+d}"
+                        )
+                    else:
+                        logger.debug(f"{axis} position update: {pos}")
+                    tolerance = self._get_position_tolerance_pulse(axis)
+                    if abs(int(pos) - int(wait_state["target"])) <= tolerance:
+                        self._finish_position_wait_success(
+                            axis,
+                            f"target {wait_state['target']} reached without DONE",
+                        )
+                        return
 
         # --- 位置追踪逻辑（不在 while 循环内，每次 poll 执行一次） ---
         if not wait_state.get("tracking"):
             return
 
         elapsed = (now - wait_state["last_m_query_time"]) * 1000
-        if elapsed < POSITION_CHECK_INTERVAL_MS:
-            return  # 还没到 3s，继续等
+        if elapsed < wait_state["position_check_interval_ms"]:
+            return
 
         # 3s 到了：比较本次位置与上次记录
         current_pos = wait_state["last_known_position"]
         prev_pos = wait_state["position_at_last_check"]
+        target = wait_state.get("target")
+        if current_pos is not None and target is not None:
+            tolerance = self._get_position_tolerance_pulse(axis)
+            if abs(int(current_pos) - int(target)) <= tolerance:
+                self._finish_position_wait_success(
+                    axis,
+                    f"target {target} reached without DONE",
+                )
+                return
 
         if prev_pos is not None and current_pos is not None and current_pos == prev_pos:
             wait_state["stale_count"] += 1
@@ -306,9 +341,10 @@ class SerialCommand(QObject):
                 f"连续{wait_state['stale_count']}/{MAX_STALE_CHECKS}次"
             )
             if wait_state["stale_count"] >= MAX_STALE_CHECKS:
+                if self._retry_center_axis_after_stall(axis):
+                    return
                 # 连续 N 次位置不变且未收到 DONE → 判定堵转/卡死
                 delta = wait_state.get("delta")
-                target = wait_state.get("target")
                 logger.warning(
                     f"{axis} 堵转超时: 连续{MAX_STALE_CHECKS}次位置无变化 "
                     f"(pos={current_pos}), delta={delta}, target={target}"
@@ -330,17 +366,22 @@ class SerialCommand(QObject):
         wait_state["last_m_query_time"] = now
 
     def _on_motion_done_detected(self, axis: str) -> None:
+        self._finish_position_wait_success(axis, "DONE received")
+
+    def _finish_position_wait_success(self, axis: str, reason: str) -> None:
+        """以 DONE 或目标位置到达结束当前单轴等待。"""
         if not self._active_position_wait:
             return
         if self._active_position_wait["axis"] != axis:
-            logger.debug(f"Ignore DONE for {axis}, waiting for {self._active_position_wait['axis']}")
+            logger.debug(f"Ignore completion for {axis}, waiting for {self._active_position_wait['axis']}")
             return
-
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
         delta = wait_state["delta"]
         self._apply_delta(axis, delta)
-        logger.info(f"{axis} DONE received, delta={delta:+d}, new position={self._get_current(axis)}")
+        logger.info(
+            f"{axis} {reason}, delta={delta:+d}, new position={self._get_current(axis)}"
+        )
         wait_state["callback"](True)
 
     def _on_position_wait_timeout(self) -> None:
@@ -361,6 +402,14 @@ class SerialCommand(QObject):
         start_received = wait_state.get("start_received", False)
         last_pos = wait_state.get("last_known_position")
         stale = wait_state.get("stale_count", 0)
+        if last_pos is not None and target is not None:
+            tolerance = self._get_position_tolerance_pulse(axis)
+            if abs(int(last_pos) - int(target)) <= tolerance:
+                self._finish_position_wait_success(
+                    axis,
+                    f"target {target} reached without DONE",
+                )
+                return
 
         wait_state = self._clear_position_wait()
         self._work_state = WorkState.IDLE
@@ -398,12 +447,22 @@ class SerialCommand(QObject):
         elif axis == "Z" and self._current_z is not None:
             self._current_z += delta
 
-    def _resolve_step_target(self, step: str, target_x: int, target_z: int) -> Optional[tuple]:
+    def _resolve_step_target(
+        self,
+        step: str,
+        target_x: int,
+        target_z: int,
+        target_y: Optional[int] = None,
+    ) -> Optional[tuple]:
         x_offset_pulse = self.config.get_inner_x_offset_pulse()
         z_offset_pulse = self.config.get_inner_z_offset_pulse()
 
         if step == "X":
             return "X", target_x
+        if step == "Y":
+            return "Y", target_y if target_y is not None else target_z
+        if step == "Z0":
+            return "Z", 0
         if step == "Z":
             return "Y", target_z           # 竖直方向 → Y 轴
         if step == "X+":
@@ -423,6 +482,7 @@ class SerialCommand(QObject):
     def _finish_movement_sequence(self, success: bool) -> None:
         sequence = self._movement_sequence
         self._movement_sequence = None
+        self._center_waiting_for_position = False
         self._clear_position_wait()
         self._end_async_command_lock()
         self._work_state = WorkState.IDLE
@@ -460,6 +520,7 @@ class SerialCommand(QObject):
             step,
             self._movement_sequence["target_x"],
             self._movement_sequence["target_z"],
+            self._movement_sequence.get("target_y"),
         )
         if target is None:
             logger.warning(f"Unsupported movement step: {step}")
@@ -494,7 +555,14 @@ class SerialCommand(QObject):
 
         self._start_position_wait(axis, target_position, delta, self._on_movement_step_finished)
 
-    def _start_movement_sequence(self, name: str, steps: list, target_x: int, target_z: int) -> bool:
+    def _start_movement_sequence(
+        self,
+        name: str,
+        steps: list,
+        target_x: int,
+        target_z: int,
+        target_y: Optional[int] = None,
+    ) -> bool:
         if not self._can_start_async_operation(name):
             return False
 
@@ -504,6 +572,7 @@ class SerialCommand(QObject):
             "step_index": 0,
             "target_x": target_x,
             "target_z": target_z,
+            "target_y": target_y,
         }
         self._begin_async_command_lock(allow_position_query=True)
         self._run_next_movement_step()
@@ -515,6 +584,10 @@ class SerialCommand(QObject):
 
     def send_data(self, data: str, source: str = "") -> bool:
         command = str(data)
+        if command in ("O~", "XSTOP~"):
+            logger.warning(
+                f"Global stop TX: source={source or 'unknown'}, command={command}"
+            )
         is_position_query = command.startswith("M~")
         if self._command_lock and is_position_query and not self._allow_position_query:
             logger.debug(
@@ -545,7 +618,12 @@ class SerialCommand(QObject):
             }
             queue_before = self.thread_manager.write_queue.qsize()
             self.thread_manager.write_queue.put(tx_item)
-            enqueue_log = logger.debug
+            is_motion_command = command[:1] in ("X", "Y", "Z", "O")
+            center_active = bool(
+                self._movement_sequence
+                and self._movement_sequence.get("name") == "center position"
+            )
+            enqueue_log = logger.info if (is_motion_command or center_active) else logger.debug
             enqueue_log(
                 "Serial TX enqueue: "
                 f"id={self._tx_sequence}, source={tx_item['source']}, command={command}, "
@@ -675,21 +753,33 @@ class SerialCommand(QObject):
     # 位置查询
     # ========================================================================
 
-    def position_query(self, source: str = "position_query") -> None:
-        if self._offset_calibrating or self._is_measuring or self._position_query_in_flight:
+    def position_query(self, source: str = "position_query") -> bool:
+        if self._offset_calibrating or self._is_measuring:
             logger.debug(
                 "Position query skipped: "
                 f"source={source}, offset_calibrating={self._offset_calibrating}, "
                 f"is_measuring={self._is_measuring}, "
                 f"in_flight={self._position_query_in_flight}, state={self._work_state.value}"
             )
-            return
+            return False
+        if self._position_query_in_flight:
+            logger.debug(
+                f"Position query already in flight: source={source}, "
+                f"state={self._work_state.value}"
+            )
+            return True
         if self.send_data("M~", source=source):
             self._position_query_in_flight = True
             self.data_process.signal_position_data_process.emit()
+            return True
+        return False
 
     def _on_position_data_processed(self, position_data: tuple) -> None:
         self._position_query_in_flight = False
+        center_query_complete = (
+            len(position_data) >= 3
+            and all(position_data[index] is not None for index in range(3))
+        )
 
         if position_data[0] is not None:
             self._current_x = int(position_data[0])
@@ -697,6 +787,23 @@ class SerialCommand(QObject):
             self._current_y = int(position_data[1])
         if len(position_data) > 2 and position_data[2] is not None:
             self._current_z = int(position_data[2])
+
+        if self._center_waiting_for_position:
+            self._center_waiting_for_position = False
+            if not center_query_complete:
+                logger.warning(
+                    "Center position aborted: fresh three-axis position unavailable "
+                    f"(response={position_data})."
+                )
+                self._finish_movement_sequence(False)
+                return
+            logger.info(
+                "Center precheck complete: "
+                f"X={self._current_x}, Y={self._current_y}, Z={self._current_z}, "
+                f"targets=(X={self.config.center_x}, Z={self.config.center_z})"
+            )
+            self._continue_center_after_position_check()
+            return
 
         if self._active_position_wait:
             return  # DONE-based wait, position updates are handled separately
@@ -814,6 +921,180 @@ class SerialCommand(QObject):
         target_x = self.config.test_x
         target_z = self.config.test_z
         self._start_movement_sequence("test position", scheme["steps"], target_x, target_z)
+
+    def center_position(self) -> bool:
+        """先查询三轴，再按需回零 Y；完成后依次执行 X、Z。"""
+        if not self.config.center_saved:
+            logger.warning("Center position has not been saved.")
+            return False
+        if not self._can_start_async_operation("center position"):
+            return False
+
+        self._movement_sequence = {
+            "name": "center position",
+            "steps": [],
+            "step_index": 0,
+            "target_x": self.config.center_x,
+            "target_z": self.config.center_z,
+            "target_y": 0,
+        }
+        self._begin_async_command_lock(allow_position_query=True)
+
+        logger.info(
+            f"Execute center position movement: X={self.config.center_x}, "
+            f"Z={self.config.center_z}; requesting fresh three-axis position"
+        )
+        self._center_waiting_for_position = True
+        if not self.position_query(source="center_position_precheck"):
+            self._finish_movement_sequence(False)
+            return False
+        return True
+
+    def _continue_center_after_position_check(self) -> None:
+        """使用刚查询到的三轴位置继续圆心定位。"""
+        if not self._movement_sequence:
+            return
+        if abs(self._current_y) < 10:
+            logger.info(
+                f"center position: current Y={self._current_y} (|Y|<10), skip Y motion"
+            )
+            self._schedule_center_xz_start()
+            return
+
+        logger.info(f"center position: current Y={self._current_y}, move Y to 0")
+        delta = self.move_y(0)
+        if delta is None:
+            self._finish_movement_sequence(False)
+            return
+        self._start_position_wait(
+            "Y",
+            0,
+            delta,
+            self._on_center_y_finished,
+            position_check_interval_ms=CENTER_POSITION_CHECK_INTERVAL_MS,
+        )
+
+    def _retry_center_axis_after_stall(self, axis: str) -> bool:
+        """圆心单轴无位移时自动重发一次；其他运动不重试。"""
+        sequence = self._movement_sequence
+        wait_state = self._active_position_wait
+        if (
+            axis not in ("X", "Y", "Z")
+            or not sequence
+            or sequence.get("name") != "center position"
+            or not wait_state
+            or not wait_state.get("start_received")
+        ):
+            return False
+        retry_key = f"center_{axis.lower()}_retries"
+        retry_count = int(sequence.get(retry_key, 0))
+        if retry_count >= CENTER_AXIS_RETRY_LIMIT:
+            return False
+
+        target = int(wait_state["target"])
+        if axis == "X":
+            delta = self.move_x(target)
+        elif axis == "Y":
+            delta = self.move_y(target)
+        else:
+            delta = self.move_z(target)
+        if delta is None:
+            return False
+        sequence[retry_key] = retry_count + 1
+        self._clear_position_wait()
+        self._work_state = WorkState.IDLE
+        logger.warning(
+            f"center position: {axis} movement made no progress after START, "
+            f"retry {retry_count + 1}/{CENTER_AXIS_RETRY_LIMIT}, "
+            f"target={target}, delta={delta:+d}"
+        )
+        self._start_position_wait(
+            axis,
+            target,
+            delta,
+            wait_state["callback"],
+            position_check_interval_ms=CENTER_POSITION_CHECK_INTERVAL_MS,
+        )
+        return True
+
+    def _on_center_y_finished(self, success: bool) -> None:
+        """上下轴回零完成后，短暂稳定后依次执行 X、Z。"""
+        if not self._movement_sequence:
+            return
+        if not success:
+            self._finish_movement_sequence(False)
+            return
+        self._schedule_center_xz_start()
+
+    def _schedule_center_xz_start(self) -> None:
+        sequence = self._movement_sequence
+        if not sequence or sequence.get("center_xz_start_scheduled"):
+            return
+        sequence["center_xz_start_scheduled"] = True
+        logger.info(
+            f"Center phase transition: Y complete, waiting "
+            f"{CENTER_AXIS_START_DELAY_MS}ms before X"
+        )
+        QTimer.singleShot(CENTER_AXIS_START_DELAY_MS, lambda: self._start_center_axis("X"))
+
+    def _start_center_axis(self, axis: str) -> None:
+        if not self._movement_sequence:
+            return
+        target = self.config.center_x if axis == "X" else self.config.center_z
+        current = self._get_current(axis)
+        if current is None:
+            self._finish_movement_sequence(False)
+            return
+        tolerance = self._get_position_tolerance_pulse(axis)
+        if abs(int(current) - int(target)) <= tolerance:
+            logger.info(
+                f"Center {axis} already within target: current={current}, target={target}"
+            )
+            self._finish_center_axis(axis, True)
+            return
+
+        delta = self.move_x(target) if axis == "X" else self.move_z(target)
+        if delta is None:
+            logger.error(f"center position: failed to queue {axis} target={target}")
+            self._finish_movement_sequence(False)
+            return
+        logger.info(
+            f"Center axis command: axis={axis}, current={current}, "
+            f"target={target}, delta={delta:+d}"
+        )
+        self._movement_sequence["active_center_axis"] = axis
+        self._start_position_wait(
+            axis,
+            target,
+            delta,
+            lambda success, current_axis=axis: self._finish_center_axis(
+                current_axis, success
+            ),
+            position_check_interval_ms=CENTER_POSITION_CHECK_INTERVAL_MS,
+        )
+
+    def _finish_center_axis(self, axis: str, success: bool) -> None:
+        if not self._movement_sequence:
+            return
+        if not success:
+            logger.warning(f"Center {axis} phase failed")
+            self._finish_movement_sequence(False)
+            return
+        if axis == "X":
+            logger.info(
+                f"Center phase transition: X complete at {self._current_x}, "
+                f"waiting {CENTER_AXIS_START_DELAY_MS}ms before Z"
+            )
+            QTimer.singleShot(
+                CENTER_AXIS_START_DELAY_MS,
+                lambda: self._start_center_axis("Z"),
+            )
+        else:
+            logger.info(
+                f"Center position completed: X={self._current_x}, "
+                f"Y={self._current_y}, Z={self._current_z}"
+            )
+            self._finish_movement_sequence(True)
 
     # ========================================================================
     # 偏置校准流程控制
