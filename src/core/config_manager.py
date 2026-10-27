@@ -390,6 +390,8 @@ class ConfigManager(QObject):
         'retract_distance': '0.3',
         # 方向键短按移动距离(mm)
         'stage_step_distance': '0.5',
+        # 光电自动贴靠下降量阈值（设备 Flash 的本地镜像）
+        'light_threshold': '25',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -945,6 +947,14 @@ class ConfigManager(QObject):
     @stage_step_distance.setter
     def stage_step_distance(self, value: float) -> None:
         self.set('stage_step_distance', max(0.0, float(value)))
+
+    @property
+    def light_threshold(self) -> int:
+        return max(1, min(4095, self.get_int('light_threshold', 25)))
+
+    @light_threshold.setter
+    def light_threshold(self, value: int) -> None:
+        self.set('light_threshold', max(1, min(4095, int(value))))
 
     @property
     def pga_gain(self) -> int:

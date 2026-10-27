@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QToolButton,
     QDoubleSpinBox,
+    QSpinBox,
     QPlainTextEdit,
     QMessageBox,
 )
@@ -90,6 +91,7 @@ class ConfigPanel(QWidget):
 
         # 连接按钮事件
         self._connect_buttons()
+        self._init_light_threshold()
         self._init_stage_distance()
         self._init_serial_controls()
         self._init_serial_rx_display()
@@ -703,6 +705,14 @@ class ConfigPanel(QWidget):
             btn = self.findChild(QPushButton, name)
             if btn:
                 btn.setEnabled(enabled)
+        spin = self.findChild(QSpinBox, "spin_light_threshold")
+        if spin:
+            spin.setEnabled(self._light_cal_pending is None)
+
+    def _init_light_threshold(self) -> None:
+        spin = self.findChild(QSpinBox, "spin_light_threshold")
+        if spin:
+            spin.setValue(get_config_manager().light_threshold)
 
     def _set_serial_command_buttons_enabled(self, enabled: bool) -> None:
         """串口未连接时禁用所有会下发设备指令的按钮。"""
@@ -727,10 +737,14 @@ class ConfigPanel(QWidget):
         self._send_light_cal_command("LSBASE~", "base", "正在记录静态基准…")
 
     def _on_set_light_threshold(self) -> None:
+        spin = self.findChild(QSpinBox, "spin_light_threshold")
+        if spin is None:
+            return
+        threshold = int(spin.value())
         self._send_light_cal_command(
-            "LSTH20~",
+            f"LSTH{threshold}~",
             "threshold",
-            "正在设置下降量阈值 20 ADC…",
+            f"正在设置下降量阈值 {threshold} ADC…",
         )
 
     def _send_light_cal_command(self, command: str, kind: str, pending_text: str) -> None:
@@ -766,6 +780,15 @@ class ConfigPanel(QWidget):
             static_value = values.get("STATIC", "?")
             threshold = values.get("THRESH", "?")
             diff_value = values.get("DIFF", values.get("ABS_DIFF", "?"))
+            try:
+                threshold_value = int(threshold)
+            except (TypeError, ValueError):
+                threshold_value = None
+            if threshold_value is not None:
+                spin = self.findChild(QSpinBox, "spin_light_threshold")
+                if spin:
+                    spin.setValue(threshold_value)
+                get_config_manager().light_threshold = threshold_value
             if self._light_cal_pending == "base":
                 message = (
                     f"基准已设置：STATIC={static_value}，"
@@ -789,7 +812,7 @@ class ConfigPanel(QWidget):
             "ADC INVALID": "光电传感器采样无效，请检查传感器后重试",
             "BUSY": "设备忙，请停止运动或采集后重试",
             "SAVE FAIL": "设备 Flash 保存失败，原配置保持不变",
-            "RANGE": "阈值格式错误，请检查 LSBASE~ 和 LSTH20~",
+            "RANGE": "阈值格式错误，请检查 LSBASE~ 和 LSTH<n>~",
         }
         self._finish_light_cal(False, error_messages.get(detail, f"设置失败：{detail}"))
 

@@ -214,7 +214,7 @@
        </widget>
       </item>
       <item row="2" column="1">
-       <widget class="QPushButton" name="btn_set_light_threshold">
+       <widget class="QWidget" name="light_threshold_editor" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
           <horstretch>0</horstretch>
@@ -233,12 +233,82 @@
           <height>16777215</height>
          </size>
         </property>
-        <property name="toolTip">
-         <string>固定设置下降量阈值 20 并保存到设备 Flash，对应第一级下降 20 ADC、第二级下降 40 ADC。</string>
-        </property>
-        <property name="text">
-         <string>贴靠阈值</string>
-        </property>
+        <layout class="QHBoxLayout" name="light_threshold_layout">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <item>
+          <widget class="QSpinBox" name="spin_light_threshold">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>132</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>132</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>下降量阈值，范围 1–4095 ADC。第二级停机阈值为该值的 2 倍。</string>
+           </property>
+           <property name="suffix">
+            <string> ADC</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>4095</number>
+           </property>
+           <property name="value">
+            <number>25</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_set_light_threshold">
+           <property name="minimumSize">
+            <size>
+             <width>112</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>112</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>将输入值作为下降量阈值写入设备 Flash。</string>
+           </property>
+           <property name="text">
+            <string>设置阈值</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </widget>
       </item>
       <item row="4" column="0">
