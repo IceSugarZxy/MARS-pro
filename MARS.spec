@@ -60,10 +60,8 @@ if _bundle_dates and _bundle_dates.lower() != 'none' and os.path.isdir(_plot_roo
         if os.path.isdir(_src):
             datas.append((_src, os.path.join('data', 'plot_data', _date)))
 
-# 日志目录（运行时自动创建，此处仅保留占位）
-logs_dir = os.path.join(SPEC_DIR, 'logs')
-if os.path.isdir(logs_dir):
-    datas.append((logs_dir, 'logs'))
+# 日志目录由程序运行时自动创建（源码运行时是 src/logs，打包后是 exe 同级的 logs），
+# 不随包分发：既避免把开发机上的历史日志带进发行版本，也不影响程序启动。
 
 # 一致性测试脚本
 test_dir = os.path.join(SPEC_DIR, '一致性测试')

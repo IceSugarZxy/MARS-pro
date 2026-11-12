@@ -8,13 +8,13 @@ import os
 import json
 from typing import Optional, Dict, Any, List
 from PyQt5.QtCore import QObject, pyqtSignal
-import logging
+from .logger import get_logger
 from .path_utils import get_config_path
 from .chuck_compensation import (CONFIG_KEY as CHUCK_COMPENSATION_KEY,
                                  GLOBAL_KEY as CHUCK_COMPENSATION_GLOBAL_KEY,
                                  comp_key, dump_table, parse_table)
 
-logger = logging.getLogger(__name__)
+logger = get_logger('ConfigManager')
 
 # X/Y 滑台标定：100000 脉冲 = 156.12 mm → 640.53 脉冲/mm（2026-07-24 更新）
 X_AXIS_PULSES_PER_MM = 640.53

@@ -6,6 +6,18 @@ MARS Pro 是基于 PyQt5 的旋转体表磁测量分析系统，适配 **3Axis_M
 
 > MARS Pro 是从 [MARS](https://github.com/IceSugarZxy/MARS)（V3.5 固件）升级而来，通信协议、硬件架构、控制方式均有重大变化。
 
+## 2026-11-12 更新要点
+
+1. **日志链路修复**：`ConfigManager` 的日志此前不在 `MARS` 命名空间下，`配置文件加载/保存成功`、
+   档位回退等记录从未进过文件；日志初始化提前到 `QApplication` 之前，并增加崩溃兜底
+   （`sys.excepthook` / `threading.excepthook` / `faulthandler` → `MARS.Crash`）、
+   目录不可写回退 `%LOCALAPPDATA%`、无控制台时跳过 console handler。详见 [日志](#日志)。
+2. **日志降噪**：`M~ position OK` 由每 1.5 s 一条改为「位置或状态变化」才写 INFO；
+   `Serial TX output buffer force-cleared after drain failure` 按 30 s 时间窗聚合，
+   一条里注明被抑制的条数；`FAULT:` / `ALL STOP` 新出现时单独写 WARNING。
+3. **光电贴靠标定留痕**：`LSBASE~` / `LSTH<n>~` 的下发、成功结果（`STATIC/THRESH/DIFF`）、
+   失败原因与 4 s 超时提示都会写日志。
+
 ## 2026-10-27 当前版本要点
 
 1. **圆心定位**：配置界面保存当前左右 X、前后 Z 到 `center_x / center_z`，配置与测量界面均可执行。
@@ -205,9 +217,18 @@ PyQt5 自带的 Qt 5.15 在**安装路径含中文**时，`QLibraryInfo` 返回�
 
 ```powershell
 robocopy ".venv" "C:\mars_build\.venv" /E /XD __pycache__ /NFL /NDL /NJH /NJS
-robocopy "." "C:\mars_build" src data\plot_data\20260930 logs 一致性测试 MARS.spec /E
+robocopy "." "C:\mars_build" src data\plot_data\20261026 一致性测试 MARS.spec /E
 cd C:\mars_build
 C:\mars_build\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm MARS.spec
+```
+
+如果 Python 本身已装在纯 ASCII 路径（如 `D:\Python\Python311`）并装好 `requirements.txt`
+与 `pyinstaller`，可以直接用它构建，不必再复制 `.venv`：
+
+```powershell
+robocopy "." "C:\mars_build" src data\plot_data\20261026 一致性测试 MARS.spec /E
+cd C:\mars_build
+python -m PyInstaller --clean --noconfirm MARS.spec
 ```
 
 构建产物可正常从中文路径运行（Qt 运行时按 DLL 所在目录找插件，不受该问题影响），
@@ -231,7 +252,6 @@ C:\mars_build\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm MARS.s
 +--dist/
 |  +--MARS_Pro_<日期>/            # PyInstaller onedir 产物（双击 MARS_Pro.exe 运行）
 +--build/                        # PyInstaller 临时目录
-+--logs/                         # 打包后程序运行日志目录
 +--一致性测试/                    # 独立测试脚本（串口延迟等）
 +--MARS.spec                     # PyInstaller 配置
 +--requirements.txt              # Python 依赖
@@ -241,6 +261,38 @@ C:\mars_build\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm MARS.s
 +--用户手册.md
 +--代码结构说明.md
 ```
+
+## 日志
+
+| 运行方式 | 日志目录 |
+| --- | --- |
+| 源码运行 | `src/logs/` |
+| 打包运行 | `<MARS_Pro.exe 同级>/logs/`（首次运行时自动创建） |
+| 目标目录不可写（如装在 `Program Files`） | `%LOCALAPPDATA%\MARS_Pro\logs\` |
+
+- 文件名 `mars_YYYYMMDD.log`，按当前日期写入；程序跨零点继续运行会自动切换到新一天的文件。
+- `main()` 在创建 `QApplication` 之前就初始化日志；未捕获异常、子线程异常和原生崩溃由
+  `install_crash_handlers()` 记录（logger 名 `MARS.Crash`），打包成无控制台的 windowed 程序同样有效。
+- 消息正文里的换行、NUL 等控制字符统一转义为 `\n`、`\x00`，保证一条日志一行。
+- 历史日志默认全部保留；设置 `MARS_LOG_RETENTION_DAYS=<天数>` 后，启动时清理更早的 `mars_YYYYMMDD.log`。
+- 位置轮询（`M~`）只在位置或状态（`[ENABLED]/[DISABLED]`、`TRIGGER=` 等）变化时写 INFO，
+  新出现 `FAULT:` / `ALL STOP` 时额外写 WARNING。
+- 光电贴靠标定（`LSBASE~` / `LSTH<n>~`）记录指令下发、成功时的 `STATIC/THRESH/DIFF`、失败原因与超时提示。
+
+每轮测量可核对的数据量（INFO）：
+
+```text
+Measure first RX: 1008 bytes, queue_remain=3, measurement_active=True
+测量数据接收完成，共 32768 个数据点
+旋转测量算法处理：32768 原始点 → 角度 32768 点, 磁场 32768 点
+提取数据: 索引 0 - 32742，共 32743 个数据点
+削顶检查通过: 正轨 0 点 / 负轨 0 点（阈值 0.050%）
+处理后测量数据已保存到: ...\20261026\测试样品_20261026_094113.csv，共 131072 个数据点
+```
+
+接收**总字节数、包数、采样用时**，以及**实际点数与标称点数**（`SAMPLES_PER_REV` =
+131072 / 65536 / 32768）的偏差目前只写 DEBUG，不落盘；需要从日志核对"是否收够点数"时，
+只能比对 `测量数据接收完成，共 N 个数据点` 与当前速度档位。
 
 ## 采集档位（ACQCFG / ADCRATE）
 
@@ -332,6 +384,9 @@ X / Y / Z 轴位移与脉冲换算系数：
 
 ## 近期调整
 
+- 2026-11-12：**日志降噪 + 光电标定留痕**：① `M~ position OK` 原来每 1.5 s 一条（单日上千条），改为位置或状态签名变化时才写 INFO（`_status_signature` 抹平 VBUS/ADC 数值，保留 `[ENABLED]/[DISABLED]`、`TRIGGER=`、`FAULT:` 等状态），无变化只写 DEBUG；新出现的 `FAULT:` / `ALL STOP` 另外单独写一条 WARNING。② `Serial TX output buffer force-cleared after drain failure` 单次会话可重复 7000+ 次，改为 30 s 时间窗聚合，一条警告里注明被抑制的条数（`_warn_drain_failure`）。③ 光电标定（`LSBASE~` / `LSTH<n>~`）此前只有 DEBUG 级 TX 日志、回信与结果完全不记录，现在记录指令下发、成功结果（STATIC/THRESH/DIFF）、失败原因与超时提示
+
+- 2026-11-12：**日志链路修复**：`core/logger.py` 重写——① `ConfigManager` 原来用 `logging.getLogger(__name__)` 拿到的是 `core.config_manager`，不在 `MARS` 命名空间下，`配置文件加载/保存成功`、PGA 档位回退等 INFO/WARNING 从未进过日志文件（WARNING 只裸打到 stderr），改用 `get_logger('ConfigManager')`；② 日期只在启动时算一次，跨零点继续跑会把第二天内容写进前一天的文件（历史日志里 `mars_20260930.log` 含 10-08 记录即为此），新增 `DailyFileHandler` 按当前日期切换文件；③ 增加崩溃兜底：`sys.excepthook` / `threading.excepthook` / `faulthandler` 统一写入当天日志（logger 名 `MARS.Crash`），此前闪退只留下半行日志、无任何堆栈；④ 日志初始化提前到 `QApplication` 创建之前，并增加目录可写探测（不可写时回退 `%LOCALAPPDATA%\MARS_Pro\logs`），避免打包版装在无写权限目录时完全无日志；⑤ 打包成 windowed 程序时 `sys.stderr is None`，不再创建无效的控制台 handler；⑥ 消息正文里的换行/NUL 等控制字符转义（串口原始报文 `raw_tail` 会打断“一条日志一行”）；⑦ 新增可选的历史日志清理（`MARS_LOG_RETENTION_DAYS`，默认不删）。`MARS.spec` 不再把开发机的 `logs/` 打进发行包；`用户手册` 6.3 与 `代码结构说明` 同步更新
 - 2026-10-26：**光电贴靠阈值改为可编辑**：配置面板增加 1–4095 ADC 阈值输入框和“设置阈值”按钮，默认 25；指令按输入值发送 `LSTH<n>~`，设备回信后同步界面和本地配置。
 - 2026-10-26：**方向键短按距离默认改为 0.5 mm**：配置管理器默认值和测量界面输入控件同步调整；测量界面由整数输入改为一位小数输入，不再把 0.5 mm 四舍五入成 1 mm。
 - 2026-10-26：**新增圆心位置保存与定位**：配置界面保存左右 X、前后 Z 到 `center_x / center_z`，配置和测量界面提供“圆心定位”；启动后先查询最新三轴位置，上下 Y 的 `|Y| < 10` 跳过归零，否则 Y 回内部零位；之后严格按 X 到位、Z 到位的顺序执行，每轴到达目标容差或收到 DONE 后进入下一轴；单轴收到 START 但无位移时按剩余距离自动重发一次。

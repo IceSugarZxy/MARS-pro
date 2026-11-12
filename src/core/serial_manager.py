@@ -16,6 +16,8 @@ logger = get_logger('SerialManager')
 
 SERIAL_WRITE_INTERVAL_SECONDS = 0.02
 SERIAL_WRITE_DRAIN_TIMEOUT_MS = 50
+# drain 失败可能每秒重复多次，同一时间窗内只保留一条警告（附被抑制的条数）
+SERIAL_DRAIN_FAILURE_WARN_INTERVAL_SECONDS = 30.0
 SERIAL_LOG_PREVIEW_LIMIT = 180
 SERIAL_BINARY_RX_SUMMARY_SECONDS = 1.0
 SERIAL_LIGHT_ADC_RX_SUMMARY_SECONDS = 2.0
@@ -52,6 +54,9 @@ class SerialManager(QObject):
         self._light_adc_rx_chunks = 0
         self._last_light_adc_rx_log_time = time.time()
         self._ui_rx_buffer = bytearray()
+        self._drain_failure_count = 0
+        self._drain_failure_reported = 0
+        self._last_drain_failure_warn_at = 0.0
 
         logger.info("SerialManager 初始化完成")
 
@@ -90,6 +95,21 @@ class SerialManager(QObject):
         if len(text) > limit:
             return text[:limit] + "..."
         return text
+
+    def _warn_drain_failure(self) -> None:
+        """drain 失败会高频重复，按时间窗聚合，避免单次会话刷出上千条相同警告。"""
+        self._drain_failure_count += 1
+        now = time.monotonic()
+        if now - self._last_drain_failure_warn_at < SERIAL_DRAIN_FAILURE_WARN_INTERVAL_SECONDS:
+            return
+        suppressed = self._drain_failure_count - self._drain_failure_reported - 1
+        self._last_drain_failure_warn_at = now
+        self._drain_failure_reported = self._drain_failure_count
+        suffix = ""
+        if suppressed > 0:
+            suffix = (f", suppressed {suppressed} similar warnings in the last "
+                      f"{SERIAL_DRAIN_FAILURE_WARN_INTERVAL_SECONDS:.0f}s")
+        logger.warning("Serial TX output buffer force-cleared after drain failure" + suffix)
 
     def _queue_ui_rx_payload(self, payload: bytes) -> None:
         self._ui_rx_buffer.extend(payload)
@@ -470,7 +490,7 @@ class SerialManager(QObject):
                 if bytes_to_write_after_wait > 0:
                     try:
                         self.serial_port.clear(QSerialPort.Output)
-                        logger.warning("Serial TX output buffer force-cleared after drain failure")
+                        self._warn_drain_failure()
                     except Exception:
                         pass
 

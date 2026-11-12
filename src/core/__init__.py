@@ -2,7 +2,7 @@
 """
 MARS 核心模块
 """
-from .logger import init_logging, get_logger
+from .logger import init_logging, get_logger, install_crash_handlers
 from .config_manager import ConfigManager, get_config_manager
 from .serial_manager import SerialManager
 from .serial_command import SerialCommand
@@ -12,6 +12,7 @@ from .thread_manager import ThreadManager
 __all__ = [
     'init_logging',
     'get_logger',
+    'install_crash_handlers',
     'ConfigManager', 
     'get_config_manager',
     'SerialManager',

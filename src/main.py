@@ -5,6 +5,8 @@
 """
 import sys
 import os
+import logging
+from typing import Optional
 
 # Resolve the runtime root for both source and PyInstaller builds.
 if getattr(sys, 'frozen', False):
@@ -19,19 +21,18 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 
-from core import init_logging, get_config_manager, ThreadManager
+from core import init_logging, install_crash_handlers, get_config_manager, ThreadManager
 
 
 class MainApplication:
     """主应用程序类 - 负责窗口协调和数据流连接"""
 
-    def __init__(self):
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = application_path
-        log_dir = os.path.join(base_dir, "logs")
-        self.logger = init_logging(log_dir)
+    def __init__(self, logger: Optional[logging.Logger] = None):
+        if logger is None:
+            logger = init_logging(os.path.join(application_path, "logs"))
+        # 幂等：main() 已在更早阶段装过，这里保证脚本方式调用时同样有崩溃兜底
+        install_crash_handlers(logger)
+        self.logger = logger
         self.logger.info("=" * 50)
         self.logger.info("旋转体表磁测量分析系统启动")
         self.logger.info("=" * 50)
@@ -154,25 +155,34 @@ def main() -> int:
     import warnings
     warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
-    # 创建应用程序实例
-    app = QApplication(sys.argv)
-    icon_path = os.path.join(application_path, "icon.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    # 日志必须在 QApplication 之前初始化：启动阶段（Qt 插件、依赖导入）出错时也要留痕。
+    logger = init_logging(os.path.join(application_path, "logs"))
+    install_crash_handlers(logger)
 
-    # 设置应用程序信息
-    app.setApplicationName("旋转体表磁测量分析系统 PRO")
-    app.setApplicationVersion("2.0.0")
+    try:
+        # 创建应用程序实例
+        app = QApplication(sys.argv)
+        icon_path = os.path.join(application_path, "icon.png")
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
 
-    # 设置应用程序样式
-    app.setStyle('Fusion')
+        # 设置应用程序信息
+        app.setApplicationName("旋转体表磁测量分析系统 PRO")
+        app.setApplicationVersion("2.0.0")
+
+        # 设置应用程序样式
+        app.setStyle('Fusion')
+    except Exception:
+        logger.critical("应用程序启动失败", exc_info=True)
+        return 1
 
     # Create and run the coordinator object.
-    main_app = MainApplication()
-    exit_code = main_app.run()
-
-    # 退出时清理资源
-    main_app.cleanup()
+    main_app = MainApplication(logger)
+    try:
+        exit_code = main_app.run()
+    finally:
+        # 退出时清理资源
+        main_app.cleanup()
 
     return exit_code
 

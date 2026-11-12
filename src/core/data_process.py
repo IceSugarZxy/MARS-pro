@@ -49,6 +49,10 @@ from .offset_calibration_config import (
 
 logger = get_logger('DataProcess')
 
+# 位置轮询日志去重：抹平状态行里的数值，只保留状态变化（[ENABLED]→[DISABLED]、TRIGGER=1 等）
+_STATUS_NUMBER_RE = re.compile(r'-?\d+(?:\.\d+)?')
+_STATUS_FLAG_RE = re.compile(r'\b(TRIGGER|SAVED|VALID)=(\d+)')
+
 # ============================================================================
 # 常量定义
 # ============================================================================
@@ -815,6 +819,18 @@ class DataProcess(QObject):
 
     # 类变量，用于累积位置数据
     _position_buffer = bytearray()
+    # 上一次位置轮询的 (X, Y, Z, 状态签名)，用于抑制无变化的重复日志
+    _last_position_log: Optional[tuple] = None
+    _last_fault_lines: tuple = ()
+
+    @staticmethod
+    def _status_signature(critical_status: List[str]) -> tuple:
+        """状态行去数值签名：VBUS/ADC 波动不算变化，状态与标志位变化才算。"""
+        signature = []
+        for line in critical_status:
+            flags = _STATUS_FLAG_RE.findall(line)
+            signature.append((_STATUS_NUMBER_RE.sub('#', line), tuple(flags)))
+        return tuple(signature)
 
     def process_position_data(self) -> None:
         """
@@ -899,11 +915,29 @@ class DataProcess(QObject):
                             " | " + " ; ".join(critical_status)
                             if critical_status else ""
                         )
-                        logger.info(
+                        message = (
                             f"M~ position OK: X={x_position}, Y={y_position}, Z={z_position}, "
                             f"elapsed={time_module.time() - (deadline - 1.0):.3f}s"
                             f"{status_suffix}"
                         )
+                        signature = (
+                            x_position, y_position, z_position,
+                            DataProcess._status_signature(critical_status),
+                        )
+                        # 轮询约 1.5 s 一次：位置和状态都没变时只写 DEBUG，避免刷屏
+                        if signature != DataProcess._last_position_log:
+                            logger.info(message)
+                        else:
+                            logger.debug(message)
+                        DataProcess._last_position_log = signature
+
+                        fault_lines = tuple(
+                            line for line in critical_status
+                            if line.upper().startswith(("FAULT:", "ALL STOP"))
+                        )
+                        if fault_lines and fault_lines != DataProcess._last_fault_lines:
+                            logger.warning("位置回信出现故障标志: " + " ; ".join(fault_lines))
+                        DataProcess._last_fault_lines = fault_lines
                         break
                 except UnicodeDecodeError:
                     pass
