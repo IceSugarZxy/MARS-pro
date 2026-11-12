@@ -1290,6 +1290,7 @@ class MeasurePanel(QWidget):
         logger.info("测试被取消")
         if self.serial_command:
             self.serial_command.claw_stop()
+        self._update_status("测试已取消，旋转已停止", auto_recover=True)
         self._end_test()
         if self.test_progress_dialog:
             self.test_progress_dialog.close()
@@ -1300,6 +1301,7 @@ class MeasurePanel(QWidget):
         logger.info("停止旋转按钮被点击")
         if self.serial_command:
             self.serial_command.claw_stop()
+        self._update_status("旋转已停止", auto_recover=True)
         self._end_test()
 
     def _zeroing_button_clicked(self):
@@ -1307,6 +1309,9 @@ class MeasurePanel(QWidget):
         logger.info("零位校准按钮被点击")
         if self.serial_command:
             self.serial_command.slider_reset()
+            self._update_status("滑台零位校准指令已发送", auto_recover=True)
+        else:
+            self._update_status("零位校准未发送：串口命令未初始化", is_error=True)
 
     def _offset_button_clicked(self):
         """爪盘补偿校准：转一圈空测（B~），生成当前档位的单周期补偿曲线。
@@ -1458,12 +1463,18 @@ class MeasurePanel(QWidget):
         logger.info("测试位置按钮被点击")
         if self.serial_command:
             self.serial_command.test_position()
+            self._update_status("移动到测试位置指令已发送", auto_recover=True)
+        else:
+            self._update_status("测试位置未发送：串口命令未初始化", is_error=True)
 
     def _suspend_position_button_clicked(self):
         """挂起位置"""
         logger.info("挂起位置按钮被点击")
         if self.serial_command:
             self.serial_command.suspend_position()
+            self._update_status("移动到挂起位置指令已发送", auto_recover=True)
+        else:
+            self._update_status("挂起位置未发送：串口命令未初始化", is_error=True)
 
     def _center_position_button_clicked(self):
         """查询三轴，按需回零 Y，再依次执行 X、Z。"""

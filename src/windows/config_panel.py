@@ -40,6 +40,7 @@ logger = get_logger('ConfigPanel')
 
 STAGE_LONG_PRESS_MS = 500
 LIGHT_CAL_RESPONSE_TIMEOUT_MS = 4000
+ACTION_STATUS_RECOVER_MS = 4000
 SERIAL_COMMAND_BUTTONS = (
     "btn_zeroing",
     "btn_offset_all",
@@ -88,6 +89,11 @@ class ConfigPanel(QWidget):
         self._port_refresh_timer = QTimer(self)
         self._port_refresh_timer.setInterval(2000)
         self._port_refresh_timer.timeout.connect(self._refresh_ports)
+
+        self._action_status_timer = QTimer(self)
+        self._action_status_timer.setSingleShot(True)
+        self._action_status_timer.setInterval(ACTION_STATUS_RECOVER_MS)
+        self._action_status_timer.timeout.connect(self._clear_action_status)
 
         # 连接按钮事件
         self._connect_buttons()
@@ -310,6 +316,7 @@ class ConfigPanel(QWidget):
                 config.update_scheme(test_type, True, 0, result)
                 self._update_scheme_display(test_type)
                 logger.info(f"测试方案已更新: {result}")
+                self._show_action_status("测试方案已保存")
 
     def _on_suspend_edit_scheme(self):
         """编辑挂起方案"""
@@ -324,6 +331,7 @@ class ConfigPanel(QWidget):
                 config.update_scheme(test_type, False, 0, result)
                 self._update_scheme_display(test_type)
                 logger.info(f"挂起方案已更新: {result}")
+                self._show_action_status("挂起方案已保存")
 
     def _on_test_type_changed(self, index):
         """测试类型改变"""
@@ -559,6 +567,25 @@ class ConfigPanel(QWidget):
             status_label.setText(text)
             status_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
 
+    def _show_action_status(self, message: str, is_error: bool = False) -> None:
+        """在快捷操作区显示短暂的操作结果，成功信息统一使用绿色。"""
+        label = self.findChild(QLabel, "label_action_status")
+        if label is None:
+            return
+        color = "#c0392b" if is_error else "#27ae60"
+        label.setText(message)
+        label.setToolTip(message)
+        label.setStyleSheet(
+            f"color: {color}; font-weight: bold; font-size: 12px;"
+        )
+        self._action_status_timer.start()
+
+    def _clear_action_status(self) -> None:
+        label = self.findChild(QLabel, "label_action_status")
+        if label is not None:
+            label.clear()
+            label.setToolTip("")
+
     def _set_serial_button_state(self, connected: bool = False, connecting: bool = False) -> None:
         connect_btn = self.findChild(QPushButton, "btnSuccess")
         if not connect_btn:
@@ -753,6 +780,7 @@ class ConfigPanel(QWidget):
         if not self._is_serial_connected():
             self._set_light_cal_status("请先连接设备", "#c0392b")
             self._set_light_cal_buttons_enabled(False)
+            logger.warning(f"光电标定：串口未连接，未发送 {command}")
             return
 
         self._light_cal_pending = kind
@@ -762,8 +790,9 @@ class ConfigPanel(QWidget):
         if self.serial_command is None or not self.serial_command.send_data(
             command, source=f"light_cal_{kind}"
         ):
-            self._finish_light_cal(False, "指令发送失败，请检查串口连接")
+            self._finish_light_cal(False, f"{command} 发送失败，请检查串口连接")
             return
+        logger.info(f"光电标定：已发送 {command}（source=light_cal_{kind}）")
         self._light_cal_timer.start()
 
     def _feed_light_cal_rx(self, data: bytes) -> None:
@@ -818,10 +847,13 @@ class ConfigPanel(QWidget):
 
     def _finish_light_cal(self, success: bool, message: str) -> None:
         self._light_cal_timer.stop()
+        pending = self._light_cal_pending
         self._light_cal_pending = None
         self._light_cal_rx_buffer = ""
         self._set_light_cal_status(message, "#27ae60" if success else "#c0392b")
         self._set_light_cal_buttons_enabled(self._is_serial_connected())
+        log = logger.info if success else logger.warning
+        log(f"光电标定{'成功' if success else '失败'}（{pending or 'unknown'}）：{message}")
 
     def _on_light_cal_timeout(self) -> None:
         if self._light_cal_pending is None:
@@ -999,6 +1031,7 @@ class ConfigPanel(QWidget):
         self._stage_long_pressed = True
         if self.serial_command:
             self.serial_command.send_data(f"{btn._stage_cmd}~", source="stage_press")
+            self._show_action_status(f"正在{btn._stage_label}移动，松开按钮停止")
 
     def _execute_short_press(self, btn):
         """短按：按输入距离沿对应轴方向移动一次。"""
@@ -1007,6 +1040,9 @@ class ConfigPanel(QWidget):
             return
         self.serial_command.set_move_task(btn._stage_axis, btn._stage_direction, distance)
         self.serial_command.position_query(source="stage_short_press")
+        self._show_action_status(
+            f"{btn._stage_label}移动 {distance:g} mm，指令已发送"
+        )
 
     def _get_distance_value(self):
         """读取短按距离(mm)，非法时提示并返回 None。"""
@@ -1112,8 +1148,10 @@ class ConfigPanel(QWidget):
         if self.serial_command:
             self.serial_command.slider_reset()
             logger.info("零位校准")
+            self._show_action_status("滑台零位校准指令已发送")
         else:
             logger.warning("串口命令未初始化")
+            self._show_action_status("零位校准未发送：串口命令未初始化", is_error=True)
 
     # ==================== 全量程偏置校准 ====================
 
@@ -1127,9 +1165,11 @@ class ConfigPanel(QWidget):
             and self.serial_manager.get_connection_status()
         )
         if not connected:
+            self._show_action_status("全量程偏置校准未启动：请先连接设备", is_error=True)
             QMessageBox.warning(self, "全量程偏置校准", "请先连接串口")
             return
         if getattr(self.serial_command, '_offset_calibrating', False):
+            self._show_action_status("全量程偏置校准未启动：已有校准正在进行", is_error=True)
             QMessageBox.warning(self, "全量程偏置校准", "当前已有偏置校准进行中，请稍后再试")
             return
 
@@ -1157,6 +1197,9 @@ class ConfigPanel(QWidget):
         self._offset_all_progress = progress
 
         logger.info("全档偏置校准开始，共 %d 个组合", len(self._offset_all_targets))
+        self._show_action_status(
+            f"全量程偏置校准已启动，共 {len(self._offset_all_targets)} 个档位组合"
+        )
         self._offset_all_start_target(0)
 
     def _offset_all_set_buttons_enabled(self, enabled: bool):
@@ -1495,31 +1538,40 @@ class ConfigPanel(QWidget):
         if self.serial_command:
             self.serial_command.test_position()
             logger.info("移动到测试位置")
+            self._show_action_status("移动到测试位置指令已发送")
         else:
             logger.warning("串口命令未初始化")
+            self._show_action_status("测试位置未发送：串口命令未初始化", is_error=True)
 
     def _on_suspend(self):
         """移动到挂起位置"""
         if self.serial_command:
             self.serial_command.suspend_position()
             logger.info("移动到挂起位置")
+            self._show_action_status("移动到挂起位置指令已发送")
         else:
             logger.warning("串口命令未初始化")
+            self._show_action_status("挂起位置未发送：串口命令未初始化", is_error=True)
 
     def _on_center_position(self):
         """查询三轴，按需回零 Y，再依次执行 X、Z。"""
         config = get_config_manager()
         if not config.center_saved:
+            self._show_action_status("尚未保存圆心位置，请先定位并保存", is_error=True)
             QMessageBox.warning(self, "圆心定位", "尚未保存圆心位置，请先定位并保存。")
             return
         if not self.serial_command:
             logger.warning("串口命令未初始化")
+            self._show_action_status("圆心定位未启动：串口命令未初始化", is_error=True)
             return
         if not self.serial_command.center_position():
+            self._show_action_status("圆心定位未启动，请检查设备状态", is_error=True)
             QMessageBox.warning(
                 self, "圆心定位",
                 "圆心定位未启动，请检查当前轴位置或等待上一项运动结束。",
             )
+            return
+        self._show_action_status("圆心定位已启动：Y 轴回零，随后依次执行 X、Z")
 
     def _on_center_position_save(self):
         """保存当前左右 X、前后 Z 轴位置为圆心。"""
@@ -1541,7 +1593,9 @@ class ConfigPanel(QWidget):
             if center_z_display:
                 center_z_display.setText(str(z))
             logger.info(f"保存圆心位置: X={x}, Z={z}")
+            self._show_action_status(f"圆心位置已保存：X={x}，Z={z}")
         except (TypeError, ValueError, OSError):
+            self._show_action_status("圆心位置保存失败：当前位置无效或配置写入失败", is_error=True)
             QMessageBox.warning(self, "圆心定位", "当前位置无效或配置保存失败。")
             logger.warning("无效的位置数据，无法保存圆心位置")
 
@@ -1564,7 +1618,9 @@ class ConfigPanel(QWidget):
                     test_x_display.setText(str(x))
                 if test_y_display:
                     test_y_display.setText(str(y))
+                self._show_action_status(f"测试位置已保存：水平={x}，竖直={y}")
         except ValueError:
+            self._show_action_status("测试位置保存失败：当前位置无效", is_error=True)
             logger.warning("无效的位置数据，无法保存")
 
     def _on_suspend_save(self):
@@ -1586,5 +1642,7 @@ class ConfigPanel(QWidget):
                     suspend_x_display.setText(str(x))
                 if suspend_y_display:
                     suspend_y_display.setText(str(y))
+                self._show_action_status(f"挂起位置已保存：水平={x}，竖直={y}")
         except ValueError:
+            self._show_action_status("挂起位置保存失败：当前位置无效", is_error=True)
             logger.warning("无效的位置数据，无法保存")
