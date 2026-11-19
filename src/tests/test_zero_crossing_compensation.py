@@ -13,8 +13,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core.zero_crossing import (same_direction_intervals,          # noqa: E402
                                 zero_position_deviation)
 from core.zero_crossing_compensation import (apply, dump_table,    # noqa: E402
-                                             lookup, parse_table,
-                                             polar_key, sample_curve)
+                                             GLOBAL_KEY, lookup,
+                                             parse_table, polar_key,
+                                             sample_curve)
 from core.plot_data_reader import apply_sample_info_row            # noqa: E402
 from windows.wave_analysis import WaveAnalysis                     # noqa: E402
 
@@ -178,6 +179,48 @@ class WaveAnalysisIntegrationTest(unittest.TestCase):
         info = {}
         apply_sample_info_row(info, ['过零点偏差补偿', '已应用'])
         self.assertEqual(info['zero_crossing_compensation'], '已应用')
+
+
+class GlobalCurveTest(unittest.TestCase):
+    """设备曲线与极对数无关：配置里只有通配键 ``*`` 时，任何极对数都要生效。"""
+
+    def setUp(self):
+        self.angle = _grid()
+        theta, values = _device_curve()
+        self.table = {GLOBAL_KEY: (0.5, values)}
+        self.deviation = lambda a: sample_curve(values, 0.5, a)
+
+    def test_global_curve_applies_to_any_pole_pairs(self):
+        true_wave = _waveform(self.angle)
+        for pole_pairs in (4, 5, 8, 31, 32):
+            with self.subTest(pole_pairs=pole_pairs):
+                distorted = _waveform(self.angle, self.deviation,
+                                      pole_pairs=pole_pairs)
+                analyzer = WaveAnalysis(zero_crossing_table=self.table)
+                analysis, processed = analyzer.analyze_waveform_with_correction(
+                    self.angle, distorted)
+                info = analysis['concentricity']
+                self.assertTrue(info['zero_crossing_applied'])
+                self.assertEqual(info['zero_crossing_key'], GLOBAL_KEY)
+                processed = np.asarray(processed)
+                reference = _waveform(self.angle, pole_pairs=pole_pairs)
+                before = float(np.sqrt(np.mean((distorted - reference) ** 2)))
+                after = float(np.sqrt(np.mean((processed - reference) ** 2)))
+                self.assertLess(after, before / 3.0)
+
+    def test_shipped_configuration_has_single_global_curve(self):
+        """随包配置只有一条通用曲线（*），不按极对数分键。"""
+        from core.config_manager import ConfigManager
+
+        config = ConfigManager(os.path.join(os.path.dirname(__file__), '..',
+                                            'configuration.txt'))
+        table = config.zero_crossing_compensation_table
+        self.assertIn(GLOBAL_KEY, table)
+        self.assertEqual(sorted(table), [GLOBAL_KEY])
+        step, values = table[GLOBAL_KEY]
+        self.assertAlmostEqual(float(step), 0.5)
+        self.assertGreater(len(values), 360)
+        self.assertGreater(float(np.ptp(values)), 2.0)
 
 
 if __name__ == '__main__':

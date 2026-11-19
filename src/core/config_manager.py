@@ -672,6 +672,11 @@ class ConfigManager(QObject):
         self._config[ZERO_CROSSING_COMPENSATION_KEY] = dump_zero_crossing_table(table)
         return self.save()
 
+    def set_zero_crossing_compensation_table(self, table: dict) -> bool:
+        """整体替换设备曲线表：``{键: (step_deg, values)}``，键 ``*`` 表示所有极对数通用。"""
+        self._config[ZERO_CROSSING_COMPENSATION_KEY] = dump_zero_crossing_table(table)
+        return self.save()
+
     @property
     def idac_index(self) -> int:
         """当前 IDAC 电流档位（3~6）。"""
