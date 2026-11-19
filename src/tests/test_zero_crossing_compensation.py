@@ -74,12 +74,20 @@ class ZeroCrossingTableTest(unittest.TestCase):
         self.assertEqual(parse_table(''), {})
         self.assertEqual(parse_table('[1,2,3]'), {})
 
-    def test_lookup_falls_back_to_global_key(self):
+    def test_lookup_uses_global_key_regardless_of_pole_pairs(self):
         theta, values = _device_curve()
         table = {'*': (0.5, values)}
-        key, step, got = lookup(table, 32)
-        self.assertEqual(key, '*')
-        self.assertAlmostEqual(step, 0.5)
+        for pole_pairs in (None, 4, 5, 31, 32):
+            with self.subTest(pole_pairs=pole_pairs):
+                key, step, got = lookup(table, pole_pairs)
+                self.assertEqual(key, '*')
+                self.assertAlmostEqual(step, 0.5)
+                np.testing.assert_allclose(got, values, atol=1e-9)
+
+    def test_lookup_accepts_single_legacy_curve(self):
+        theta, values = _device_curve()
+        key, _step, got = lookup({'32': (0.5, values)}, 5)
+        self.assertEqual(key, '32')
         np.testing.assert_allclose(got, values, atol=1e-9)
 
     def test_polar_key(self):
@@ -118,11 +126,13 @@ class ZeroCrossingApplyTest(unittest.TestCase):
         self.assertLess(abs(np.max(np.abs(corrected)) - np.max(np.abs(distorted))), 5.0)
 
     def test_missing_curve_returns_none(self):
+        """多个按极对数分开的旧曲线无法确定用哪条 → 跳过并提示合并成通用曲线。"""
         distorted = _waveform(self.angle, self.deviation)
-        corrected, info = apply(self.angle, distorted, {'31': (0.5, self.values)}, 32)
+        legacy = {'31': (0.5, self.values), '32': (0.5, self.values)}
+        corrected, info = apply(self.angle, distorted, legacy, 32)
         self.assertIsNone(corrected)
         self.assertFalse(info['applied'])
-        self.assertIn('极对数', info['reason'])
+        self.assertIn('通用曲线', info['reason'])
 
     def test_invalid_inputs_are_rejected(self):
         distorted = _waveform(self.angle, self.deviation)

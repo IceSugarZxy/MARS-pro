@@ -190,8 +190,7 @@ class WaveAnalysis:
                 return results, y.tolist()
 
             corrected_y, zc_info = self._apply_zero_crossing_correction(
-                x, corrected_y, initial_results.get("pole_num"),
-                apply_zero_crossing_correction)
+                x, corrected_y, apply_zero_crossing_correction)
             results = self._wave_analysis(
                 x, corrected_y, apply_amplitude_correction=False, log_summary=False)
             corrected_info = dict(results.get("concentricity") or {})
@@ -206,7 +205,7 @@ class WaveAnalysis:
             return {}, []
 
     def _zero_crossing_table(self):
-        """设备过零点偏差曲线表（按极对数）：优先用注入值，否则读配置。"""
+        """设备过零点偏差曲线表（一条通用曲线，与极对数无关）：优先注入值，否则读配置。"""
         if self._zero_crossing_table_override is not None:
             return self._zero_crossing_table_override
         if self._zero_crossing_table_cache is None:
@@ -219,9 +218,10 @@ class WaveAnalysis:
                 self._zero_crossing_table_cache = {}
         return self._zero_crossing_table_cache
 
-    def _apply_zero_crossing_correction(self, x, y, pole_pairs, enabled=True):
-        """幅值补偿之后的角度域去扭曲（设备侧固定偏差）。
+    def _apply_zero_crossing_correction(self, x, y, enabled=True):
+        """幅值补偿之后的角度域相位修正，消掉机械误差带来的过零点偏差。
 
+        曲线是机械角的函数（与样品极对数无关）：``corrected(θ) = field(θ + e(θ))``。
         只改采样位置，不改幅值、不改角度列：补偿后的波形仍落在同一 0–360°
         均匀网格上，可直接进入绘图 / 保存 / 分析。
         """
@@ -230,13 +230,13 @@ class WaveAnalysis:
         table = self._zero_crossing_table()
         if not table:
             return y, {'applied': False, 'reason': '配置中没有过零点偏差曲线'}
-        corrected, info = apply_zero_crossing(x, y, table, pole_pairs)
+        corrected, info = apply_zero_crossing(x, y, table)
         if corrected is None:
             logger.info(f"过零点偏差补偿未应用: {info.get('reason')}")
             return y, info
         logger.info(
-            "过零点偏差补偿已应用: 曲线=%s (极对数 %s)，最大偏移 %.3f°"
-            % (info.get('key'), info.get('pole_pairs'), info.get('peak_deg', 0.0)))
+            "过零点偏差补偿已应用: 曲线=%s，最大偏移 %.3f°"
+            % (info.get('key'), info.get('peak_deg', 0.0)))
         return corrected, info
 
     def _apply_waveform_amplitude_correction(self, x, y, peak_details):

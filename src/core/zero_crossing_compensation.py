@@ -96,36 +96,46 @@ def sample_curve(values, step_deg: float, angles) -> np.ndarray:
     return np.interp(np.mod(angles, 360.0), grid, extended)
 
 
-def lookup(table: dict, pole_pairs):
-    """按极对数取曲线，缺失时回退通配键。返回 ``(key, step_deg, values)``。"""
-    key = polar_key(pole_pairs)
-    if key and key in table:
-        step, values = table[key]
-        return key, step, values
+def lookup(table: dict, pole_pairs=None):
+    """取设备曲线：**与极对数无关**，唯一来源就是那条通用曲线。
+
+    优先用通配键 ``*``；配置里只有一条曲线（旧配置）时也直接用；
+    若残留多条按极对数分开的旧曲线，不做猜测（返回空让调用方跳过并提示合并）。
+    返回 ``(key, step_deg, values)``。
+    """
+    table = table or {}
     if GLOBAL_KEY in table:
         step, values = table[GLOBAL_KEY]
         return GLOBAL_KEY, step, values
+    if len(table) == 1:
+        key, (step, values) = next(iter(table.items()))
+        return key, step, values
     return '', 0.0, None
 
 
 def apply(angle, mag, table: dict, pole_pairs=None):
-    """按设备曲线把波形重采样到均匀真角网格。
+    """用设备曲线修正波形相位，消掉机械误差带来的过零点偏差。
+
+    做法是把波形重采样到均匀真角网格：``corrected(θ) = field(θ + e(θ))``，
+    等价于给每个机械角位置的波形加一个相位偏移 e(θ)。曲线只与设备（机械角）有关，
+    与样品极对数无关，``pole_pairs`` 仅为兼容旧调用保留、不参与选曲线。
 
     Args:
         angle: 机械角序列（0° 起的均匀单圈网格）
         mag: 同一网格上的磁场
         table: ``parse_table()`` 的结果
-        pole_pairs: 当前样品的极对数（用于选曲线）
+        pole_pairs: 兼容参数，已不参与选曲线（曲线只有一条通用曲线）
 
     Returns:
         ``(corrected, info)``；没有可用曲线或输入不合法时 ``corrected`` 为 None，
         ``info['applied']`` 为 False 并带 ``reason``。
     """
-    key, step, values = lookup(table or {}, pole_pairs)
+    key, step, values = lookup(table or {})
     info = {'applied': False, 'key': key, 'step_deg': float(step),
             'pole_pairs': polar_key(pole_pairs), 'reason': ''}
     if values is None:
-        info['reason'] = '无对应极对数的补偿曲线'
+        info['reason'] = ('配置里有多条按极对数的旧曲线，请合并成一条通用曲线'
+                          if table else '配置中没有过零点偏差曲线')
         return None, info
 
     angle = np.asarray(angle, dtype=float)
