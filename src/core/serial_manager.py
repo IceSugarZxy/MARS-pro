@@ -423,6 +423,7 @@ class SerialManager(QObject):
                 logger.warning(f"Serial TX skipped empty payload: id={tx_id}, source={source}")
                 return
 
+            is_position_query = data == b"M~"
             tx_meta = {
                 "id": tx_id,
                 "source": source,
@@ -454,7 +455,8 @@ class SerialManager(QObject):
                     "data": remaining,
                     "enqueued_at": time.time(),
                 }
-                logger.warning(
+                partial_logger = logger.debug if is_position_query else logger.warning
+                partial_logger(
                     "Serial TX partial: "
                     f"id={tx_id}, source={source}, written={written}/{len(data)}, "
                     f"remaining={len(remaining)}, preview={self._payload_preview(data)}"
@@ -475,11 +477,12 @@ class SerialManager(QObject):
                     f"preview={self._payload_preview(data)}"
                 )
                 wait_text = "n/a" if drain_wait_result is None else str(drain_wait_result)
-                drain_logger = (
-                    logger.info if is_motion_tx and bytes_to_write_after_wait == 0
-                    else logger.debug if bytes_to_write_after_wait == 0
-                    else logger.warning
-                )
+                if bytes_to_write_after_wait == 0:
+                    drain_logger = logger.info if is_motion_tx else logger.debug
+                elif is_position_query:
+                    drain_logger = logger.debug
+                else:
+                    drain_logger = logger.warning
                 drain_logger(
                     "Serial TX drain: "
                     f"id={tx_id}, source={source}, flush_result={flush_result}, "
@@ -490,7 +493,8 @@ class SerialManager(QObject):
                 if bytes_to_write_after_wait > 0:
                     try:
                         self.serial_port.clear(QSerialPort.Output)
-                        self._warn_drain_failure()
+                        if not is_position_query:
+                            self._warn_drain_failure()
                     except Exception:
                         pass
 

@@ -212,11 +212,19 @@ def analyze_run(path, proc, analyzer, label=None) -> dict:
         result['error'] = '有效数据点不足（%d 点）' % len(processed)
         return result
 
+    already_compensated = meta.get('amplitude_compensation') == '已应用'
+    already_zero_crossing = meta.get('zero_crossing_compensation') == '已应用'
     try:
-        analysis = analyzer.analyze_waveform(angle, processed)
+        analysis, processed = analyzer.analyze_waveform_with_correction(
+            angle,
+            processed,
+            apply_amplitude_correction=not already_compensated,
+            apply_zero_crossing_correction=not already_zero_crossing,
+        )
     except Exception as exc:
         result['error'] = '波形分析失败: %s' % exc
         return result
+    processed = np.asarray(processed, dtype=float)
     if not analysis:
         result['error'] = '波形分析失败'
         return result

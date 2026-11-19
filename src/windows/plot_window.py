@@ -15,6 +15,26 @@ from core.logger import get_logger
 
 logger = get_logger('PlotWindow')
 
+# 纵轴固定档阶梯：每档 50 mT（±50 / ±100 / ±150 …）。
+# 显示时按当前波形的峰值向上取到最近的一档，既保证波形装得下，
+# 又让纵轴刻度总是规整值，避免自适应缩放造成的幅值误判。
+Y_AXIS_STEP_MT = 50.0
+DEFAULT_Y_LIMIT_MT = Y_AXIS_STEP_MT
+# 绘图时上下限各再外扩这么多，让最边上的刻度数字不会被画布边缘裁掉。
+Y_AXIS_MARGIN_MT = 10.0
+
+
+def resolve_y_limit_for_peak(peak_mt, step_mt=Y_AXIS_STEP_MT):
+    """把峰值向上取整到 step 的整数倍，作为纵轴上下限（最小一档）。"""
+    try:
+        peak = abs(float(peak_mt))
+    except (TypeError, ValueError):
+        return float(step_mt)
+    if not np.isfinite(peak):
+        return float(step_mt)
+    steps = max(1, int(np.ceil(peak / float(step_mt) - 1e-9)))
+    return float(steps * float(step_mt))
+
 
 class PlotWindow(QWidget):
     """绘图窗口类"""
@@ -25,6 +45,8 @@ class PlotWindow(QWidget):
         self.curve = None
         self.mag_data = []  # 磁场数据
         self.angle_data = []  # 角度数据
+        self.y_step_mt = Y_AXIS_STEP_MT  # 纵轴档阶梯步长（±50 / ±100 …）
+        self.y_limit_mt = DEFAULT_Y_LIMIT_MT  # 当前纵轴上下限 ±y_limit_mt
         
         self._init_plot_widget()
         self._setup_plot_layout()
@@ -62,7 +84,7 @@ class PlotWindow(QWidget):
 
         # 设置初始显示范围
         self.plot_widget.setXRange(0, 360)
-        self.plot_widget.setYRange(-70, 70)
+        self._apply_y_limit()
         
         # 连接双击事件
         self.plot_widget.scene().sigMouseClicked.connect(self._on_plot_double_click)
@@ -170,32 +192,36 @@ class PlotWindow(QWidget):
 
     
     def _update_y_axis_ticks(self, y_range, tick_interval):
-        """更新Y轴刻度 - 支持小数刻度"""
+        """更新Y轴刻度 - 支持小数刻度
+
+        只保留严格落在显示范围内的刻度（贴边的刻度数字会被画布裁掉），
+        并保证 ±y_limit_mt（50/100/150…档值）一定有刻度。
+        """
         y_min, y_max = y_range
-        
-        # 计算起始刻度位置（支持小数）
-        start_tick = (int(y_min // tick_interval)) * tick_interval
-        end_tick = (int(y_max // tick_interval) + 1) * tick_interval
-        
-        # 生成刻度位置和标签
+
         tick_positions = []
+        step_count = int(np.floor(y_max / tick_interval)) - int(np.ceil(y_min / tick_interval))
+        start_tick = int(np.ceil(y_min / tick_interval)) * tick_interval
+        for index in range(max(0, step_count) + 1):
+            value = start_tick + index * tick_interval
+            if y_min < value < y_max:
+                tick_positions.append(value)
+
+        for bound in (-self.y_limit_mt, self.y_limit_mt):
+            if y_min < bound < y_max:
+                tick_positions.append(bound)
+
+        tick_positions = sorted({round(float(value), 6) for value in tick_positions})
+
         tick_labels = []
-        
-        # 使用浮点数步进，支持小数刻度
-        current_tick = start_tick
-        while current_tick <= end_tick:
-            # 格式化标签，根据刻度间隔决定小数位数
+        for position in tick_positions:
             if tick_interval < 0.1:
-                label = f"{current_tick:.2f}"  # 两位小数
+                tick_labels.append(f"{position:.2f}")
             elif tick_interval < 1:
-                label = f"{current_tick:.1f}"  # 一位小数
+                tick_labels.append(f"{position:.1f}")
             else:
-                label = f"{int(current_tick)}"  # 整数
-            
-            tick_positions.append(current_tick)
-            tick_labels.append(label)
-            current_tick += tick_interval
-        
+                tick_labels.append(f"{int(round(position))}")
+
         # 设置Y轴刻度
         ticks_y = [[pos, label] for pos, label in zip(tick_positions, tick_labels)]
         pw_y = self.plot_widget.plotItem.getAxis('left')
@@ -204,12 +230,44 @@ class PlotWindow(QWidget):
         pw_y.setStyle(tickFont=QFont('Alibaba PuHuiTi', 10), tickTextOffset=10, tickLength=5)
     
     def reset_plot_view(self):
-        """重置绘图视图到初始状态"""
+        """重置绘图视图到初始状态（纵轴回到当前阶梯档）"""
         self.plot_widget.setXRange(0, 360)
-        self.plot_widget.setYRange(-70, 70)
+        self._apply_y_limit()
         # 更新刻度显示
         self._update_adaptive_ticks()
-    
+
+    def _apply_y_limit(self):
+        """把纵轴设成 ±(档值 + 外扩量)，让边界刻度数字完整显示。"""
+        span = self.y_limit_mt + Y_AXIS_MARGIN_MT
+        self.set_y_range(-span, span)
+        self._update_adaptive_ticks()
+
+    def reset_y_limit(self):
+        """把纵轴恢复到阶梯的基准一档（±y_step_mt，默认 ±50 mT）。
+
+        新测试/换档时调用：此时还没有波形，先给一个规整的基准档。
+        """
+        self.y_limit_mt = float(self.y_step_mt)
+        self._apply_y_limit()
+
+    def set_y_limit(self, limit_mt):
+        """手动指定纵轴上下限 ±limit_mt（单侧档值），并立即生效。
+
+        实际显示范围再上下各外扩 `Y_AXIS_MARGIN_MT`。
+        正常测量不用调用：波形到达时 `update_plot` 会按峰值自动选阶梯档；
+        这里保留给需要固定标度的场景。
+        """
+        try:
+            value = abs(float(limit_mt))
+        except (TypeError, ValueError):
+            logger.warning(f"无效的纵轴量程: {limit_mt!r}，保持当前设置")
+            return
+        if value <= 0:
+            logger.warning(f"无效的纵轴量程: {limit_mt!r}，保持当前设置")
+            return
+        self.y_limit_mt = value
+        self._apply_y_limit()
+
     def update_plot(self, angle_data=None, mag_data=None, color='r', auto_y_range=True):
         """更新绘图数据
 
@@ -217,7 +275,8 @@ class PlotWindow(QWidget):
             angle_data: 角度数据列表
             mag_data: 磁场数据列表
             color: 曲线颜色
-            auto_y_range: 是否自动调整Y轴范围（基于数据最大最小值）
+            auto_y_range: 是否按波形峰值刷新纵轴阶梯档（每档 y_step_mt，
+                默认 50 mT，向上取整）；False 时保持当前纵轴不变
         """
         if angle_data is not None:
             self.angle_data = angle_data
@@ -234,14 +293,12 @@ class PlotWindow(QWidget):
                     pen=mkPen(color, width=1)
                 )
 
-                # 自动调整Y轴范围
+                # 刷新Y轴范围：按峰值向上取到最近的阶梯档（显示时上下再外扩）
                 if auto_y_range:
-                    mag_values = np.array(self.mag_data[:min_len])
-                    min_val = np.min(mag_values)
-                    max_val = np.max(mag_values)
-                    # 添加10%的边距
-                    margin = (max_val - min_val) * 0.1
-                    self.set_y_range(min_val - margin, max_val + margin)
+                    mag_values = np.array(self.mag_data[:min_len], dtype=float)
+                    peak = float(np.max(np.abs(mag_values))) if mag_values.size else 0.0
+                    self.y_limit_mt = resolve_y_limit_for_peak(peak, self.y_step_mt)
+                    self._apply_y_limit()
                     # X轴范围固定为0-360度
                     self.set_x_range(0, 360)
     
@@ -269,8 +326,8 @@ class PlotWindow(QWidget):
         self.plot_widget.setXRange(min_val, max_val)
     
     def set_y_range(self, min_val, max_val):
-        """设置Y轴显示范围"""
-        self.plot_widget.setYRange(min_val, max_val)
+        """设置Y轴显示范围（关闭 pyqtgraph 的默认留白，让上下限就是给定值）"""
+        self.plot_widget.setYRange(min_val, max_val, padding=0)
     
     def auto_range(self):
         """自动调整显示范围"""

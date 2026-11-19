@@ -269,14 +269,34 @@ class HistoryPanel(QWidget):
 
             logger.info(f"读取历史数据: {len(angle_data)} 个数据点")
 
+            import queue as _queue
+
+            from core.data_process import DataProcess
+            from core.defect_fingerprint import analyze_run
+            from windows.wave_analysis import WaveAnalysis
+
+            run = analyze_run(file_path, DataProcess(_queue.Queue()), WaveAnalysis())
+            if run.get("error"):
+                logger.warning(f"历史数据波形分析失败: {run['error']}")
+            elif sample_info.get("amplitude_compensation") != "已应用":
+                concentricity = (run.get("analysis") or {}).get("concentricity") or {}
+                if concentricity.get("waveform_corrected"):
+                    point_count = len(run["mag"])
+                    angle_data = [i * 360.0 / point_count for i in range(point_count)]
+                    mag_data = run["mag"].tolist()
+                    sample_info["amplitude_compensation"] = "已应用"
+                if concentricity.get("zero_crossing_applied"):
+                    sample_info["zero_crossing_compensation"] = "已应用"
+
             # 切换到测量面板并加载数据
-            self._switch_to_measure_and_load(angle_data, mag_data, sample_info, file_path)
+            self._switch_to_measure_and_load(
+                angle_data, mag_data, sample_info, file_path, run)
 
         except Exception as e:
             logger.error(f"加载历史数据失败: {e}")
             QMessageBox.warning(self, "错误", f"加载历史数据失败: {e}")
 
-    def _switch_to_measure_and_load(self, angle_data, mag_data, sample_info, file_path):
+    def _switch_to_measure_and_load(self, angle_data, mag_data, sample_info, file_path, analysis_run):
         """切换到测量面板并加载数据"""
         # 查找主窗口并切换面板
         from PyQt5.QtWidgets import QApplication
@@ -328,21 +348,9 @@ class HistoryPanel(QWidget):
                     if sample_info.get('probe'):
                         pass  # 量程选项已移除，跳过探头字段恢复
 
-                    # 进行波形分析：与实时测量、数据比对走完全相同的链路
-                    # （defect_fingerprint.analyze_run 内部就是
-                    #   _process_measure_algorithm 闭合点裁切 → analyze_waveform），
-                    # 这样同一份数据在任何入口看到的指标都一致，且始终跟随最新算法。
-                    import queue as _queue
-
-                    from core.data_process import DataProcess
-                    from core.defect_fingerprint import analyze_run
-                    from windows.wave_analysis import WaveAnalysis
-
-                    run = analyze_run(file_path, DataProcess(_queue.Queue()),
-                                      WaveAnalysis())
-                    if run.get("error"):
-                        logger.warning(f"历史数据波形分析失败: {run['error']}")
-                    measure_panel._update_display_with_results(run.get("analysis") or {})
+                    # 使用上面已完成的同一轮分析，避免旧数据在绘图和指标更新时重复补偿。
+                    measure_panel._update_display_with_results(
+                        analysis_run.get("analysis") or {})
 
                     if hasattr(measure_panel, "show_history_file_status"):
                         measure_panel.show_history_file_status(file_path)

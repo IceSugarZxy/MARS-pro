@@ -581,15 +581,19 @@ class DataProcess(QObject):
             if n > 0:
                 angle_data = [i * 360.0 / n for i in range(n)]
                 mag_data = measure_list
-                logger.info(f"旋转测量：原始 {n} 点 → 0-360° 全部绘制")
+                logger.info(f"旋转测量：原始 {n} 点 → 处理单圈并绘制")
                 try:
                     alg_angle, alg_mag = self._process_measure_algorithm(measure_list)
                     logger.info(
                         f"旋转测量算法处理：{n} 原始点 → "
                         f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
                     )
-                    analysis_results = self._wave_analyzer.analyze_waveform(
-                        alg_angle, alg_mag)
+                    analysis_results, corrected_mag = (
+                        self._wave_analyzer.analyze_waveform_with_correction(
+                            alg_angle, alg_mag)
+                    )
+                    if len(corrected_mag) == len(alg_angle):
+                        angle_data, mag_data = alg_angle, corrected_mag
                     self._log_analysis_summary(analysis_results)
                 except Exception as e:
                     logger.warning(f"波形分析失败: {e}")
@@ -1754,6 +1758,18 @@ class DataProcess(QObject):
                 else:
                     writer.writerow(['样品名称', sample_name])
                     writer.writerow(['保存时间', current_time])
+
+                if analysis_results is not None:
+                    concentricity = analysis_results.get('concentricity') or {}
+                    compensation_status = (
+                        '已应用' if concentricity.get('waveform_corrected') else '未应用'
+                    )
+                    writer.writerow(['单周期包络补偿', compensation_status])
+                    if 'zero_crossing_applied' in concentricity:
+                        writer.writerow([
+                            '过零点偏差补偿',
+                            '已应用' if concentricity.get('zero_crossing_applied') else '未应用',
+                        ])
 
                 # 不再写入“=== 分析结果 ===”快照段：
                 # 分析指标在查看历史数据/比对时会按当前算法重算，写进文件只会随代码

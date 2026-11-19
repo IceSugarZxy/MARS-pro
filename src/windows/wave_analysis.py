@@ -11,6 +11,7 @@ from scipy.optimize import OptimizeWarning
 from scipy.signal import find_peaks
 from scipy.fft import fft
 from core.logger import get_logger
+from core.zero_crossing_compensation import apply as apply_zero_crossing
 
 # 兼容 numpy 2.0+：np.trapz 已被移除，改用 np.trapezoid（旧版回退到 np.trapz）
 _TRAPZ = getattr(np, "trapezoid", None) or np.trapz
@@ -18,11 +19,24 @@ _TRAPZ = getattr(np, "trapezoid", None) or np.trapz
 logger = get_logger('WaveAnalysis')
 
 
+def _zero_crossing_info(info):
+    """过零点偏差补偿结果 → 分析结果里的标记字段。"""
+    info = info or {}
+    return {
+        'zero_crossing_applied': bool(info.get('applied')),
+        'zero_crossing_key': str(info.get('key') or ''),
+        'zero_crossing_peak_deg': float(info.get('peak_deg') or 0.0),
+        'zero_crossing_reason': str(info.get('reason') or ''),
+    }
+
+
 class WaveAnalysis:
     """波形分析类"""
 
-    def __init__(self):
-        pass
+    def __init__(self, zero_crossing_table=None):
+        # None = 运行时从 configuration.txt 读取；传入 dict 可注入固定曲线（测试用）
+        self._zero_crossing_table_override = zero_crossing_table
+        self._zero_crossing_table_cache = None
 
     @staticmethod
     def _get_zero_angle_merge_tolerance(x):
@@ -116,27 +130,173 @@ class WaveAnalysis:
         Returns:
             dict: 分析结果字典
         """
+        results, _ = self.analyze_waveform_with_correction(angle_data, mag_data)
+        return results
+
+    def analyze_waveform_with_correction(
+        self, angle_data, mag_data, apply_amplitude_correction=True,
+        apply_zero_crossing_correction=True,
+    ):
+        """分析波形并返回分析使用的磁场数据。
+
+        已补偿的数据可将 ``apply_amplitude_correction`` / 
+        ``apply_zero_crossing_correction`` 设为 False，避免重复补偿。
+        处理顺序：单周期包络（幅值）补偿 → 过零点偏差（角度域）补偿 → 分析。
+        """
         logger.info("开始波形分析...")
         
         try:
             # 检查输入数据
             if angle_data is None or mag_data is None:
                 logger.info("波形分析错误：数据为空")
-                return {}
+                return {}, []
             if len(angle_data) == 0 or len(mag_data) == 0 or len(angle_data) != len(mag_data):
                 logger.info("波形分析错误：数据为空或长度不一致")
-                return {}
+                return {}, []
             
             # 转换为numpy数组
-            x = np.array(angle_data)
-            y = np.array(mag_data)
-            
-            results = self._wave_analysis(x, y)
-            return results
+            x = np.asarray(angle_data, dtype=float)
+            y = np.asarray(mag_data, dtype=float)
+
+            if not apply_amplitude_correction:
+                results = self._wave_analysis(
+                    x, y, apply_amplitude_correction=False, log_summary=False)
+                correction_info = dict(results.get("concentricity") or {})
+                correction_info["amp_applied"] = True
+                correction_info["waveform_corrected"] = True
+                correction_info.update(_zero_crossing_info(
+                    {'applied': False, 'reason': '数据已带过零点偏差补偿标记'}))
+                results["concentricity"] = correction_info
+                return results, y.tolist()
+
+            initial_results = self._wave_analysis(x, y)
+            correction_info = dict(initial_results.get("concentricity") or {})
+            if not correction_info.get("amp_applied"):
+                correction_info["waveform_corrected"] = False
+                initial_results["concentricity"] = correction_info
+                return initial_results, y.tolist()
+
+            corrected_y = self._apply_waveform_amplitude_correction(
+                x, y, initial_results.get("peak_details", []))
+            if corrected_y is None:
+                logger.warning("单周期包络修正未能生成有效增益，保留原始波形")
+                results = self._wave_analysis(
+                    x, y, apply_amplitude_correction=False, log_summary=False)
+                correction_info["amp_applied"] = False
+                correction_info["waveform_corrected"] = False
+                corrected_info = dict(results.get("concentricity") or {})
+                corrected_info.update(correction_info)
+                results["concentricity"] = corrected_info
+                return results, y.tolist()
+
+            corrected_y, zc_info = self._apply_zero_crossing_correction(
+                x, corrected_y, initial_results.get("pole_num"),
+                apply_zero_crossing_correction)
+            results = self._wave_analysis(
+                x, corrected_y, apply_amplitude_correction=False, log_summary=False)
+            corrected_info = dict(results.get("concentricity") or {})
+            corrected_info.update(correction_info)
+            corrected_info["waveform_corrected"] = True
+            corrected_info.update(_zero_crossing_info(zc_info))
+            results["concentricity"] = corrected_info
+            return results, corrected_y.tolist()
             
         except Exception as e:
             logger.info(f"波形分析过程中发生错误: {e}")
-            return {}
+            return {}, []
+
+    def _zero_crossing_table(self):
+        """设备过零点偏差曲线表（按极对数）：优先用注入值，否则读配置。"""
+        if self._zero_crossing_table_override is not None:
+            return self._zero_crossing_table_override
+        if self._zero_crossing_table_cache is None:
+            try:
+                from core.config_manager import get_config_manager
+                self._zero_crossing_table_cache = (
+                    get_config_manager().zero_crossing_compensation_table)
+            except Exception as exc:  # 配置不可用时不影响分析
+                logger.warning(f"读取过零点偏差补偿表失败: {exc}")
+                self._zero_crossing_table_cache = {}
+        return self._zero_crossing_table_cache
+
+    def _apply_zero_crossing_correction(self, x, y, pole_pairs, enabled=True):
+        """幅值补偿之后的角度域去扭曲（设备侧固定偏差）。
+
+        只改采样位置，不改幅值、不改角度列：补偿后的波形仍落在同一 0–360°
+        均匀网格上，可直接进入绘图 / 保存 / 分析。
+        """
+        if not enabled:
+            return y, {'applied': False, 'reason': '数据已带过零点偏差补偿标记'}
+        table = self._zero_crossing_table()
+        if not table:
+            return y, {'applied': False, 'reason': '配置中没有过零点偏差曲线'}
+        corrected, info = apply_zero_crossing(x, y, table, pole_pairs)
+        if corrected is None:
+            logger.info(f"过零点偏差补偿未应用: {info.get('reason')}")
+            return y, info
+        logger.info(
+            "过零点偏差补偿已应用: 曲线=%s (极对数 %s)，最大偏移 %.3f°"
+            % (info.get('key'), info.get('pole_pairs'), info.get('peak_deg', 0.0)))
+        return corrected, info
+
+    def _apply_waveform_amplitude_correction(self, x, y, peak_details):
+        """按 N/S 极值的一圈一次包络拟合，对整条波形施加平滑增益。"""
+        span = float(x[-1] - x[0]) + float(x[1] - x[0])
+        theta = 2.0 * np.pi * (x - x[0]) / span
+        sin_theta = np.sin(theta)
+        cos_theta = np.cos(theta)
+        gains = {}
+
+        for pole in ("N", "S"):
+            peaks = [item for item in peak_details if item.get("pole") == pole]
+            if len(peaks) < 4:
+                return None
+
+            peak_angles = np.asarray([item["angle"] for item in peaks], dtype=float)
+            peak_values = np.asarray([abs(float(item["value"])) for item in peaks], dtype=float)
+            peak_theta = 2.0 * np.pi * (peak_angles - x[0]) / span
+            coefficients, _, _, _ = self._fit_first_harmonic(peak_theta, peak_values)
+            envelope = (
+                coefficients[0] * sin_theta
+                + coefficients[1] * cos_theta
+                + coefficients[2]
+            )
+            if coefficients[2] <= 0 or np.any(envelope <= 0):
+                return None
+            gains[pole] = coefficients[2] / envelope
+
+        sample_gains = np.where(y >= 0, gains["N"], gains["S"])
+        base_gains = sample_gains.copy()
+        crossing_windows = []
+        last_crossing = None
+        for index in range(len(y) - 1):
+            if y[index] * y[index + 1] <= 0 and (
+                last_crossing is None or index - last_crossing > 10
+            ):
+                left = max(0, index - 10)
+                right = min(len(y), index + 11)
+                crossing_windows.append((left, right))
+                last_crossing = index
+
+        for left, right in crossing_windows:
+            # Use one gain across the zero-fit window, then taper back smoothly.
+            shared_gain = float(np.mean(base_gains[left:right]))
+            sample_gains[left:right] = shared_gain
+            for distance in range(1, 11):
+                weight = 1.0 - (3.0 * (distance / 11.0) ** 2
+                                - 2.0 * (distance / 11.0) ** 3)
+                left_index = left - distance
+                right_index = right - 1 + distance
+                if left_index >= 0:
+                    sample_gains[left_index] = (
+                        weight * shared_gain + (1.0 - weight) * base_gains[left_index]
+                    )
+                if right_index < len(y):
+                    sample_gains[right_index] = (
+                        weight * shared_gain + (1.0 - weight) * base_gains[right_index]
+                    )
+
+        return y * sample_gains
     
     def _detect_zero_angles(self, x, y):
         """检测过零点并线性拟合出各自的角度。"""
@@ -325,7 +485,7 @@ class WaveAnalysis:
         info["amp_applied"] = True
         return n_fixed, s_fixed, info
 
-    def _wave_analysis(self, x, y):
+    def _wave_analysis(self, x, y, apply_amplitude_correction=True, log_summary=True):
         """波形分析核心算法
         
         Args:
@@ -339,9 +499,8 @@ class WaveAnalysis:
             # =====================================================================
             # Part 0: 同轴度（偏心）修正——固定启用，不再由界面开关控制
             #   角度域：扣掉过零点偏差里的一圈一次分量
-            #   幅值域：扣掉极值幅值里的一圈一次偏移与灵敏度调制
-            #   两个域都只剥离一圈一次项，波形本身不做重采样，避免插值带来
-            #   额外谐波失真（THD / 面积仍按原始波形计算）。
+            #   幅值域：从 N/S 极值包络拟合单周期增益，作用于整条波形并保留过零点
+            #   后续统计基于补偿后的波形计算，已补偿输入不得再次应用该增益。
             # =====================================================================
             zero_angles_raw = self._detect_zero_angles(x, y)
             zero_angles, concentricity_info = self._concentricity_angle_correction(
@@ -446,11 +605,10 @@ class WaveAnalysis:
                 S_peak_values = S_part[S_peaks]
                 S_peak_source_indices = S_indices[S_peaks] if len(S_peaks) > 0 else np.array([], dtype=int)
 
-            # 同轴度修正（幅值域）：N/S 极值幅值扣掉一圈一次偏移与灵敏度调制。
-            # peak_details 里 'value' 仍保留原始值（与波形曲线对得上），
-            # 'abs_value' / 'error_percent' 用修正后的幅值，和统计口径一致。
+            # 先拟合 N/S 极值包络的一圈一次分量；正式分析时由外层应用到整条波形，
+            # 第二遍分析只读取拟合诊断，不重复修正极值。
             if len(N_peak_values) and len(S_peak_values):
-                N_peak_values, S_peak_values, amp_info = self._concentricity_amplitude_correction(
+                corrected_N_values, corrected_S_values, amp_info = self._concentricity_amplitude_correction(
                     x,
                     x[np.asarray(N_peak_source_indices, dtype=int)],
                     N_peak_values,
@@ -458,6 +616,9 @@ class WaveAnalysis:
                     S_peak_values,
                 )
                 concentricity_info.update(amp_info)
+                if apply_amplitude_correction and amp_info.get("amp_applied"):
+                    N_peak_values = corrected_N_values
+                    S_peak_values = corrected_S_values
             else:
                 concentricity_info.update({"amp_applied": False, "peak_count": 0})
 
@@ -717,7 +878,7 @@ class WaveAnalysis:
                 'concentricity': concentricity_info,
             }
 
-            if concentricity_info.get("angle_applied") or concentricity_info.get("amp_applied"):
+            if log_summary and (concentricity_info.get("angle_applied") or concentricity_info.get("amp_applied")):
                 logger.info(
                     "同轴度修正（固定启用）: 角度偏心 %.3f°(相位 %s)→ 过零点偏差 std %.3f°→%.3f°; "
                     "极值一圈一次幅值 N %.3f mT(%.2f%%, 相位 %s°), S %.3f mT(%.2f%%, 相位 %s°)"
@@ -732,14 +893,15 @@ class WaveAnalysis:
                        concentricity_info.get("s_1x_pct", 0.0),
                        concentricity_info.get("s_1x_phase_deg"))
                 )
-            else:
+            elif log_summary:
                 logger.info("同轴度修正：本次数据不满足修正条件，未做一圈一次剥离")
 
             # 记录最终指标，便于追踪分析结果。
             for key, value in results.items():
                 logger.debug(f"  {key}: {value}")
 
-            logger.info("=== 波形分析完成 ===")
+            if log_summary:
+                logger.info("=== 波形分析完成 ===")
 
             return results
 

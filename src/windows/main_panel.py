@@ -44,6 +44,7 @@ class MainPanel(QMainWindow):
             "nav_button_position": "config",
             "nav_button_history": "history",
             "nav_button_compare": "compare",
+            "nav_button_dual": "dual",
         }
 
         for btn_name, panel_id in self._nav_button_map.items():
@@ -87,6 +88,7 @@ class MainPanel(QMainWindow):
 
     def _load_panels(self):
         from windows.compare_panel import ComparePanel
+        from windows.dual_track_panel import DualTrackPanel
         from windows.history_panel import HistoryPanel
         from windows.measure_panel import MeasurePanel
         from windows.config_panel import ConfigPanel
@@ -98,6 +100,7 @@ class MainPanel(QMainWindow):
             ("config", ConfigPanel()),
             ("history", HistoryPanel()),
             ("compare", ComparePanel()),
+            ("dual", DualTrackPanel()),
         ]
 
         for panel_id, panel in panels:

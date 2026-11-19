@@ -13,6 +13,10 @@ from .path_utils import get_config_path
 from .chuck_compensation import (CONFIG_KEY as CHUCK_COMPENSATION_KEY,
                                  GLOBAL_KEY as CHUCK_COMPENSATION_GLOBAL_KEY,
                                  comp_key, dump_table, parse_table)
+from .zero_crossing_compensation import (
+    CONFIG_KEY as ZERO_CROSSING_COMPENSATION_KEY,
+    dump_table as dump_zero_crossing_table,
+    parse_table as parse_zero_crossing_table)
 
 logger = get_logger('ConfigManager')
 
@@ -376,6 +380,8 @@ class ConfigManager(QObject):
         PGA_IDAC_OFFSETS_KEY: '{}',
         # 爪盘(空测)单周期补偿曲线：{"PGA:IDAC:速度": {"step_deg":1.0,"values":[...]}}
         CHUCK_COMPENSATION_KEY: '{}',
+        # 过零点偏差补偿曲线（设备侧角域固定误差）：{"32": {"step_deg":0.5,"values":[...]}}
+        ZERO_CROSSING_COMPENSATION_KEY: '{}',
         # 量程估计值（mT），两个界面共用
         RANGE_ESTIMATE_KEY: '',
         # 测试位置移动方案: x_first=先X后Z, z_first=先Z后X, x_extra=先X+X偏移再Z再X回退
@@ -646,6 +652,22 @@ class ConfigManager(QObject):
         table = self.chuck_compensation_table
         table[str(key)] = (float(step_deg), values)
         self._config[CHUCK_COMPENSATION_KEY] = dump_table(table)
+        return self.save()
+
+    # ==================== 过零点偏差补偿曲线 ====================
+
+    @property
+    def zero_crossing_compensation_table(self) -> dict:
+        """全部设备曲线：``{极对数: (step_deg, values)}``（``*`` 为兜底键）。"""
+        return parse_zero_crossing_table(
+            self.get(ZERO_CROSSING_COMPENSATION_KEY, ''))
+
+    def set_zero_crossing_compensation_key(self, key: str, values,
+                                           step_deg: float = 0.5) -> bool:
+        """按极对数（或通配键 ``*``）保存设备过零点偏差曲线（单位：度）。"""
+        table = self.zero_crossing_compensation_table
+        table[str(key)] = (float(step_deg), values)
+        self._config[ZERO_CROSSING_COMPENSATION_KEY] = dump_zero_crossing_table(table)
         return self.save()
 
     @property

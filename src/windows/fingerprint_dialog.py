@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (QDialog, QLabel, QTabWidget, QVBoxLayout, QWidget)
 from pyqtgraph import mkPen
 
 from core.defect_fingerprint import BIN_DEG, CURVES, PALETTE, grid_angles
+from windows.plot_utils import DoubleClickReset
 
 BAND_BRUSH = (52, 152, 219, 38)
 MEAN_COLOR = "#2c3e50"
@@ -88,6 +89,7 @@ class FingerprintResultDialog(QDialog):
         plot.plotItem.setLabel("left", "相对偏差", units="%")
         plot.setTitle(title, size="10pt", color="#7f8c8d")
         plot.addLegend(offset=(10, 10))
+        plot.double_click_reset = DoubleClickReset(plot)
         return plot
 
     # ------------------------------------------------------------------ 填数据
@@ -154,6 +156,9 @@ class FingerprintResultDialog(QDialog):
             return
         margin = max((hi - lo) * 0.12, 0.05)
         plot.setYRange(lo - margin, hi + margin, padding=0)
+        reset = getattr(plot, 'double_click_reset', None)
+        if reset is not None:
+            reset.remember()
 
     # ------------------------------------------------------------------ 文本
     def _header_text(self):

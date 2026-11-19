@@ -1,0 +1,5 @@
+# 二进制文件声明（各文本文件保持仓库现有换行符，不做一次性重排）
+*.png  binary
+*.ico  binary
+*.dll  binary
+*.zip  binary

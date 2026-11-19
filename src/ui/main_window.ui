@@ -175,6 +175,28 @@
             </layout>
            </widget>
           </item>
+          <item>
+           <widget class="QWidget" name="nav_button_dual" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>48</height>
+             </size>
+            </property>
+            <layout class="QHBoxLayout" name="nav_btn_dual_layout">
+             <item>
+              <widget class="QLabel" name="nav_text_dual">
+               <property name="text">
+                <string>双码道解算</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

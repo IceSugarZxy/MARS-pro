@@ -23,6 +23,7 @@ from core.path_utils import get_data_dir
 from core.plot_data_reader import (TABLE_COLUMNS, read_plot_csv,
                                    pole_count_text, scan_plot_data_records)
 from windows.fingerprint_dialog import FingerprintResultDialog
+from windows.plot_utils import DoubleClickReset
 
 logger = get_logger('ComparePanel')
 
@@ -59,7 +60,20 @@ class CurveLoadThread(QThread):
 
     def run(self):
         try:
-            _info, angle, mag = read_plot_csv(self.path)
+            info, angle, mag = read_plot_csv(self.path)
+            if info.get('amplitude_compensation') != '已应用':
+                from core.data_process import DataProcess
+                from core.defect_fingerprint import analyze_run
+                from windows.wave_analysis import WaveAnalysis
+
+                run = analyze_run(self.path, DataProcess(queue.Queue()), WaveAnalysis())
+                if run.get('error'):
+                    logger.warning(f"波形单周期补偿失败 {self.path}: {run['error']}")
+                elif (run.get('analysis', {}).get('concentricity', {})
+                      .get('waveform_corrected')):
+                    point_count = len(run['mag'])
+                    angle = np.arange(point_count) * (360.0 / point_count)
+                    mag = run['mag'].tolist()
         except Exception as exc:
             logger.warning(f"读取波形失败 {self.path}: {exc}")
             angle, mag = [], []
@@ -521,6 +535,7 @@ class ComparePanel(QWidget):
             lo, hi = float(np.nanmin(values)), float(np.nanmax(values))
             margin = max((hi - lo) * 0.1, 1.0)
             full_plot.setYRange(lo - margin, hi + margin, padding=0)
+        full_plot.double_click_reset = DoubleClickReset(full_plot)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)

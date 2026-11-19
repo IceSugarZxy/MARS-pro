@@ -119,6 +119,10 @@ def apply_sample_info_row(sample_info: dict, row) -> None:
         sample_info['remark'] = value
     elif "保存时间" in key:
         sample_info['save_time'] = value
+    elif "单周期包络补偿" in key:
+        sample_info['amplitude_compensation'] = value
+    elif "过零点偏差补偿" in key:
+        sample_info['zero_crossing_compensation'] = value
     elif "极数口径" in key or "极数单位" in key:
         sample_info['pole_unit'] = value
     elif "极数" in key:

@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
+from windows.plot_utils import DoubleClickReset
+
 
 class AnalysisDetailDialog(QDialog):
     """显示过零点、极值点和周期误差详情。"""
@@ -74,6 +76,8 @@ class AnalysisDetailDialog(QDialog):
         self.plot_widget.plotItem.setLabel("left", "磁场", units="mT")
         self.plot_container_layout.addWidget(self.plot_widget)
         layout.addWidget(self.plot_container, 1, 0)
+        self._reset_waveform = DoubleClickReset(self.waveform_plot_widget)
+        self._reset_detail = DoubleClickReset(self.plot_widget)
 
         self.stats_table = QTableWidget()
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -94,6 +98,8 @@ class AnalysisDetailDialog(QDialog):
             self._populate_extreme_point()
         elif self.detail_type == "period_error":
             self._populate_period_error()
+        self._reset_waveform.remember()
+        self._reset_detail.remember()
 
     def _plot_waveform(self):
         self.plot_widget.clear()

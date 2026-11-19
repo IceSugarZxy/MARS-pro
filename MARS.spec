@@ -68,6 +68,14 @@ test_dir = os.path.join(SPEC_DIR, '一致性测试')
 if os.path.isdir(test_dir):
     datas.append((test_dir, '一致性测试'))
 
+# 双码道解算用的原厂校准 DLL（运行时按 exe 同级 vendor/iC-MU150/ 查找）
+_vendor_dll_dir = os.path.join(SPEC_DIR, 'vendor', 'iC-MU150')
+if os.path.isdir(_vendor_dll_dir):
+    for _name in os.listdir(_vendor_dll_dir):
+        _source = os.path.join(_vendor_dll_dir, _name)
+        if os.path.isfile(_source):
+            datas.append((_source, os.path.join('vendor', 'iC-MU150')))
+
 # ============================================================================
 # Hidden imports
 # ============================================================================

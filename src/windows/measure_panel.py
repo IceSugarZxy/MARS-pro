@@ -491,6 +491,7 @@ class MeasurePanel(QWidget):
     def _on_config_idac_changed(self, index):
         """IDAC 档位变化：刷新选档提示，并在已连接时下发 IDAC 指令。"""
         self._update_range_selection_label()
+        self._apply_default_y_limit()
         connected = bool(self.serial_manager and self.serial_manager.get_connection_status())
         if connected and index != getattr(self, '_idac_confirmed', None):
             self._request_idac_set(index)
@@ -498,6 +499,7 @@ class MeasurePanel(QWidget):
     def _on_config_pga_gain_changed(self, index):
         """配置管理器 PGA 档位改变：同步下拉框，若为新档位则发送 PGA<n>~ 并等待回信。"""
         self._update_range_selection_label()
+        self._apply_default_y_limit()
         combo_sensor_range = self.findChild(QComboBox, "combo_sensor_range")
         if combo_sensor_range and combo_sensor_range.currentIndex() != index:
             combo_sensor_range.blockSignals(True)
@@ -798,10 +800,22 @@ class MeasurePanel(QWidget):
 
             # 使用plot_window的初始化方法
             self.plot_window.init_plot_display(plot_display_widget)
+            self._apply_default_y_limit()
 
             logger.info("绘图窗口初始化完成")
         else:
             logger.warning("未找到widget_plot_display控件")
+
+    def _apply_default_y_limit(self):
+        """把绘图纵轴恢复到阶梯基准档（±50 mT）。
+
+        开始新测试、切换 PGA/IDAC 档位时调用；波形到达后 `PlotWindow.update_plot`
+        会按当前峰值向上取到最近的阶梯档（±50 / ±100 / ±150 …）。
+        """
+        if not self.plot_window:
+            return
+        self.plot_window.reset_y_limit()
+        logger.info(f"绘图纵轴基准档: ±{self.plot_window.y_limit_mt:.0f} mT（按峰值自动升档）")
 
     def _init_serial_controls(self):
         """Initialize serial controls embedded in the test configuration area."""
@@ -1240,6 +1254,8 @@ class MeasurePanel(QWidget):
         self._reset_test_interface()
         self._disable_function_buttons()
         self.clear_plot()
+        # 每次测试的默认态：纵轴回到当前档位量程，不同样品曲线高度直接可比
+        self._apply_default_y_limit()
 
         # 重置测量停止标志
         self.data_process._stop_measure_processing = False

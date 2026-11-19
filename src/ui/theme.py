@@ -472,24 +472,26 @@ def get_base_stylesheet() -> str:
 
     /* 导航按钮 - 具体按钮 */
     QWidget#nav_button_measure, QWidget#nav_button_position,
-    QWidget#nav_button_history, QWidget#nav_button_compare {{
+    QWidget#nav_button_history, QWidget#nav_button_compare,
+    QWidget#nav_button_dual {{
         background-color: transparent;
         border: none;
     }}
     QWidget#nav_button_measure:hover,
     QWidget#nav_button_position:hover, QWidget#nav_button_history:hover,
-    QWidget#nav_button_compare:hover {{
+    QWidget#nav_button_compare:hover, QWidget#nav_button_dual:hover {{
         background-color: {COLOR_BG_PANEL};
     }}
     QWidget#nav_button_measure:selected,
     QWidget#nav_button_position:selected, QWidget#nav_button_history:selected,
-    QWidget#nav_button_compare:selected {{
+    QWidget#nav_button_compare:selected, QWidget#nav_button_dual:selected {{
         background-color: {COLOR_PRIMARY_LIGHT};
     }}
 
     /* 导航按钮文字 */
     QLabel#nav_text_measure, QLabel#nav_text_position,
-    QLabel#nav_text_history, QLabel#nav_text_compare {{
+    QLabel#nav_text_history, QLabel#nav_text_compare,
+    QLabel#nav_text_dual {{
         color: {COLOR_TEXT_PRIMARY};
         background: transparent;
         border: none;
@@ -575,6 +577,96 @@ def get_base_stylesheet() -> str:
         color: {COLOR_TEXT_PRIMARY};
         background: transparent;
         border: none;
+    }}
+
+    /* 双码道解算页 */
+    QLabel#panel_subtitle {{
+        font-size: 13px;
+        color: {COLOR_TEXT_SECONDARY};
+        background: transparent;
+        border: none;
+    }}
+
+    QLabel#kpi_value_rmin, QLabel#kpi_value_rmax, QLabel#kpi_value_peak,
+    QLabel#kpi_value_margin, QLabel#kpi_value_worst {{
+        font-size: 18px;
+        font-weight: bold;
+        color: {COLOR_PRIMARY};
+        background: transparent;
+        border: none;
+    }}
+
+    QLabel#kpi_caption_verdict, QLabel#kpi_caption_rmin, QLabel#kpi_caption_rmax,
+    QLabel#kpi_caption_peak, QLabel#kpi_caption_margin, QLabel#kpi_caption_worst {{
+        font-size: 12px;
+        color: {COLOR_TEXT_SECONDARY};
+        background: transparent;
+        border: none;
+    }}
+
+    QLabel#kpi_value_verdict {{
+        font-size: 24px;
+        font-weight: bold;
+        color: {COLOR_PRIMARY};
+        background: transparent;
+        border: none;
+    }}
+
+    /* 双码道解算页：浏览按钮做紧凑处理（解算/清屏见下方单独配色） */
+    QPushButton#btn_pick_outer, QPushButton#btn_pick_inner {{
+        padding: 1px 10px;
+        min-height: 22px;
+        font-size: {FONT_SIZE_S};
+    }}
+
+    /* 双码道解算页：解算为主操作（实心蓝）、清屏为次操作（白底描边），尺寸一致 */
+    QPushButton#btn_solve, QPushButton#btn_clear {{
+        min-height: 22px;
+        max-height: 22px;
+        padding: 1px 10px;
+        font-size: {FONT_SIZE_M};
+        border-radius: {BORDER_RADIUS};
+    }}
+
+    QPushButton#btn_solve {{
+        background-color: {COLOR_PRIMARY};
+        color: #ffffff;
+        border: 1px solid {COLOR_PRIMARY};
+        font-weight: bold;
+    }}
+
+    QPushButton#btn_solve:hover {{
+        background-color: {COLOR_PRIMARY_HOVER};
+        border-color: {COLOR_PRIMARY_HOVER};
+    }}
+
+    QPushButton#btn_solve:pressed {{
+        background-color: {COLOR_PRIMARY_HOVER};
+        border-color: {COLOR_PRIMARY_HOVER};
+    }}
+
+    QPushButton#btn_solve:disabled {{
+        background-color: {COLOR_BG_DARKEST};
+        border-color: {COLOR_BG_DARKEST};
+        color: {COLOR_TEXT_MUTED};
+    }}
+
+    QPushButton#btn_clear {{
+        background-color: {COLOR_BG_DARK};
+        color: {COLOR_PRIMARY};
+        border: 1px solid {COLOR_PRIMARY_LIGHT};
+    }}
+
+    QPushButton#btn_clear:hover {{
+        background-color: {COLOR_PRIMARY};
+        border-color: {COLOR_PRIMARY};
+        color: #ffffff;
+    }}
+
+    QPushButton#btn_clear:pressed {{
+        background-color: {COLOR_PRIMARY_HOVER};
+        border-color: {COLOR_PRIMARY_HOVER};
+        color: #ffffff;
     }}
 
     /* 通用卡片/面板 */
