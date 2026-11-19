@@ -5,7 +5,6 @@
 """
 
 import os
-import queue
 
 import numpy as np
 import pyqtgraph as pg
@@ -60,23 +59,11 @@ class CurveLoadThread(QThread):
 
     def run(self):
         try:
-            info, angle, mag = read_plot_csv(self.path)
-            if info.get('amplitude_compensation') != '已应用':
-                from core.data_process import DataProcess
-                from core.defect_fingerprint import analyze_run
-                from windows.wave_analysis import WaveAnalysis
-
-                run = analyze_run(self.path, DataProcess(queue.Queue()), WaveAnalysis())
-                if run.get('error'):
-                    logger.warning(f"波形单周期补偿失败 {self.path}: {run['error']}")
-                elif (run.get('analysis', {}).get('concentricity', {})
-                      .get('waveform_corrected')):
-                    point_count = len(run['mag'])
-                    angle = np.arange(point_count) * (360.0 / point_count)
-                    mag = run['mag'].tolist()
+            _info, angle, mag = read_plot_csv(self.path)
         except Exception as exc:
             logger.warning(f"读取波形失败 {self.path}: {exc}")
             angle, mag = [], []
+        # 已保存的 CSV 就是补偿后的单圈波形：直接预览，不再重复补偿
         self.curve_ready.emit(self.path, angle, mag)
 
 
@@ -98,14 +85,11 @@ class AnalysisThread(QThread):
 
     def run(self):
         try:
-            from core.data_process import DataProcess
             from windows.wave_analysis import WaveAnalysis
 
-            proc = DataProcess(queue.Queue())
             analyzer = WaveAnalysis()
             runs, failed_runs, was_cancelled = analyze_runs(
                 self.paths,
-                proc,
                 analyzer,
                 progress_cb=lambda done, total, label: self.progress.emit(done, total, label),
                 cancel_cb=lambda: self._cancel,

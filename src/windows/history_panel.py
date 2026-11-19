@@ -269,24 +269,13 @@ class HistoryPanel(QWidget):
 
             logger.info(f"读取历史数据: {len(angle_data)} 个数据点")
 
-            import queue as _queue
-
-            from core.data_process import DataProcess
             from core.defect_fingerprint import analyze_run
             from windows.wave_analysis import WaveAnalysis
 
-            run = analyze_run(file_path, DataProcess(_queue.Queue()), WaveAnalysis())
+            # 已保存的 CSV 就是补偿后的单圈波形：直读直算，不再重复滤波 / 补偿
+            run = analyze_run(file_path, WaveAnalysis())
             if run.get("error"):
                 logger.warning(f"历史数据波形分析失败: {run['error']}")
-            elif sample_info.get("amplitude_compensation") != "已应用":
-                concentricity = (run.get("analysis") or {}).get("concentricity") or {}
-                if concentricity.get("waveform_corrected"):
-                    point_count = len(run["mag"])
-                    angle_data = [i * 360.0 / point_count for i in range(point_count)]
-                    mag_data = run["mag"].tolist()
-                    sample_info["amplitude_compensation"] = "已应用"
-                if concentricity.get("zero_crossing_applied"):
-                    sample_info["zero_crossing_compensation"] = "已应用"
 
             # 切换到测量面板并加载数据
             self._switch_to_measure_and_load(

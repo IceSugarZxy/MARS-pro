@@ -210,6 +210,37 @@ def read_plot_csv_mag(file_path: str):
     return mags, sample_info, sample_info.get('save_time', '')
 
 
+def read_plot_csv_wave(file_path: str):
+    """读波形两列（角度 + 磁场），返回 ``(angles, mags, sample_info, save_time)``。
+
+    用于「已保存数据直读直算」的场景（历史加载 / 数据比对 / 缺陷指纹）：文件里
+    就是补偿后的单圈 0–360° 网格，读出来即可直接分析，不再重复滤波或补偿。
+    """
+    sample_info = {}
+    angles = []
+    mags = []
+    data_started = False
+
+    with open(file_path, 'r', encoding='utf-8-sig', newline='') as fh:
+        for row in csv.reader(fh):
+            if not row:
+                continue
+            if not data_started:
+                if is_plot_data_header(row):
+                    data_started = True
+                    continue
+                apply_sample_info_row(sample_info, row)
+                continue
+            try:
+                angles.append(float(row[0]))
+                mags.append(float(row[1]))
+            except (ValueError, IndexError):
+                continue
+
+    _normalize_sample_info_poles(sample_info)
+    return angles, mags, sample_info, sample_info.get('save_time', '')
+
+
 def time_label(save_time: str, file_path: str = "") -> str:
     """把 20260930_103313 这类时间戳转成 10:33:13；失败时退回文件名。"""
     if len(save_time) >= 15 and save_time[8] == '_':

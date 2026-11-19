@@ -15,7 +15,7 @@
 
 import numpy as np
 
-from core.plot_data_reader import read_plot_csv_mag, time_label
+from core.plot_data_reader import read_plot_csv_wave, time_label
 
 BIN_DEG = 0.5                              # 网格角度分辨率
 BINS = int(round(360.0 / BIN_DEG))         # 720 格
@@ -188,11 +188,15 @@ def build_curves(mag, result) -> dict:
     }
 
 
-def analyze_run(path, proc, analyzer, label=None) -> dict:
-    """分析单个数据文件；失败时返回带 'error' 的字典。"""
+def analyze_run(path, analyzer, label=None) -> dict:
+    """分析单个已保存的数据文件；失败时返回带 'error' 的字典。
+
+    保存的 CSV 是补偿后的单圈 0–360° 波形，这里**直读直算**：不再跑
+    `_process_measure_algorithm()`（重复低通滤波），也不再补算幅值 / 过零点补偿。
+    """
     result = {'path': path, 'label': label or time_label('', path)}
     try:
-        mags, meta, save_stamp = read_plot_csv_mag(path)
+        angles, mags, meta, save_stamp = read_plot_csv_wave(path)
     except Exception as exc:
         result['error'] = '读取失败: %s' % exc
         return result
@@ -201,26 +205,13 @@ def analyze_run(path, proc, analyzer, label=None) -> dict:
         result['error'] = '数据点不足（%d 点）' % len(mags)
         return result
 
-    try:
-        angle, processed = proc._process_measure_algorithm(list(mags))
-    except Exception as exc:
-        result['error'] = '数据处理失败: %s' % exc
+    if len(angles) != len(mags):
+        result['error'] = '角度与磁场列长度不一致'
         return result
-
-    processed = np.asarray(processed, dtype=float)
-    if len(processed) < 1000:
-        result['error'] = '有效数据点不足（%d 点）' % len(processed)
-        return result
-
-    already_compensated = meta.get('amplitude_compensation') == '已应用'
-    already_zero_crossing = meta.get('zero_crossing_compensation') == '已应用'
+    angle = np.asarray(angles, dtype=float)
+    processed = np.asarray(mags, dtype=float)
     try:
-        analysis, processed = analyzer.analyze_waveform_with_correction(
-            angle,
-            processed,
-            apply_amplitude_correction=not already_compensated,
-            apply_zero_crossing_correction=not already_zero_crossing,
-        )
+        analysis, processed = analyzer.analyze_only(angle, processed)
     except Exception as exc:
         result['error'] = '波形分析失败: %s' % exc
         return result
@@ -251,8 +242,8 @@ def analyze_run(path, proc, analyzer, label=None) -> dict:
     return result
 
 
-def analyze_runs(paths, proc, analyzer, progress_cb=None, cancel_cb=None):
-    """依次分析多个文件。
+def analyze_runs(paths, analyzer, progress_cb=None, cancel_cb=None):
+    """依次分析多个文件（直读直算，不重复滤波 / 补偿）。
 
     Returns:
         (runs, failed, cancelled)
@@ -266,7 +257,7 @@ def analyze_runs(paths, proc, analyzer, progress_cb=None, cancel_cb=None):
     for index, path in enumerate(paths):
         if cancel_cb and cancel_cb():
             return runs, failed, True
-        run = analyze_run(path, proc, analyzer)
+        run = analyze_run(path, analyzer)
         if run.get('error'):
             failed.append(run)
         else:

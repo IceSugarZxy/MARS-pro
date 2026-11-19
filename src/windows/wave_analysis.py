@@ -133,6 +133,25 @@ class WaveAnalysis:
         results, _ = self.analyze_waveform_with_correction(angle_data, mag_data)
         return results
 
+    def analyze_only(self, angle_data, mag_data):
+        """只做波形分析，**不做任何补偿**（读已保存数据时用）。
+
+        保存的 CSV 里已经是补偿后的单圈波形，历史加载 / 比对 / 缺陷指纹直接分析即可：
+        不重复低通滤波、不再补算幅值与过零点补偿，读什么算什么。
+
+        Returns:
+            ``(results, y)``；输入非法时返回 ``({}, [])``。
+        """
+        if angle_data is None or mag_data is None:
+            return {}, []
+        x = np.asarray(angle_data, dtype=float)
+        y = np.asarray(mag_data, dtype=float)
+        if x.size == 0 or x.size != y.size:
+            return {}, []
+        results = self._wave_analysis(x, y, apply_amplitude_correction=False,
+                                      log_summary=True)
+        return results, y.tolist()
+
     def analyze_waveform_with_correction(
         self, angle_data, mag_data, apply_amplitude_correction=True,
         apply_zero_crossing_correction=True,
