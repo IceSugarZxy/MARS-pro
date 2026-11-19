@@ -119,6 +119,8 @@ def apply_sample_info_row(sample_info: dict, row) -> None:
         sample_info['remark'] = value
     elif "保存时间" in key:
         sample_info['save_time'] = value
+    elif "一圈点数" in key:
+        sample_info['round_points'] = value
     elif "单周期包络补偿" in key:
         sample_info['amplitude_compensation'] = value
     elif "过零点偏差补偿" in key:

@@ -372,6 +372,8 @@ class ConfigManager(QObject):
         # 采集速度档位: 0=高精度, 1=均衡, 2=高速（换算见 serial_command.TEST_SPEED_TO_COMMANDS）
         # 默认 1=均衡：高精度档转速较慢，不适合作为开机默认
         'test_speed': '1',
+        # 旋转一圈数据是否按"闭合点"裁切：0=不裁切（收到多少点就用多少点映射 0–360°，默认）
+        'closure_trim': '0',
         # PGA 增益档位: 0=×1 ~ 7=×128（默认 0=×1，量程最大）
         'pga_gain': str(PGA_DEFAULT_INDEX),
         # IDAC 电流档位: 3~6（默认 4 = 750µA，与旧版连接后设置一致）
@@ -920,6 +922,21 @@ class ConfigManager(QObject):
     def test_speed(self, value: int) -> None:
         self.set('test_speed', value)
         self.signal_test_speed_changed.emit(value)
+
+    @property
+    def closure_trim(self) -> bool:
+        """旋转一圈数据是否按闭合点裁切。
+
+        固件按“精确一圈”出流（每圈点数由采集档位固定：131072 / 65536 / 32768），
+        所以默认 **不裁切**——收到多少点就按多少点映射 0–360°，保证一圈点数是固定值，
+        也不会因为裁切把整圈映射拉伸。设为 1 时恢复旧行为：在标称尾点 ±0.2% 范围内
+        找与起点最闭合的点，据此截断（旧数据里 32756 这类点数就是这么来的）。
+        """
+        return str(self.get('closure_trim', '0')).strip() in ('1', 'true', 'True')
+
+    @closure_trim.setter
+    def closure_trim(self, value: bool) -> None:
+        self.set('closure_trim', '1' if value else '0')
 
     @property
     def test_movement_scheme(self) -> str:

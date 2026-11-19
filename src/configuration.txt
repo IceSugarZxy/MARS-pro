@@ -13,6 +13,7 @@ inner_x_offset:1.0
 inner_z_offset:1.0
 retract_distance:0.0
 test_speed:2
+closure_trim:0
 sensor_range:1
 stage_step_distance:0.5
 pga_gain:3

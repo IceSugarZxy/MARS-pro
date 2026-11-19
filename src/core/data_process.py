@@ -1628,9 +1628,9 @@ class DataProcess(QObject):
 
         算法流程：
         1. 低通滤波去除高频噪声
-        2. 使用预计算常量确定中间一段360°数据的大致范围
-        3. 在理论一圈点数附近搜索最佳首尾闭合点
-        4. 根据实际闭合点数重新计算角度分辨率
+        2. 默认整段使用收到的数据（固件按“精确一圈”出流）；配置 `closure_trim=1`
+           时才在标称尾点附近搜索最佳首尾闭合点并裁切
+        3. 根据实际点数计算角度分辨率（0-360°）
 
         Args:
             measure_list: 原始测量数据列表
@@ -1645,13 +1645,14 @@ class DataProcess(QObject):
         # Step 1: 低通滤波
         measure_list = self._lowpass_filter(measure_list)
 
-        # Step 2: 按 rawdata 的 1/6 到 5/6 粗截取一圈，并在 5/6 附近寻找闭合点。
+        # Step 2: 固件按“精确一圈”出流，收到多少点就按多少点映射 0-360°（默认不裁切）。
+        # 只有配置 closure_trim=1 时才回到旧行为：在标称尾点 ±0.2% 范围内找闭合点并裁切。
         total_length = len(measure_list)
         closure_found = False
         closure_score = float("nan")
+        trim_enabled = bool(getattr(self.config, 'closure_trim', False))
 
-        # 数据充足时：rawdata 为一圈半数据，1/6 到 5/6 为中间完整一圈的粗范围。
-        if total_length >= 6:
+        if trim_enabled and total_length >= 6:
             start_index = int(round(total_length * CLOSURE_ROUGH_START_FRACTION))
             rough_end_index = int(round(total_length * CLOSURE_ROUGH_END_FRACTION))
             start_index = max(0, min(total_length - 2, start_index))
@@ -1670,17 +1671,21 @@ class DataProcess(QObject):
                 rough_end_index,
                 estimated_period_points,
             )
-        # 数据严重不足：取全部数据
         else:
+            # 不裁切（默认）或数据太少：整段使用收到的数据
             start_index = 0
-            end_index = total_length - 1
-            logger.warning(f"数据严重不足，取全部数据: {total_length} 个点")
+            end_index = max(0, total_length - 1)
+            if trim_enabled:
+                logger.warning(f"数据严重不足，取全部数据: {total_length} 个点")
+            else:
+                logger.info("旋转一圈数据：整圈使用收到点数 %d 点（不裁切）" % total_length)
 
         # 提取数据。闭合失败时 end_index 已经回退为 5/6 粗尾点。
         extracted_values = measure_list[start_index:end_index + 1]
         data_length = len(extracted_values)
 
         logger.info(f"提取数据: 索引 {start_index} - {end_index}，共 {data_length} 个数据点")
+        self._log_round_quality(extracted_values, total_length, closure_found)
 
         # Step 3: 用实际闭合点数计算角度分辨率（0-360°）
         if data_length > 1:
@@ -1703,6 +1708,30 @@ class DataProcess(QObject):
         logger.info("数据处理完成")
 
         return angle_data_for_plot, value_data_for_plot
+
+    def _log_round_quality(self, values, total_length, closure_found):
+        """记录一圈数据的体检结果：点数是否符合档位标称、首尾是否闭合。
+
+        固件按“精确一圈”出流，采集档位决定每圈点数（131072 / 65536 / 32768），
+        所以点数偏差与首尾跳变都值得留在日志里，方便核对数据质量。
+        """
+        count = len(values)
+        expected = SAMPLES_PER_REV.get(self.config.test_speed)
+        peak = float(np.ptp(np.asarray(values, dtype=float))) if count else 0.0
+        seam = abs(float(values[0]) - float(values[-1])) if count else 0.0
+        seam_ratio = seam / peak if peak else 0.0
+        logger.info(
+            "一圈数据体检: 点数=%d（档位标称=%s，收到=%d，裁切=%s）, "
+            "首尾差=%.6f mT（峰峰 %.3f%%）, closure_found=%s"
+            % (count, expected if expected is not None else '-', total_length,
+               '是' if count != total_length else '否', seam, seam_ratio * 100.0,
+               closure_found)
+        )
+        if expected is not None and count != expected:
+            logger.warning(
+                "一圈点数 %d 与该档位标称 %d 不一致（收到 %d 点）"
+                % (count, expected, total_length)
+            )
 
     # ========================================================================
     # 数据保存
@@ -1758,6 +1787,10 @@ class DataProcess(QObject):
                 else:
                     writer.writerow(['样品名称', sample_name])
                     writer.writerow(['保存时间', current_time])
+
+                # 旋转一圈的实际点数：固件按档位固定（131072/65536/32768），便于核对是否收到整圈
+                if self.measure_type != "vertical" and len(angle_data) > 1:
+                    writer.writerow(['一圈点数', len(angle_data)])
 
                 if analysis_results is not None:
                     concentricity = analysis_results.get('concentricity') or {}
