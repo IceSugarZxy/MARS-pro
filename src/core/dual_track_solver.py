@@ -4,7 +4,7 @@
 主轨（外圈）32 极对，游标轨（内圈）31 极对。流程按《CC01 从磁场 CSV 到相位码及
 B12 SPO 解算的 AI 交接说明》（2026-11-19）实现：
 
-    两轨 CSV（0–360° 均匀单圈网格，点数不限 → 统一重采样到 32768 点）
+    两轨 CSV（0–360° 均匀单圈网格，点数不限；两轨点数不同时按较多的一侧配对）
     → 每道重建正交 Sin/Cos（全带空间移位差分，或基波旁带 ±w）
     → 基波幅值和固定相位归一化
     → 每磁周期 1、2 次相位谐波拟合并按量化参数校正
@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.logger import get_logger
 from core.mu150_spo import (
     BOUNDARY,
     PHASE_PERIOD,
@@ -28,11 +29,12 @@ from core.mu150_spo import (
 )
 
 K_PER_DEGREE = PHASE_PERIOD / 360.0
-POINTS_PER_REV = 32768
-# 实测一圈点数随测量时长/采样档变化（32756、27720、65536 …），少于该值相位码不可信
+# 一圈最少点数（相位码可信下限）；实际网格点数取传入数据量，不写死
 MIN_POINTS_PER_REV = 1024
 MASTER_POLE_PAIRS = 32
 NONIUS_POLE_PAIRS = 31
+
+logger = get_logger('DualTrackSolver')
 
 # 重建模式：None 表示全带空间移位差分，其余为基波旁带 ±w
 RECONSTRUCTION_MODES = (
@@ -148,9 +150,9 @@ def read_scan(path, pole_pairs):
     """读取一份磁场 CSV，返回 (机械角, 磁场, 元信息)。
 
     表头前的行数动态统计（补偿文件会多一行“单周期包络补偿”）。实测数据的一圈点数
-    不是固定的（32756 / 27720 / 65536 …，随测量时长与采样档变化），因此只要求
-    0° 起的均匀单圈网格，读入后统一重采样到 `POINTS_PER_REV` 点——内外两轨各自独立
-    测量，只有这样才可能逐点配对，原厂 DLL 也只要求两轨长度一致。
+    不是固定的（32768 / 32756 / 65536 / 27720 …，随采集档位与测量时长变化），这里
+    只做校验、**保持原样**（不重采样）；两条码道对齐到同一网格由 `pair_tracks()`
+    按传入数据量决定。
     """
     path = Path(path)
     header = '角度(度),磁场强度'
@@ -183,11 +185,6 @@ def read_scan(path, pole_pairs):
     grid = np.arange(angle.size) * step
     if np.max(np.abs(angle - grid)) > max(1e-6, step * 0.01):
         raise DualTrackError(f'{path.name} 不是从 0° 开始的均匀单圈网格')
-    if angle.size != POINTS_PER_REV:
-        target = np.arange(POINTS_PER_REV) * (360.0 / POINTS_PER_REV)
-        mag = np.interp(target, angle, mag, period=360.0)
-        angle = target
-        meta['_原始点数'] = str(values.shape[0])
 
     stored_poles = meta.get('极数')
     unit = meta.get('极数口径')
@@ -197,6 +194,32 @@ def read_scan(path, pole_pairs):
         raise DualTrackError(
             f'{path.name} 记录极对数 {stored_poles}，与要求的 {pole_pairs} 不符')
     return angle, mag, meta
+
+
+def _resample(angle, mag, grid):
+    """把一圈采样重采样到 `grid`（周期插值）；网格已一致时原样返回。"""
+    if angle.size == grid.size and np.allclose(angle, grid, atol=1e-9):
+        return mag
+    return np.interp(grid, angle, mag, period=360.0)
+
+
+def pair_tracks(outer_angle, outer, inner_angle, inner):
+    """把两条码道对齐到同一角度网格，网格点数取**传入数据量**（两轨较多的一侧）。
+
+    原厂 DLL 只要求两轨等长，不需要固定点数：两轨点数相同时完全不动，
+    不同时把较少的一侧插值到较多的一侧，避免把高采样档的数据降到常数网格。
+    """
+    outer_angle = np.asarray(outer_angle, dtype=float)
+    inner_angle = np.asarray(inner_angle, dtype=float)
+    outer = np.asarray(outer, dtype=float)
+    inner = np.asarray(inner, dtype=float)
+    points = max(outer.size, inner.size)
+    grid = np.arange(points) * (360.0 / points)
+    if outer.size != inner.size:
+        logger.info(
+            '内外两轨点数不同（外 %d / 内 %d），按 %d 点配对'
+            % (outer.size, inner.size, points))
+    return grid, _resample(outer_angle, outer, grid), _resample(inner_angle, inner, grid)
 
 
 def _reconstruct(angle, mag, pole_pairs, width):
@@ -298,8 +321,8 @@ def solve_pair(outer_path, inner_path, dll_path, mode_name=DEFAULT_MODE,
     width = mode_width(mode_name)
     angle, outer, outer_meta = read_scan(outer_path, MASTER_POLE_PAIRS)
     inner_angle, inner, inner_meta = read_scan(inner_path, NONIUS_POLE_PAIRS)
-    if not np.array_equal(angle, inner_angle):
-        raise DualTrackError('内外圈角度网格未逐点配对')
+    # 网格点数跟着传入数据走：两轨相同时原样使用，不同时配对到较多的一侧
+    angle, outer, inner = pair_tracks(angle, outer, inner_angle, inner)
 
     master_before, master_cal = calibrate_track(
         angle, outer, MASTER_POLE_PAIRS, width, mode_name)
@@ -366,7 +389,6 @@ __all__ = [
     'MASTER_POLE_PAIRS',
     'MIN_POINTS_PER_REV',
     'NONIUS_POLE_PAIRS',
-    'POINTS_PER_REV',
     'RECONSTRUCTION_MODES',
     'DualTrackError',
     'DualTrackResult',
@@ -375,6 +397,7 @@ __all__ = [
     'calibrate_track',
     'describe_rating',
     'mode_width',
+    'pair_tracks',
     'quantize_phase',
     'read_scan',
     'solve_pair',

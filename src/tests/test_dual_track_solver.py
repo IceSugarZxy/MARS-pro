@@ -10,6 +10,7 @@ from core.dual_track_solver import (
     DualTrackError,
     calibrate_track,
     describe_rating,
+    pair_tracks,
     quantize_phase,
     read_scan,
     solve_pair,
@@ -72,8 +73,8 @@ class ReadScanTests(unittest.TestCase):
         self.assertEqual(meta.get('单周期包络补偿'), '已应用')
 
 
-class ReadScanResampleTests(unittest.TestCase):
-    """实测一圈点数不固定（32756 / 27720 / 65536），要重采样到统一网格才能配对。"""
+class ReadScanGridTests(unittest.TestCase):
+    """实测一圈点数不固定（32756 / 65536 …）：读取时保持原样，配对时按数据量决定网格。"""
 
     def _write_scan(self, points, pole_pairs=32, extra_meta=()):
         angles = np.arange(points) * (360.0 / points)
@@ -91,20 +92,36 @@ class ReadScanResampleTests(unittest.TestCase):
         self.addCleanup(Path(handle.name).unlink)
         return Path(handle.name), angles, mag
 
-    def test_resamples_short_grid_to_standard_length(self):
-        path, angles, mag = self._write_scan(32756)
-        angle, field, meta = read_scan(path, 32)
-        self.assertEqual(angle.size, 32768)
-        self.assertEqual(meta.get('_原始点数'), '32756')
-        self.assertAlmostEqual(float(angle[1] - angle[0]), 360.0 / 32768, places=9)
-        # 重采样后幅值仍应是同一圈正弦（峰值 ~20 mT）
-        self.assertLess(abs(float(np.max(field)) - float(np.max(mag))), 0.1)
+    def test_read_scan_keeps_native_point_count(self):
+        for points in (32756, 65536):
+            with self.subTest(points=points):
+                path, _angles, _mag = self._write_scan(points)
+                angle, field, _meta = read_scan(path, 32)
+                self.assertEqual(angle.size, points)
+                self.assertEqual(field.size, points)
+                self.assertAlmostEqual(float(angle[1] - angle[0]), 360.0 / points,
+                                       delta=1e-6)
 
-    def test_resamples_high_resolution_grid(self):
-        path, _angles, mag = self._write_scan(65536)
-        angle, field, _meta = read_scan(path, 32)
-        self.assertEqual(angle.size, 32768)
-        self.assertLess(abs(float(np.max(field)) - float(np.max(mag))), 0.1)
+    def test_pair_tracks_uses_larger_input_length(self):
+        short_angles = np.arange(32756) * (360.0 / 32756)
+        long_angles = np.arange(65536) * (360.0 / 65536)
+        short = 20.0 * np.sin(np.deg2rad(32 * short_angles))
+        long = 20.0 * np.sin(np.deg2rad(31 * long_angles))
+        grid, outer, inner = pair_tracks(short_angles, short, long_angles, long)
+        self.assertEqual(grid.size, 65536)
+        self.assertEqual(outer.size, 65536)
+        self.assertEqual(inner.size, 65536)
+        self.assertEqual(inner.tolist(), long.tolist())
+        self.assertLess(abs(float(np.max(outer)) - float(np.max(short))), 0.1)
+
+    def test_pair_tracks_keeps_equal_length_data_untouched(self):
+        angles = np.arange(32768) * (360.0 / 32768)
+        outer = np.sin(np.deg2rad(32 * angles))
+        inner = np.cos(np.deg2rad(31 * angles))
+        grid, paired_outer, paired_inner = pair_tracks(angles, outer, angles, inner)
+        self.assertTrue(np.array_equal(grid, angles))
+        self.assertTrue(np.array_equal(paired_outer, outer))
+        self.assertTrue(np.array_equal(paired_inner, inner))
 
     def test_rejects_too_few_points(self):
         path, _angles, _mag = self._write_scan(512)

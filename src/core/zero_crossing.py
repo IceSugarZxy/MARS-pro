@@ -193,7 +193,7 @@ def dual_track_difference(angle_deg, outer, inner, report_rounding=False):
     """外道减内道的位置偏差（在共同机械角网格上按 360° 周期插值）。
 
     Args:
-        angle_deg: 共同机械角网格（原始 32768 点）
+        angle_deg: 共同机械角网格（与解算所用网格一致，点数跟随输入数据）
         outer: 外道 ZeroPosition
         inner: 内道 ZeroPosition
         report_rounding: True 时按报告口径先舍入到 6 / 5 位小数再插值
