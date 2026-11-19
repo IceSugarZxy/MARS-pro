@@ -4,7 +4,7 @@
 主轨（外圈）32 极对，游标轨（内圈）31 极对。流程按《CC01 从磁场 CSV 到相位码及
 B12 SPO 解算的 AI 交接说明》（2026-11-19）实现：
 
-    两轨 CSV（同一 0–360° 均匀单圈网格，32768 点）
+    两轨 CSV（0–360° 均匀单圈网格，点数不限 → 统一重采样到 32768 点）
     → 每道重建正交 Sin/Cos（全带空间移位差分，或基波旁带 ±w）
     → 基波幅值和固定相位归一化
     → 每磁周期 1、2 次相位谐波拟合并按量化参数校正
@@ -29,6 +29,8 @@ from core.mu150_spo import (
 
 K_PER_DEGREE = PHASE_PERIOD / 360.0
 POINTS_PER_REV = 32768
+# 实测一圈点数随测量时长/采样档变化（32756、27720、65536 …），少于该值相位码不可信
+MIN_POINTS_PER_REV = 1024
 MASTER_POLE_PAIRS = 32
 NONIUS_POLE_PAIRS = 31
 
@@ -145,8 +147,10 @@ def quantize_phase(degrees):
 def read_scan(path, pole_pairs):
     """读取一份磁场 CSV，返回 (机械角, 磁场, 元信息)。
 
-    表头前的行数动态统计（补偿文件会多一行“单周期包络补偿”），并要求
-    32768 点、0° 起的均匀单圈网格。
+    表头前的行数动态统计（补偿文件会多一行“单周期包络补偿”）。实测数据的一圈点数
+    不是固定的（32756 / 27720 / 65536 …，随测量时长与采样档变化），因此只要求
+    0° 起的均匀单圈网格，读入后统一重采样到 `POINTS_PER_REV` 点——内外两轨各自独立
+    测量，只有这样才可能逐点配对，原厂 DLL 也只要求两轨长度一致。
     """
     path = Path(path)
     header = '角度(度),磁场强度'
@@ -165,13 +169,25 @@ def read_scan(path, pole_pairs):
 
     values = np.loadtxt(path, delimiter=',', skiprows=header_line,
                         encoding='utf-8-sig', ndmin=2)
-    if values.shape != (POINTS_PER_REV, 2) or not np.isfinite(values).all():
+    if values.ndim != 2 or values.shape[1] != 2:
         raise DualTrackError(
-            f'{path.name} 需要 {POINTS_PER_REV} 行 × 2 列有限数值，实际 {values.shape}')
+            f'{path.name} 需要 2 列（角度, 磁场强度）数值，实际 {values.shape}')
+    if not np.isfinite(values).all():
+        raise DualTrackError(f'{path.name} 含空值或非数值，实际 {values.shape}')
+    if values.shape[0] < MIN_POINTS_PER_REV:
+        raise DualTrackError(
+            f'{path.name} 只有 {values.shape[0]} 点，一圈至少需要 '
+            f'{MIN_POINTS_PER_REV} 点')
     angle, mag = values.T
-    grid = np.arange(angle.size) * 360.0 / angle.size
-    if np.max(np.abs(angle - grid)) > 1e-6:
+    step = 360.0 / angle.size
+    grid = np.arange(angle.size) * step
+    if np.max(np.abs(angle - grid)) > max(1e-6, step * 0.01):
         raise DualTrackError(f'{path.name} 不是从 0° 开始的均匀单圈网格')
+    if angle.size != POINTS_PER_REV:
+        target = np.arange(POINTS_PER_REV) * (360.0 / POINTS_PER_REV)
+        mag = np.interp(target, angle, mag, period=360.0)
+        angle = target
+        meta['_原始点数'] = str(values.shape[0])
 
     stored_poles = meta.get('极数')
     unit = meta.get('极数口径')
@@ -348,6 +364,7 @@ def bucket_histogram(buckets, bins=128):
 __all__ = [
     'DEFAULT_MODE',
     'MASTER_POLE_PAIRS',
+    'MIN_POINTS_PER_REV',
     'NONIUS_POLE_PAIRS',
     'POINTS_PER_REV',
     'RECONSTRUCTION_MODES',

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -69,6 +70,58 @@ class ReadScanTests(unittest.TestCase):
         angle, mag, meta = read_scan(COMPENSATED_DIR / '1-外.csv', 32)
         self.assertEqual(angle.size, 32768)
         self.assertEqual(meta.get('单周期包络补偿'), '已应用')
+
+
+class ReadScanResampleTests(unittest.TestCase):
+    """实测一圈点数不固定（32756 / 27720 / 65536），要重采样到统一网格才能配对。"""
+
+    def _write_scan(self, points, pole_pairs=32, extra_meta=()):
+        angles = np.arange(points) * (360.0 / points)
+        mag = 20.0 * np.sin(np.deg2rad(pole_pairs * angles)) + 1.5
+        handle = tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False,
+                                            encoding='utf-8-sig', newline='')
+        with handle as stream:
+            stream.write('样品名称,测试样品\n')
+            stream.write('极数,%d\n' % pole_pairs)
+            for line in extra_meta:
+                stream.write(line + '\n')
+            stream.write('角度(度),磁场强度\n')
+            for angle, value in zip(angles, mag):
+                stream.write(f'{angle:.6f},{value:.6f}\n')
+        self.addCleanup(Path(handle.name).unlink)
+        return Path(handle.name), angles, mag
+
+    def test_resamples_short_grid_to_standard_length(self):
+        path, angles, mag = self._write_scan(32756)
+        angle, field, meta = read_scan(path, 32)
+        self.assertEqual(angle.size, 32768)
+        self.assertEqual(meta.get('_原始点数'), '32756')
+        self.assertAlmostEqual(float(angle[1] - angle[0]), 360.0 / 32768, places=9)
+        # 重采样后幅值仍应是同一圈正弦（峰值 ~20 mT）
+        self.assertLess(abs(float(np.max(field)) - float(np.max(mag))), 0.1)
+
+    def test_resamples_high_resolution_grid(self):
+        path, _angles, mag = self._write_scan(65536)
+        angle, field, _meta = read_scan(path, 32)
+        self.assertEqual(angle.size, 32768)
+        self.assertLess(abs(float(np.max(field)) - float(np.max(mag))), 0.1)
+
+    def test_rejects_too_few_points(self):
+        path, _angles, _mag = self._write_scan(512)
+        with self.assertRaises(DualTrackError) as context:
+            read_scan(path, 32)
+        self.assertIn('一圈至少需要', str(context.exception))
+
+    def test_rejects_non_uniform_grid(self):
+        path, _angles, _mag = self._write_scan(4096)
+        lines = path.read_text(encoding='utf-8-sig').splitlines()
+        header = lines.index('角度(度),磁场强度')
+        first = lines[header + 1].split(',')
+        lines[header + 1] = f'{float(first[0]) + 1.0},{first[1]}'
+        path.write_text('\n'.join(lines) + '\n', encoding='utf-8-sig')
+        with self.assertRaises(DualTrackError) as context:
+            read_scan(path, 32)
+        self.assertIn('均匀单圈网格', str(context.exception))
 
 
 @unittest.skipUnless(DLL_PATH.exists(), '缺少原厂 MU_3SL_INTERFACE_64.DLL')
