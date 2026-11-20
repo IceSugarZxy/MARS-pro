@@ -26,6 +26,8 @@ from core.path_utils import get_project_root
 from core.zero_crossing import (ZeroCrossingError, dual_track_difference,
                                 same_direction_intervals,
                                 zero_position_deviation)
+from core.zero_node_judge import (LOWER_BOUND_DEG as ZERO_NODE_LOWER_BOUND,
+                                  ZeroNodeError, judge_three_nodes)
 from windows.csv_picker_dialog import pick_csv
 from windows.plot_utils import DoubleClickReset
 
@@ -69,11 +71,13 @@ class DualTrackPanel(QWidget):
         self._result = None
         self._outer_path = ''
         self._inner_path = ''
+        self._last_judge_text = ''
         self.kpi_labels = {key: getattr(self, f'kpi_value_{key}') for key in KPI_KEYS}
 
         self._init_plot()
         self._init_interval_plot()
         self._init_position_plot()
+        self._init_judge_plot()
         self._connect_signals()
         self._apply_defaults()
 
@@ -209,8 +213,46 @@ class DualTrackPanel(QWidget):
         self.position_grid.addWidget(self.position_plot, 0, 0)
         self._reset_position = DoubleClickReset(self.position_plot)
 
+    def _init_judge_plot(self):
+        """三点判定图：内道每个起点与「外道前/中/后节点」的差值 + 最小余量 H。"""
+        self.judge_plot = pg.PlotWidget()
+        self.judge_plot.setBackground('#ffffff')
+        self.judge_plot.showGrid(x=True, y=True, alpha=0.35)
+        self.judge_plot.setLabel('bottom', '内道起点机械角', units='°')
+        self.judge_plot.setLabel('left', '差值 / 最小余量 H', units='°')
+        self.judge_plot.plotItem.hideButtons()
+        self.judge_legend = self.judge_plot.addLegend(offset=(10, 10))
+        self.judge_legend.setVisible(False)
+        self.judge_front = self.judge_plot.plot(
+            pen=pg.mkPen('#95a5a6', width=0.8, style=Qt.DotLine), name='差值 前节点')
+        self.judge_middle = self.judge_plot.plot(
+            pen=pg.mkPen('#7f8c8d', width=0.8, style=Qt.DotLine), name='差值 对应节点')
+        self.judge_back = self.judge_plot.plot(
+            pen=pg.mkPen('#b2bec3', width=0.8, style=Qt.DotLine), name='差值 后节点')
+        self.judge_margin = self.judge_plot.plot(
+            pen=pg.mkPen('#2c3e50', width=1.6), name='最小余量 H')
+        self.judge_failed = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#c0392b'),
+                                               pen=pg.mkPen('#7b241c'))
+        self.judge_boundary = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#e0b23c'),
+                                                 pen=pg.mkPen('#b7950b'))
+        self.judge_plot.addItem(self.judge_failed)
+        self.judge_plot.addItem(self.judge_boundary)
+        self.judge_plot.addItem(pg.InfiniteLine(
+            pos=0.0, angle=0, pen=pg.mkPen('#c0392b', width=1, style=Qt.SolidLine),
+            label='判定线 H=0',
+            labelOpts={'position': 0.995, 'anchors': ((1, 0), (1, 1)), 'color': '#c0392b'}))
+        self.judge_plot.addItem(pg.InfiniteLine(
+            pos=ZERO_NODE_LOWER_BOUND, angle=0,
+            pen=pg.mkPen('#e0b23c', width=1, style=Qt.DashDotLine),
+            label=f'差值下限 {ZERO_NODE_LOWER_BOUND:.3f}°',
+            labelOpts={'position': 0.985, 'anchors': ((1, 0), (1, 1)), 'color': '#b7950b'}))
+        self.judge_plot.setXRange(0, 360, padding=0)
+        self.judge_plot.setYRange(-1.0, 1.0, padding=0)
+        self.judge_grid.addWidget(self.judge_plot, 0, 0)
+        self._reset_judge = DoubleClickReset(self.judge_plot)
+
     def _track_intervals(self, result):
-        """两条码道各自的同向过零结果（一次算好，间距图与位置偏差图共用）。"""
+        """两条码道各自的同向过零结果（间距图 / 位置偏差图 / 三点判定共用）。"""
         data = {}
         errors = []
         for pole_pairs, field_name in ((MASTER_POLE_PAIRS, 'master_field'),
@@ -338,6 +380,68 @@ class DualTrackPanel(QWidget):
         self.position_plot.setYRange(low - pad, high + pad, padding=0)
         self._reset_position.remember()
 
+    def _show_judgement(self, result, data, errors):
+        """三点判定（第四张图）：内道每个起点对「外道前/中/后节点」的差值与最小余量 H。
+
+        判定规则见《CC01 实际过零节点三点判断_算法说明》：三项差值的最小值减下限
+        L=0.036° 得到 H，H>0 通过、H<0 不通过、H=0 边界待核查；整盘取最小 H。
+        """
+        for curve in (self.judge_front, self.judge_middle, self.judge_back,
+                      self.judge_margin):
+            curve.setData([], [])
+        self.judge_failed.setData([], [])
+        self.judge_boundary.setData([], [])
+
+        outer = data.get(MASTER_POLE_PAIRS)
+        inner = data.get(NONIUS_POLE_PAIRS)
+        if outer is None or inner is None:
+            title = '；'.join(errors) if errors else '缺少某一码道的同向过零结果'
+            self.judge_plot.setTitle('三点判定无法计算：' + title)
+            self.judge_legend.setVisible(False)
+            return ''
+
+        try:
+            report = judge_three_nodes(outer.cross_deg, outer.same_deg,
+                                       inner.cross_deg, inner.same_deg)
+        except ZeroNodeError as exc:
+            self.judge_plot.setTitle('三点判定异常：' + str(exc))
+            self.judge_legend.setVisible(False)
+            return ''
+
+        angle = inner.cross_deg
+        differences = report['differences_deg']
+        margins = report['margins_deg']
+        self.judge_front.setData(angle, differences[:, 0])
+        self.judge_middle.setData(angle, differences[:, 1])
+        self.judge_back.setData(angle, differences[:, 2])
+        color = {'pass': '#2e8b57', 'fail': '#c0392b',
+                 'boundary': '#e0b23c'}[report['judgement']]
+        self.judge_margin.setPen(pg.mkPen(color, width=1.6))
+        self.judge_margin.setData(angle, margins)
+        if report['failed'].any():
+            self.judge_failed.setData(angle[report['failed']], margins[report['failed']])
+        if report['boundary'].any():
+            self.judge_boundary.setData(angle[report['boundary']],
+                                        margins[report['boundary']])
+        self.judge_legend.setVisible(True)
+        self.judge_plot.setTitle(
+            '%s：最小余量 %+.4f° @ %.3f°，不通过 %d/%d（%.1f%%）'
+            % (report['judgement_text'], report['minimum_margin_deg'],
+               report['worst_inner_angle_deg'], report['failed_count'],
+               margins.size, report['failed_percent']))
+        self.judge_plot.setXRange(0, 360, padding=0)
+
+        merged = np.concatenate([differences.ravel(), margins])
+        low, high = float(merged.min()), float(merged.max())
+        pad = max((high - low) * 0.15, 0.02)
+        self.judge_plot.setYRange(min(low - pad, -pad), max(high + pad, pad),
+                                 padding=0)
+        self._reset_judge.remember()
+        return ('判定%s，最小余量 %+.4f°（最差内道起点 %.3f°），不通过 %d/%d'
+                % (report['judgement_text'], report['minimum_margin_deg'],
+                   report['worst_inner_angle_deg'], report['failed_count'],
+                   margins.size))
+
     def _connect_signals(self):
         self.btn_pick_outer.clicked.connect(self._pick_outer)
         self.btn_pick_inner.clicked.connect(self._pick_inner)
@@ -424,6 +528,8 @@ class DualTrackPanel(QWidget):
                      describe_rating(result.rating)))
         if interval_text:
             status += '；同向间距 ' + interval_text
+        if self._last_judge_text:
+            status += '；' + self._last_judge_text
         self.status_label.setText(status)
         logger.info(f'双码道解算完成: {os.path.basename(outer)} / {os.path.basename(inner)} '
                     f'模式={mode} R={summary["r_min"]}~{summary["r_max"]}')
@@ -450,11 +556,13 @@ class DualTrackPanel(QWidget):
 
         data, errors = self._track_intervals(result)
         self._show_positions(result, data, errors)
+        self._last_judge_text = self._show_judgement(result, data, errors)
         return self._show_intervals(result, data, errors)
 
     def _on_clear(self):
-        """清屏：清空两条曲线与评级，保留已选数据。"""
+        """清屏：清空四条曲线与评级，保留已选数据。"""
         self._result = None
+        self._last_judge_text = ''
         self.residual_curve.setData([], [])
         self.worst_marker.setData([], [])
         self._apply_y_span(0.0)
@@ -472,11 +580,20 @@ class DualTrackPanel(QWidget):
         self.position_plot.setTitle(None)
         self.position_plot.setYRange(-0.5, 0.5, padding=0)
         self._reset_position.remember()
+        for curve in (self.judge_front, self.judge_middle, self.judge_back,
+                      self.judge_margin):
+            curve.setData([], [])
+        self.judge_failed.setData([], [])
+        self.judge_boundary.setData([], [])
+        self.judge_plot.setTitle(None)
+        self.judge_plot.setYRange(-1.0, 1.0, padding=0)
+        self._reset_judge.remember()
         for key in KPI_KEYS:
             self.kpi_labels[key].setText('--')
         self.kpi_labels['verdict'].setStyleSheet('')
         self.residual_legend.setVisible(False)
         self.interval_legend.setVisible(False)
         self.position_legend.setVisible(False)
+        self.judge_legend.setVisible(False)
         self.status_label.setText('待解算')
         logger.info('双码道解算已清屏')
