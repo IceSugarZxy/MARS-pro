@@ -455,92 +455,40 @@
     </widget>
    </item>
    <item>
-    <widget class="QTabWidget" name="tabs">
+    <widget class="QWidget" name="plot_container" native="true">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
        <horstretch>0</horstretch>
        <verstretch>1</verstretch>
       </sizepolicy>
      </property>
-     <property name="currentIndex">
-      <number>0</number>
-     </property>
-     <widget class="QWidget" name="plot_tab">
-      <attribute name="title">
-       <string>MU150 残差曲线</string>
-      </attribute>
-      <layout class="QGridLayout" name="plot_grid">
-       <property name="leftMargin">
-        <number>4</number>
-       </property>
-       <property name="topMargin">
-        <number>4</number>
-       </property>
-       <property name="rightMargin">
-        <number>4</number>
-       </property>
-       <property name="bottomMargin">
-        <number>4</number>
-       </property>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="interval_tab">
-      <attribute name="title">
-       <string>同向过零间距</string>
-      </attribute>
-      <layout class="QGridLayout" name="interval_grid">
-       <property name="leftMargin">
-        <number>4</number>
-       </property>
-       <property name="topMargin">
-        <number>4</number>
-       </property>
-       <property name="rightMargin">
-        <number>4</number>
-       </property>
-       <property name="bottomMargin">
-        <number>4</number>
-       </property>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="position_tab">
-      <attribute name="title">
-       <string>过零位置偏差</string>
-      </attribute>
-      <layout class="QGridLayout" name="position_grid">
-       <property name="leftMargin">
-        <number>4</number>
-       </property>
-       <property name="topMargin">
-        <number>4</number>
-       </property>
-       <property name="rightMargin">
-        <number>4</number>
-       </property>
-       <property name="bottomMargin">
-        <number>4</number>
-       </property>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="judge_tab">
-      <attribute name="title">
-       <string>三点判定</string>
-      </attribute>
-      <layout class="QGridLayout" name="judge_grid">
-       <property name="leftMargin">
-        <number>4</number>
-       </property>
-       <property name="topMargin">
-        <number>4</number>
-       </property>
-       <property name="rightMargin">
-        <number>4</number>
-       </property>
-       <property name="bottomMargin">
-        <number>4</number>
-       </property>
-      </layout>
-     </widget>
+     <layout class="QGridLayout" name="judge_grid">
+      <property name="leftMargin">
+       <number>4</number>
+      </property>
+      <property name="topMargin">
+       <number>4</number>
+      </property>
+      <property name="rightMargin">
+       <number>4</number>
+      </property>
+      <property name="bottomMargin">
+       <number>4</number>
+      </property>
+      <item row="0" column="0">
+       <widget class="QLabel" name="judge_title_label">
+        <property name="font">
+         <font>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="text">
+         <string>磁编码器算法裕度</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>
