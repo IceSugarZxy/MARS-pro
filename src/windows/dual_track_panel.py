@@ -9,7 +9,6 @@
 """
 import os
 
-import numpy as np
 import pyqtgraph as pg
 from PyQt5 import uic
 from PyQt5.QtCore import Qt
@@ -20,7 +19,6 @@ from core.dual_track_solver import (
     MASTER_POLE_PAIRS,
     NONIUS_POLE_PAIRS,
     DualTrackError,
-    describe_rating,
     solve_pair,
 )
 from core.logger import get_logger
@@ -73,21 +71,15 @@ class DualTrackPanel(QWidget):
 
     # ---------------------------------------------------------------- 初始化
     def _init_judge_plot(self):
-        """磁编码器算法裕度图：内道每个起点与「外道前/中/后节点」的差值 + 最小余量 H。"""
+        """磁编码器算法裕度图：内道每个起点的最小余量 H（差值下限 L=0.036° 已含在 H 里）。"""
         self.judge_plot = pg.PlotWidget()
         self.judge_plot.setBackground('#ffffff')
         self.judge_plot.showGrid(x=True, y=True, alpha=0.35)
         self.judge_plot.setLabel('bottom', '内道起点机械角', units='°')
-        self.judge_plot.setLabel('left', '差值 / 最小余量 H', units='°')
+        self.judge_plot.setLabel('left', '最小余量 H', units='°')
         self.judge_plot.plotItem.hideButtons()
         self.judge_legend = self.judge_plot.addLegend(offset=(10, 10))
         self.judge_legend.setVisible(False)
-        self.judge_front = self.judge_plot.plot(
-            pen=pg.mkPen('#95a5a6', width=0.8, style=Qt.DotLine), name='差值 前节点')
-        self.judge_middle = self.judge_plot.plot(
-            pen=pg.mkPen('#7f8c8d', width=0.8, style=Qt.DotLine), name='差值 对应节点')
-        self.judge_back = self.judge_plot.plot(
-            pen=pg.mkPen('#b2bec3', width=0.8, style=Qt.DotLine), name='差值 后节点')
         self.judge_margin = self.judge_plot.plot(
             pen=pg.mkPen('#2c3e50', width=1.6), name='最小余量 H')
         self.judge_failed = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#c0392b'),
@@ -98,15 +90,9 @@ class DualTrackPanel(QWidget):
         self.judge_plot.addItem(self.judge_boundary)
         self.judge_plot.addItem(pg.InfiniteLine(
             pos=0.0, angle=0, pen=pg.mkPen('#c0392b', width=1, style=Qt.SolidLine),
-            label='判定线 H=0',
+            label=f'判定线 H=0（插值下限 {ZERO_NODE_LOWER_BOUND:.3f}°）',
             labelOpts={'position': 0.995, 'anchors': ((1, 0), (1, 1)),
                        'color': '#c0392b'}))
-        self.judge_plot.addItem(pg.InfiniteLine(
-            pos=ZERO_NODE_LOWER_BOUND, angle=0,
-            pen=pg.mkPen('#e0b23c', width=1, style=Qt.DashDotLine),
-            label=f'差值下限 {ZERO_NODE_LOWER_BOUND:.3f}°',
-            labelOpts={'position': 0.985, 'anchors': ((1, 0), (1, 1)),
-                       'color': '#b7950b'}))
         self.judge_grid.addWidget(self.judge_plot, 1, 0)
         self._reset_judge = DoubleClickReset(self.judge_plot)
         self._reset_judge_span()
@@ -137,14 +123,12 @@ class DualTrackPanel(QWidget):
         return data, errors
 
     def _show_judgement(self, result, data, errors):
-        """磁编码器算法裕度：内道每个起点对「外道前/中/后节点」的差值与最小余量 H。
+        """磁编码器算法裕度：只画内道每个起点的最小余量 H。
 
-        判定规则见《CC01 实际过零节点三点判断_算法说明》：三项差值的最小值减下限
-        L=0.036° 得到 H，H>0 通过、H<0 不通过、H=0 边界待核查；整盘取最小 H。
+        H[i] = min(d前, d中, d后) − L（L = 插值下限 0.036°）：H>0 通过、H<0 不通过、
+        H=0 边界待核查；整盘取最小 H。判定规则见《CC01 实际过零节点三点判断_算法说明》。
         """
-        for curve in (self.judge_front, self.judge_middle, self.judge_back,
-                      self.judge_margin):
-            curve.setData([], [])
+        self.judge_margin.setData([], [])
         self.judge_failed.setData([], [])
         self.judge_boundary.setData([], [])
 
@@ -165,11 +149,7 @@ class DualTrackPanel(QWidget):
             return ''
 
         angle = inner.cross_deg
-        differences = report['differences_deg']
         margins = report['margins_deg']
-        self.judge_front.setData(angle, differences[:, 0])
-        self.judge_middle.setData(angle, differences[:, 1])
-        self.judge_back.setData(angle, differences[:, 2])
         self.judge_margin.setPen(
             pg.mkPen(VERDICT_COLORS[report['judgement']], width=1.6))
         self.judge_margin.setData(angle, margins)
@@ -187,8 +167,7 @@ class DualTrackPanel(QWidget):
                margins.size, report['failed_percent']))
         self.judge_plot.setXRange(0, 360, padding=0)
 
-        merged = np.concatenate([differences.ravel(), margins])
-        low, high = float(merged.min()), float(merged.max())
+        low, high = float(margins.min()), float(margins.max())
         pad = max((high - low) * 0.15, 0.02)
         self.judge_plot.setYRange(min(low - pad, -pad), max(high + pad, pad),
                                   padding=0)
@@ -208,7 +187,7 @@ class DualTrackPanel(QWidget):
         dll = default_dll_path()
         if not os.path.exists(dll):
             logger.warning(f'未找到原厂 DLL: {dll}')
-            self.status_label.setText(
+            self.judge_plot.setTitle(
                 f'未找到原厂 DLL，请把 MU_3SL_INTERFACE_64.DLL 放到：{os.path.dirname(dll)}')
 
     @staticmethod
@@ -252,12 +231,11 @@ class DualTrackPanel(QWidget):
             return
         if not os.path.exists(dll):
             message = f'找不到原厂 DLL，请把 MU_3SL_INTERFACE_64.DLL 放到：{os.path.dirname(dll)}'
-            self.status_label.setText(message)
+            self.judge_plot.setTitle(message)
             QMessageBox.warning(self, '双码道解算', message)
             return
 
         mode = DEFAULT_MODE
-        self.status_label.setText(f'解算中…（{mode}）')
         self.btn_solve.setEnabled(False)
         self.setCursor(Qt.WaitCursor)
         try:
@@ -265,12 +243,12 @@ class DualTrackPanel(QWidget):
         except DualTrackError as exc:
             logger.warning(f'双码道解算失败: {exc}')
             QMessageBox.warning(self, '双码道解算失败', str(exc))
-            self.status_label.setText(f'解算失败：{exc}')
+            self.judge_plot.setTitle('解算失败：' + str(exc))
             return
         except Exception as exc:  # 未预期错误也要给用户可读提示
             logger.exception(f'双码道解算异常: {exc}')
             QMessageBox.critical(self, '双码道解算异常', str(exc))
-            self.status_label.setText(f'解算异常：{exc}')
+            self.judge_plot.setTitle('解算异常：' + str(exc))
             return
         finally:
             self.btn_solve.setEnabled(True)
@@ -279,14 +257,9 @@ class DualTrackPanel(QWidget):
         self._result = result
         self._show_result(result)
         summary = result.summary()
-        status = ('完成：R %.0f ~ %.0f 码，最小裕量 %d 码，%s'
-                  % (summary['r_min'], summary['r_max'], summary['margin_codes'],
-                     describe_rating(result.rating)))
-        if self._last_judge_text:
-            status += '；' + self._last_judge_text
-        self.status_label.setText(status)
         logger.info(f'双码道解算完成: {os.path.basename(outer)} / {os.path.basename(inner)} '
-                    f'模式={mode} R={summary["r_min"]}~{summary["r_max"]}')
+                    f'模式={mode} R={summary["r_min"]}~{summary["r_max"]} '
+                    f'{self._last_judge_text}')
 
     def _show_result(self, result):
         """刷新顶部评级 KPI 与磁编码器算法裕度图。"""
@@ -306,12 +279,10 @@ class DualTrackPanel(QWidget):
         self._last_judge_text = self._show_judgement(result, data, errors)
 
     def _on_clear(self):
-        """清屏：清空判定曲线与评级，保留已选数据。"""
+        """清屏：清空裕度曲线与评级，保留已选数据。"""
         self._result = None
         self._last_judge_text = ''
-        for curve in (self.judge_front, self.judge_middle, self.judge_back,
-                      self.judge_margin):
-            curve.setData([], [])
+        self.judge_margin.setData([], [])
         self.judge_failed.setData([], [])
         self.judge_boundary.setData([], [])
         self.judge_plot.setTitle(None)
@@ -320,5 +291,4 @@ class DualTrackPanel(QWidget):
             self.kpi_labels[key].setText('--')
         self.kpi_labels['verdict'].setStyleSheet('')
         self.judge_legend.setVisible(False)
-        self.status_label.setText('待解算')
         logger.info('双码道解算已清屏')
