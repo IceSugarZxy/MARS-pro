@@ -51,8 +51,13 @@ class ThresholdTests(unittest.TestCase):
     def test_below_lower_bound_fails(self):
         report = self._report(11.0 + LOWER_BOUND_DEG * 0.5)
         self.assertEqual(report['judgement'], 'fail')
+        self.assertEqual(report['judgement_text'], '不良')
         self.assertEqual(report['failed_count'], 62)
         self.assertAlmostEqual(report['failed_percent'], 100.0, places=9)
+        # 超下限点位角度直接给出，供界面特别标出
+        self.assertEqual(report['failed_angles_deg'].size, 62)
+        np.testing.assert_allclose(report['failed_angles_deg'],
+                                   report['inner_angles_deg'], atol=1e-12)
 
     def test_equal_lower_bound_is_boundary(self):
         # 用二进制可精确表示的数值构造“恰好等于下限”，验证边界分支
@@ -61,7 +66,7 @@ class ThresholdTests(unittest.TestCase):
         report = judge_three_nodes(outer_angles, outer_intervals,
                                    inner_angles, inner_intervals, lower_deg=0.5)
         self.assertEqual(report['judgement'], 'boundary')
-        self.assertEqual(report['judgement_text'], '边界待复核')
+        self.assertEqual(report['judgement_text'], '合格（边界）')
         self.assertEqual(report['failed_count'], 0)
         np.testing.assert_allclose(report['margins_deg'], 0.0, atol=1e-12)
         self.assertTrue(report['boundary'].all())

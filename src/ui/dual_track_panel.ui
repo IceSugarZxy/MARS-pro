@@ -199,7 +199,7 @@
          </size>
         </property>
         <property name="title">
-         <string>评级（残差，码）</string>
+         <string>评级</string>
         </property>
         <layout class="QGridLayout" name="rating_grid">
          <property name="leftMargin">
@@ -381,7 +381,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>最差点角 (°)</string>
+            <string>最差点角</string>
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>

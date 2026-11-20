@@ -24,8 +24,8 @@ NODE_OFFSETS = (-1, 0, 1)
 
 VERDICT_TEXT = {
     'pass': '合格',
-    'fail': '不合格',
-    'boundary': '边界待复核',
+    'fail': '不良',
+    'boundary': '合格（边界）',
 }
 
 
@@ -107,6 +107,8 @@ def judge_three_nodes(outer_angles, outer_intervals, inner_angles, inner_interva
         'passed': passed,
         'failed': failed,
         'boundary': boundary,
+        'inner_angles_deg': inner_angles,
+        'failed_angles_deg': inner_angles[failed],
         'failed_count': int(failed.sum()),
         'failed_percent': float(failed.mean() * 100.0),
         'minimum_margin_deg': float(margins[worst]),

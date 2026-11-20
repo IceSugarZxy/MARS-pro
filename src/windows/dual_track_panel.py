@@ -9,6 +9,7 @@
 """
 import os
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt5 import uic
 from PyQt5.QtCore import Qt
@@ -35,6 +36,8 @@ DLL_RELATIVE_PATH = os.path.join('vendor', 'iC-MU150', 'MU_3SL_INTERFACE_64.DLL'
 KPI_KEYS = ('verdict', 'rmin', 'rmax', 'peak', 'margin', 'worst')
 VERDICT_COLORS = {'pass': '#2e8b57', 'fail': '#c0392b', 'boundary': '#e0b23c'}
 JUDGE_DEFAULT_SPAN = 1.0
+# 超下限点位最多画多少条竖向标线（再多就只靠红点，避免糊成一片）
+MAX_FAILED_MARKERS = 12
 
 
 def default_dll_path():
@@ -63,6 +66,7 @@ class DualTrackPanel(QWidget):
         self._outer_path = ''
         self._inner_path = ''
         self._last_judge_text = ''
+        self._last_judge_report = None
         self.kpi_labels = {key: getattr(self, f'kpi_value_{key}') for key in KPI_KEYS}
 
         self._init_judge_plot()
@@ -82,12 +86,14 @@ class DualTrackPanel(QWidget):
         self.judge_legend.setVisible(False)
         self.judge_margin = self.judge_plot.plot(
             pen=pg.mkPen('#2c3e50', width=1.6), name='最小余量 H')
-        self.judge_failed = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#c0392b'),
+        self.judge_failed = pg.ScatterPlotItem(size=10, brush=pg.mkBrush('#c0392b'),
                                                pen=pg.mkPen('#7b241c'))
         self.judge_boundary = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#e0b23c'),
                                                  pen=pg.mkPen('#b7950b'))
         self.judge_plot.addItem(self.judge_failed)
         self.judge_plot.addItem(self.judge_boundary)
+        self.judge_legend.addItem(self.judge_failed, '超下限点位')
+        self._judge_markers = []  # 超下限点位上的竖向标线与角标
         self.judge_plot.addItem(pg.InfiniteLine(
             pos=0.0, angle=0, pen=pg.mkPen('#c0392b', width=1, style=Qt.SolidLine),
             label=f'判定线 H=0（插值下限 {ZERO_NODE_LOWER_BOUND:.3f}°）',
@@ -136,6 +142,7 @@ class DualTrackPanel(QWidget):
         inner = data.get(NONIUS_POLE_PAIRS)
         if outer is None or inner is None:
             title = '；'.join(errors) if errors else '缺少某一码道的同向过零结果'
+            self._last_judge_report = None
             self.judge_plot.setTitle('磁编码器算法裕度无法计算：' + title)
             self.judge_legend.setVisible(False)
             return ''
@@ -144,9 +151,12 @@ class DualTrackPanel(QWidget):
             report = judge_three_nodes(outer.cross_deg, outer.same_deg,
                                        inner.cross_deg, inner.same_deg)
         except ZeroNodeError as exc:
+            self._last_judge_report = None
             self.judge_plot.setTitle('磁编码器算法裕度异常：' + str(exc))
             self.judge_legend.setVisible(False)
             return ''
+
+        self._last_judge_report = report
 
         angle = inner.cross_deg
         margins = report['margins_deg']
@@ -156,9 +166,14 @@ class DualTrackPanel(QWidget):
         if report['failed'].any():
             self.judge_failed.setData(angle[report['failed']],
                                       margins[report['failed']])
+        else:
+            self.judge_failed.setData([], [])
         if report['boundary'].any():
             self.judge_boundary.setData(angle[report['boundary']],
                                         margins[report['boundary']])
+        else:
+            self.judge_boundary.setData([], [])
+        self._mark_failed_points(report)
         self.judge_legend.setVisible(True)
         self.judge_plot.setTitle(
             '%s：最小余量 %+.4f° @ %.3f°，不通过 %d/%d（%.1f%%）'
@@ -176,6 +191,32 @@ class DualTrackPanel(QWidget):
                 % (report['judgement_text'], report['minimum_margin_deg'],
                    report['worst_inner_angle_deg'], report['failed_count'],
                    margins.size))
+
+    def _mark_failed_points(self, report):
+        """把超下限（H<0）的点位特别标出：竖向虚线 + 最差点的角标。"""
+        for item in self._judge_markers:
+            self.judge_plot.removeItem(item)
+        self._judge_markers = []
+
+        angles = report.get('failed_angles_deg')
+        if angles is None:
+            return
+        for value in np.asarray(angles, dtype=float)[:MAX_FAILED_MARKERS]:
+            line = pg.InfiniteLine(
+                pos=float(value), angle=90,
+                pen=pg.mkPen('#c0392b', width=1, style=Qt.DashLine))
+            self.judge_plot.addItem(line)
+            self._judge_markers.append(line)
+
+        if report['failed_count']:
+            label = pg.TextItem(
+                '%.3f°  %+.4f°' % (report['worst_inner_angle_deg'],
+                                   report['minimum_margin_deg']),
+                color='#c0392b', anchor=(0.5, 1.2))
+            label.setPos(float(report['worst_inner_angle_deg']),
+                         float(report['minimum_margin_deg']))
+            self.judge_plot.addItem(label)
+            self._judge_markers.append(label)
 
     def _connect_signals(self):
         self.btn_pick_outer.clicked.connect(self._pick_outer)
@@ -262,21 +303,31 @@ class DualTrackPanel(QWidget):
                     f'{self._last_judge_text}')
 
     def _show_result(self, result):
-        """刷新顶部评级 KPI 与磁编码器算法裕度图。"""
+        """刷新顶部评级 KPI 与磁编码器算法裕度图。
+
+        结论（KPI 第一格）按「波形是否超下限」给：有任一 H<0 → 不良，否则合格；
+        R 最小/最大/峰值占用/最小裕量/最差点角 仍是 MU150 残差评级数据。
+        """
+        data, errors = self._track_intervals(result)
+        self._last_judge_text = self._show_judgement(result, data, errors)
+        report = self._last_judge_report
+
+        if report is None:
+            self.kpi_labels['verdict'].setText('--')
+            self.kpi_labels['verdict'].setStyleSheet('')
+        else:
+            verdict = '不良' if report['failed_count'] else '合格'
+            self.kpi_labels['verdict'].setText(verdict)
+            self.kpi_labels['verdict'].setStyleSheet(
+                'color: %s; font-weight: 700;'
+                % ('#c0392b' if verdict == '不良' else '#2e8b57'))
+
         summary = result.summary()
-        rating = result.rating
-        self.kpi_labels['verdict'].setText('合格' if rating.within_rating else '超线')
-        self.kpi_labels['verdict'].setStyleSheet(
-            'color: #2e8b57; font-weight: 700;' if rating.within_rating
-            else 'color: #c0392b; font-weight: 700;')
         self.kpi_labels['rmin'].setText(f'{summary["r_min"]:+d}')
         self.kpi_labels['rmax'].setText(f'{summary["r_max"]:+d}')
         self.kpi_labels['peak'].setText(f'{summary["peak"]}')
         self.kpi_labels['margin'].setText(f'{summary["margin_codes"]}')
         self.kpi_labels['worst'].setText(f'{summary["worst_angle_deg"]:.3f}')
-
-        data, errors = self._track_intervals(result)
-        self._last_judge_text = self._show_judgement(result, data, errors)
 
     def _on_clear(self):
         """清屏：清空裕度曲线与评级，保留已选数据。"""
@@ -285,8 +336,12 @@ class DualTrackPanel(QWidget):
         self.judge_margin.setData([], [])
         self.judge_failed.setData([], [])
         self.judge_boundary.setData([], [])
+        for item in self._judge_markers:
+            self.judge_plot.removeItem(item)
+        self._judge_markers = []
         self.judge_plot.setTitle(None)
         self._reset_judge_span()
+        self._last_judge_report = None
         for key in KPI_KEYS:
             self.kpi_labels[key].setText('--')
         self.kpi_labels['verdict'].setStyleSheet('')
