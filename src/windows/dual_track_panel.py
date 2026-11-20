@@ -210,9 +210,9 @@ class DualTrackPanel(QWidget):
 
         if report['failed_count']:
             label = pg.TextItem(
-                '%.3f°  %+.4f°' % (report['worst_inner_angle_deg'],
-                                   report['minimum_margin_deg']),
-                color='#c0392b', anchor=(0.5, 1.2))
+                '角度 %.3f°\n余量 %+.4f°' % (report['worst_inner_angle_deg'],
+                                            report['minimum_margin_deg']),
+                color='#c0392b', anchor=(0, 1))
             label.setPos(float(report['worst_inner_angle_deg']),
                          float(report['minimum_margin_deg']))
             self.judge_plot.addItem(label)
