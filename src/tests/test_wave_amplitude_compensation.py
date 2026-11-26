@@ -60,8 +60,10 @@ class WaveAmplitudeCompensationTests(unittest.TestCase):
         result, reused = self.analyzer.analyze_waveform_with_correction(
             self.angles, corrected, apply_amplitude_correction=False)
 
+        # 幅值补偿关闭 = 不改波形（已补偿数据不会被二次放大）
         np.testing.assert_array_equal(reused, corrected)
-        self.assertTrue(result["concentricity"]["waveform_corrected"])
+        self.assertFalse(result["concentricity"]["waveform_corrected"])
+        self.assertFalse(result["concentricity"]["amplitude_compensation_applied"])
 
     def test_csv_compensation_metadata_is_recognized(self):
         sample_info = {}

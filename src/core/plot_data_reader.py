@@ -121,10 +121,14 @@ def apply_sample_info_row(sample_info: dict, row) -> None:
         sample_info['save_time'] = value
     elif "一圈点数" in key:
         sample_info['round_points'] = value
+    elif "爪盘补偿" in key:
+        sample_info['chuck_compensation'] = value
     elif "单周期包络补偿" in key:
         sample_info['amplitude_compensation'] = value
     elif "过零点偏差补偿" in key:
         sample_info['zero_crossing_compensation'] = value
+    elif "补偿方案" in key:
+        sample_info['compensation_scheme'] = value
     elif "极数口径" in key or "极数单位" in key:
         sample_info['pole_unit'] = value
     elif "极数" in key:

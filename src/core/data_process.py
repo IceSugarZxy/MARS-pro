@@ -114,6 +114,19 @@ MOTION_DONE_PATTERN = re.compile(r"([XYZ])\s+DONE")
 MOTION_START_PATTERN = re.compile(r"([XYZ])\s+START")
 
 
+def compensation_scheme_text(chuck_applied, amplitude_applied, zero_applied) -> str:
+    """三项补偿的汇总方案文字，写进 CSV 的「补偿方案」行。
+
+    全部生效 → 全部补偿；全部未生效 → 未补偿；其余 → 部分补偿。
+    """
+    flags = [bool(chuck_applied), bool(amplitude_applied), bool(zero_applied)]
+    if all(flags):
+        return '全部补偿'
+    if not any(flags):
+        return '未补偿'
+    return '部分补偿'
+
+
 class DataProcess(QObject):
     signal_measure_analysis_finished = pyqtSignal(object, object, object)
     """
@@ -196,6 +209,8 @@ class DataProcess(QObject):
         # 样品信息：用于保存测量数据时写入文件
         self._sample_info: dict = {}
         self._wave_analyzer = WaveAnalysis()
+        # 本轮是否真的扣掉了爪盘曲线（没有曲线 / 开关关闭时为 False）
+        self._chuck_compensation_applied: bool = False
 
         # 最近一轮测量的削顶诊断结果（供测量面板判断是否降档重测）
         self.last_saturation: dict = {"saturated": False}
@@ -460,8 +475,13 @@ class DataProcess(QObject):
         角度 i·360/n（与界面绘制、CSV 保存的角度口径一致）。曲线先按当前
         ``PGA:IDAC:速度`` 精确匹配，没有时回退到通配键 ``*``（爪盘波动是物理
         磁场，与量程/速度无关）；两者都没有时原样返回、不做补偿。
+        配置面板「补偿设定」关闭「爪盘补偿」时同样原样返回。
         """
         if not measure_list:
+            return measure_list
+        self._chuck_compensation_applied = False
+        if not self.config.comp_chuck:
+            logger.info("爪盘补偿：已按配置关闭（补偿设定），跳过")
             return measure_list
         curve = self.config.get_chuck_compensation()
         if not curve:
@@ -481,7 +501,31 @@ class DataProcess(QObject):
             % (self.config.pga_gain, self.config.idac_index, self.config.test_speed,
                n, float(np.min(comp)), float(np.max(comp)), float(np.mean(comp)))
         )
+        self._chuck_compensation_applied = True
         return [v - c for v, c in zip(measure_list, comp)]
+
+    def _compensation_status(self) -> dict:
+        """本轮分析实际生效的补偿项（按配置面板「补偿设定」的开关）。"""
+        return {
+            'chuck': bool(self._chuck_compensation_applied),
+            'amplitude': bool(self.config.comp_amplitude),
+            'zero_crossing': bool(self.config.comp_zero_crossing),
+        }
+
+    def _attach_compensation_status(self, results: dict) -> dict:
+        """把补偿情况写进分析结果，保存 CSV 时据此记录（补偿 / 部分补偿 / 未补偿）。"""
+        status = self._compensation_status()
+        concentricity = dict(results.get('concentricity') or {})
+        concentricity['chuck_compensation_applied'] = status['chuck']
+        concentricity['compensation_switches'] = status
+        results['concentricity'] = concentricity
+        logger.info(
+            "补偿方案：爪盘=%s / 单周期幅值=%s / 单周期过零点=%s"
+            % ("已应用" if status['chuck'] else "未应用",
+               "已应用" if status['amplitude'] else "未应用",
+               "已应用" if status['zero_crossing'] else "未应用")
+        )
+        return results
 
     def _finish_empty_capture(self, measure_list: List[float]) -> None:
         """把空测整圈数据转成爪盘补偿曲线并按档位存进配置。
@@ -588,10 +632,24 @@ class DataProcess(QObject):
                         f"旋转测量算法处理：{n} 原始点 → "
                         f"角度 {len(alg_angle)} 点, 磁场 {len(alg_mag)} 点"
                     )
+                    # 补偿开关（配置面板「补偿设定」）逐项控制幅值/过零点补偿是否参与分析
+                    apply_amp = self.config.comp_amplitude
+                    apply_zc = self.config.comp_zero_crossing
+                    logger.info(
+                        "补偿设定：爪盘=%s / 单周期幅值=%s / 单周期过零点=%s"
+                        % ("开" if self.config.comp_chuck else "关",
+                           "开" if apply_amp else "关",
+                           "开" if apply_zc else "关")
+                    )
                     analysis_results, corrected_mag = (
                         self._wave_analyzer.analyze_waveform_with_correction(
-                            alg_angle, alg_mag)
+                            alg_angle, alg_mag,
+                            apply_amplitude_correction=apply_amp,
+                            apply_zero_crossing_correction=apply_zc,
+                        )
                     )
+                    if analysis_results:
+                        analysis_results = self._attach_compensation_status(analysis_results)
                     if len(corrected_mag) == len(alg_angle):
                         angle_data, mag_data = alg_angle, corrected_mag
                     self._log_analysis_summary(analysis_results)
@@ -1794,15 +1852,33 @@ class DataProcess(QObject):
 
                 if analysis_results is not None:
                     concentricity = analysis_results.get('concentricity') or {}
-                    compensation_status = (
-                        '已应用' if concentricity.get('waveform_corrected') else '未应用'
-                    )
-                    writer.writerow(['单周期包络补偿', compensation_status])
-                    if 'zero_crossing_applied' in concentricity:
+                    # 补偿情况以保存时的选项为准：记录三项各自是否生效 + 汇总方案
+                    switches = concentricity.get('compensation_switches') or {}
+                    chuck_applied = concentricity.get('chuck_compensation_applied')
+                    if chuck_applied is None:
+                        chuck_applied = switches.get('chuck')
+                    amplitude_applied = concentricity.get('amplitude_compensation_applied')
+                    if amplitude_applied is None:
+                        amplitude_applied = concentricity.get('waveform_corrected')
+                    zero_applied = concentricity.get('zero_crossing_applied')
+
+                    writer.writerow([
+                        '爪盘补偿',
+                        '已应用' if chuck_applied else '未应用',
+                    ])
+                    writer.writerow([
+                        '单周期包络补偿',
+                        '已应用' if amplitude_applied else '未应用',
+                    ])
+                    if zero_applied is not None:
                         writer.writerow([
                             '过零点偏差补偿',
-                            '已应用' if concentricity.get('zero_crossing_applied') else '未应用',
+                            '已应用' if zero_applied else '未应用',
                         ])
+                    writer.writerow([
+                        '补偿方案',
+                        compensation_scheme_text(chuck_applied, amplitude_applied, zero_applied),
+                    ])
 
                 # 不再写入“=== 分析结果 ===”快照段：
                 # 分析指标在查看历史数据/比对时会按当前算法重算，写进文件只会随代码

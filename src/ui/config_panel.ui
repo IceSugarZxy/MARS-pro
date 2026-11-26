@@ -14,6 +14,24 @@
    <string>配置面板</string>
   </property>
   <layout class="QGridLayout" name="gridLayout_2">
+   <property name="leftMargin">
+    <number>8</number>
+   </property>
+   <property name="topMargin">
+    <number>8</number>
+   </property>
+   <property name="rightMargin">
+    <number>8</number>
+   </property>
+   <property name="bottomMargin">
+    <number>8</number>
+   </property>
+   <property name="horizontalSpacing">
+    <number>8</number>
+   </property>
+   <property name="verticalSpacing">
+    <number>6</number>
+   </property>
    <item row="3" column="0">
     <widget class="QGroupBox" name="action_group">
      <property name="title">
@@ -706,6 +724,79 @@
      </layout>
     </widget>
    </item>
+   <item row="0" column="3">
+    <widget class="QGroupBox" name="comp_group">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="title">
+      <string>补偿设定</string>
+     </property>
+     <layout class="QHBoxLayout" name="comp_layout">
+      <property name="leftMargin">
+       <number>10</number>
+      </property>
+      <property name="topMargin">
+       <number>4</number>
+      </property>
+      <property name="rightMargin">
+       <number>10</number>
+      </property>
+      <property name="bottomMargin">
+       <number>4</number>
+      </property>
+      <property name="spacing">
+       <number>14</number>
+      </property>
+      <item>
+       <widget class="QCheckBox" name="comp_chuck_check">
+        <property name="toolTip">
+         <string>分析时扣除爪盘（空测）单周期补偿曲线。</string>
+        </property>
+        <property name="text">
+         <string>爪盘补偿</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="comp_amplitude_check">
+        <property name="toolTip">
+         <string>按 N/S 极峰值包络拟合一圈一次增益并作用于整条波形。</string>
+        </property>
+        <property name="text">
+         <string>单周期幅值补偿</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="comp_zero_crossing_check">
+        <property name="toolTip">
+         <string>按设备过零点偏差曲线在角度域修正相位。</string>
+        </property>
+        <property name="text">
+         <string>单周期过零点补偿</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="comp_horizontal_spacer">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </widget>
+   </item>
    <item row="1" column="3" rowspan="3">
     <widget class="QGroupBox" name="judge_group">
      <property name="sizePolicy">
@@ -728,13 +819,13 @@
        <number>10</number>
       </property>
       <property name="topMargin">
-       <number>10</number>
+       <number>6</number>
       </property>
       <property name="rightMargin">
        <number>10</number>
       </property>
       <property name="bottomMargin">
-       <number>10</number>
+       <number>6</number>
       </property>
       <property name="spacing">
        <number>6</number>
@@ -780,7 +871,7 @@
           <number>4</number>
          </property>
          <property name="verticalSpacing">
-          <number>3</number>
+          <number>2</number>
          </property>
         </layout>
        </widget>

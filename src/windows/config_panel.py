@@ -116,6 +116,9 @@ class ConfigPanel(QWidget):
         # 初始化合格判定阈值
         self._init_judge_settings()
 
+        # 初始化补偿设定
+        self._init_compensation_settings()
+
         # 全量程偏置校准自动流程状态
         self._offset_all_active = False
         # 全档偏置校准目标：IDAC3~6 × PGA×1~×128 共 32 组（按 IDAC 分组，减少切档次数）
@@ -1133,6 +1136,34 @@ class ConfigPanel(QWidget):
         config = get_config_manager()
         config.inner_z_offset = value
         logger.info(f"Z轴偏移量已更新: {value:.2f} mm")
+
+    # ==================== 补偿设定 ====================
+
+    def _init_compensation_settings(self):
+        """三个补偿开关：加载配置并绑定，改动即时保存。"""
+        config = get_config_manager()
+        self._comp_loading = True
+        for check_name, attr in (
+            ("comp_chuck_check", "comp_chuck"),
+            ("comp_amplitude_check", "comp_amplitude"),
+            ("comp_zero_crossing_check", "comp_zero_crossing"),
+        ):
+            checkbox = self.findChild(QCheckBox, check_name)
+            if checkbox is None:
+                logger.warning(f"未找到补偿开关控件: {check_name}")
+                continue
+            checkbox.setChecked(bool(getattr(config, attr)))
+            checkbox.toggled.connect(
+                lambda checked, name=check_name, key=attr:
+                self._on_compensation_toggled(name, key, checked)
+            )
+        self._comp_loading = False
+
+    def _on_compensation_toggled(self, check_name: str, attr: str, checked: bool) -> None:
+        if getattr(self, "_comp_loading", False):
+            return
+        setattr(get_config_manager(), attr, bool(checked))
+        logger.info(f"补偿设定已更新: {check_name}={'开' if checked else '关'}")
 
     # ==================== 合格判定阈值 ====================
 

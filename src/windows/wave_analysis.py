@@ -158,8 +158,8 @@ class WaveAnalysis:
     ):
         """分析波形并返回分析使用的磁场数据。
 
-        已补偿的数据可将 ``apply_amplitude_correction`` / 
-        ``apply_zero_crossing_correction`` 设为 False，避免重复补偿。
+        ``apply_amplitude_correction`` / ``apply_zero_crossing_correction`` 由配置面板
+        「补偿设定」的两个勾选项控制，可单独关闭；两个都关时只做分析、波形原样返回。
         处理顺序：单周期包络（幅值）补偿 → 过零点偏差（角度域）补偿 → 分析。
         """
         logger.info("开始波形分析...")
@@ -177,43 +177,41 @@ class WaveAnalysis:
             x = np.asarray(angle_data, dtype=float)
             y = np.asarray(mag_data, dtype=float)
 
-            if not apply_amplitude_correction:
-                results = self._wave_analysis(
-                    x, y, apply_amplitude_correction=False, log_summary=False)
-                correction_info = dict(results.get("concentricity") or {})
-                correction_info["amp_applied"] = True
-                correction_info["waveform_corrected"] = True
-                correction_info.update(_zero_crossing_info(
-                    {'applied': False, 'reason': '数据已带过零点偏差补偿标记'}))
-                results["concentricity"] = correction_info
-                return results, y.tolist()
-
-            initial_results = self._wave_analysis(x, y)
+            # 第一遍：只取极值/包络诊断，波形级增益与相位修正单独施加
+            initial_results = self._wave_analysis(
+                x, y, apply_amplitude_correction=apply_amplitude_correction)
             correction_info = dict(initial_results.get("concentricity") or {})
-            if not correction_info.get("amp_applied"):
-                correction_info["waveform_corrected"] = False
-                initial_results["concentricity"] = correction_info
-                return initial_results, y.tolist()
 
-            corrected_y = self._apply_waveform_amplitude_correction(
-                x, y, initial_results.get("peak_details", []))
-            if corrected_y is None:
-                logger.warning("单周期包络修正未能生成有效增益，保留原始波形")
-                results = self._wave_analysis(
-                    x, y, apply_amplitude_correction=False, log_summary=False)
-                correction_info["amp_applied"] = False
-                correction_info["waveform_corrected"] = False
-                corrected_info = dict(results.get("concentricity") or {})
-                corrected_info.update(correction_info)
-                results["concentricity"] = corrected_info
-                return results, y.tolist()
+            corrected_y = y
+            amplitude_applied = False
+            if apply_amplitude_correction and correction_info.get("amp_applied"):
+                candidate = self._apply_waveform_amplitude_correction(
+                    x, y, initial_results.get("peak_details", []))
+                if candidate is None:
+                    logger.warning("单周期包络修正未能生成有效增益，保留原始波形")
+                    correction_info["amp_applied"] = False
+                else:
+                    corrected_y = candidate
+                    amplitude_applied = True
+            elif not apply_amplitude_correction:
+                logger.info("单周期幅值补偿：已按配置关闭（补偿设定），跳过")
 
             corrected_y, zc_info = self._apply_zero_crossing_correction(
                 x, corrected_y, apply_zero_crossing_correction)
+
+            if not amplitude_applied and not zc_info.get("applied"):
+                # 两个补偿都未生效：波形未改变，第一遍结果即为最终结果
+                correction_info["amplitude_compensation_applied"] = False
+                correction_info["waveform_corrected"] = False
+                correction_info.update(_zero_crossing_info(zc_info))
+                initial_results["concentricity"] = correction_info
+                return initial_results, y.tolist()
+
             results = self._wave_analysis(
                 x, corrected_y, apply_amplitude_correction=False, log_summary=False)
             corrected_info = dict(results.get("concentricity") or {})
             corrected_info.update(correction_info)
+            corrected_info["amplitude_compensation_applied"] = amplitude_applied
             corrected_info["waveform_corrected"] = True
             corrected_info.update(_zero_crossing_info(zc_info))
             results["concentricity"] = corrected_info

@@ -403,6 +403,10 @@ class ConfigManager(QObject):
         # 合格判定：总开关 + 各分析结果的限值（JSON，见 core/judge_thresholds.py）
         'judge_enabled': '0',
         'judge_thresholds': '{}',
+        # 补偿设定：三个开关（1=启用，0=关闭），默认全部启用
+        'comp_chuck': '1',
+        'comp_amplitude': '1',
+        'comp_zero_crossing': '1',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):
@@ -945,6 +949,39 @@ class ConfigManager(QObject):
     @closure_trim.setter
     def closure_trim(self, value: bool) -> None:
         self.set('closure_trim', '1' if value else '0')
+
+    # ==================== 补偿开关（配置面板「补偿设定」） ====================
+
+    @staticmethod
+    def _switch_value(value) -> bool:
+        return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+    @property
+    def comp_chuck(self) -> bool:
+        """数据分析是否扣除爪盘（空测）单周期补偿曲线。"""
+        return self._switch_value(self.get('comp_chuck', '1'))
+
+    @comp_chuck.setter
+    def comp_chuck(self, value: bool) -> None:
+        self.set('comp_chuck', '1' if value else '0')
+
+    @property
+    def comp_amplitude(self) -> bool:
+        """数据分析是否做单周期幅值（包络）补偿。"""
+        return self._switch_value(self.get('comp_amplitude', '1'))
+
+    @comp_amplitude.setter
+    def comp_amplitude(self, value: bool) -> None:
+        self.set('comp_amplitude', '1' if value else '0')
+
+    @property
+    def comp_zero_crossing(self) -> bool:
+        """数据分析是否做过零点偏差（角度域）补偿。"""
+        return self._switch_value(self.get('comp_zero_crossing', '1'))
+
+    @comp_zero_crossing.setter
+    def comp_zero_crossing(self, value: bool) -> None:
+        self.set('comp_zero_crossing', '1' if value else '0')
 
     @property
     def test_movement_scheme(self) -> str:

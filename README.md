@@ -13,6 +13,10 @@ MARS Pro 是基于 PyQt5 的旋转体表磁测量分析系统，适配 **3Axis_M
 3. **测量界面结果着色**：`windows/measure_panel.py` 每次分析完按判定结果给对应输入框上色——合格绿（#27ae60）、不合格红（#e74c3c）、未开启判定或该项未配置时恢复默认黑色；`_update_display_defaults()` 会同时清掉颜色。
 4. **测量结束提示窗**：新增 `windows/judge_popup.py`——屏幕中央 440×240 的小矩形（无边框、置顶、不抢焦点），用 96px 粗体显示「合格」/「不良」（绿/红边框与文字），任意点击屏幕（程序内任意鼠标点击）即关闭，出现后 0.3 秒才响应点击以免被触发它的那次点击立刻关掉；每次测量完成且判定生效时弹出，重新测量会先关掉旧的，重置界面也会关闭。
 5. **配置界面布局修整**：① 判定项容器 `judge_items_widget` 背景透明（原来被全局 `QWidget` 样式刷成纯白，在 `#fafafa` 分组面板上形成一大块白底）；② 修复「快捷操作」按钮重叠——该分组内容最小高度 402px，而整页内容 1035px 超过最大化窗口可用的 945px，按钮受全局样式约束最小 46px 无法再缩，5 行按钮按 39px 行距排布相互重叠 7px；现给 `action_group` 加局部样式 `QPushButton { min-height: 24px; padding: 2px 10px; }`（46→30px）、行距 10→6、贴靠阈值编辑行与 `spin_light_threshold` 高度 40→30、两行状态文字 30/28→20，整页最小高度降到 913px（≤945），各分组按最小高度排布不再重叠；改动只影响配置面板。
+6. **新增「补偿设定」区块（配置面板右上，合格判定上方）**：三个勾选项分别控制分析链路里的**爪盘补偿**、**单周期幅值补偿**、**单周期过零点补偿**，默认全开（与改动前行为一致），勾选状态即时写入 `configuration.txt` 的 `comp_chuck` / `comp_amplitude` / `comp_zero_crossing`。
+   - 爪盘补偿：`DataProcess._apply_chuck_compensation()` 在扣除空测曲线前检查开关，关闭时原样返回并记日志。
+   - 幅值 / 过零点：`WaveAnalysis.analyze_waveform_with_correction()` 的两个参数改为**相互独立**（原来关闭幅值会连带跳过过零点补偿）；两者都关时只做分析、波形原样返回。
+   - **保存时把补偿情况写进 CSV**：新增 `爪盘补偿`、`单周期包络补偿`、`过零点偏差补偿` 三行（已应用/未应用）与汇总行 `补偿方案`（全部补偿 / 部分补偿 / 未补偿），保存的就是按当时选项处理过的数据；`plot_data_reader` 解析为 `chuck_compensation` / `compensation_scheme`，历史面板读回即可知道该文件是补偿、部分补偿还是未补偿。
 
 ## 2026-11-20 更新要点
 
@@ -435,6 +439,9 @@ test_type:0
 test_speed:1                 # 0=高精度 / 1=均衡 / 2=高速（默认 1=均衡）
 inner_x_offset:5.0
 inner_z_offset:5.0
+comp_chuck:1                # 补偿设定：爪盘（空测）单周期补偿（1=启用、0=关闭）
+comp_amplitude:1            # 补偿设定：单周期幅值（包络）补偿
+comp_zero_crossing:1        # 补偿设定：单周期过零点偏差补偿
 judge_enabled:0             # 合格判定总开关（1=开启）
 judge_thresholds:{"N_max":{"on":true,"lo":300.0,"hi":420.0},"N_se":{"on":true,"lo":null,"hi":5.0}}
                             # 各分析结果的合格限值，键见 core/judge_thresholds.py 的 JUDGE_ITEMS；
@@ -452,6 +459,7 @@ X / Y / Z 轴位移与脉冲换算系数：
 
 ## 近期调整
 
+- 2026-11-26：**新增「补偿设定」三个开关 + 保存时记录补偿情况**：配置面板右上（合格判定上方）新增 `comp_group`——`爪盘补偿` / `单周期幅值补偿` / `单周期过零点补偿` 三个勾选项，默认全开。`core/config_manager.py` 新增 `comp_chuck` / `comp_amplitude` / `comp_zero_crossing` 三个读写属性（默认 `1`）；`DataProcess._apply_chuck_compensation()` 关闭时跳过扣曲线；`WaveAnalysis.analyze_waveform_with_correction()` 的两个补偿参数改为相互独立（原来 `apply_amplitude_correction=False` 会连带跳过过零点补偿），两者都关时只分析、波形原样返回，并新增 `amplitude_compensation_applied` 标记。`DataProcess._attach_compensation_status()` 把实际生效的补偿项写进 `analysis_results['concentricity']`，`save_plot_measure_data()` 据此在 CSV 写入 `爪盘补偿` / `单周期包络补偿` / `过零点偏差补偿` 三行与汇总 `补偿方案`（全部补偿 / 部分补偿 / 未补偿）——保存的就是当时选项处理后的数据；`plot_data_reader` 解析 `chuck_compensation` / `compensation_scheme`。配置面板同时把外层 `gridLayout_2` 边距/间距收紧、判定项行距 3→2、判定分组内边距 10→6，整页最小高度 938px（≤945）以容纳新区块。配套 `src/tests/test_compensation_switches.py`（13 项：默认值/往返保存/真值文本、方案文字、CSV 行解析、幅值与过零点开关组合、爪盘开关、CSV 写入校验），全套 121 项测试通过
 - 2026-11-26：**修复配置面板「快捷操作」按钮重叠**：`action_group` 的内容最小高度是 402px，但整页内容（1035px）超过最大化窗口的可用高度（945px），外层布局把「快捷操作」压到 312px，而按钮受全局样式（`padding: 8px 12px` + `min-height: 28px` = 46px）约束无法再缩，于是 5 行按钮按 39px 行距排布、彼此重叠 7px。现改为：`action_group` 局部样式 `QPushButton { min-height: 24px; padding: 2px 10px; }`（按钮 46→30px）、`action_layout` 行距 10→6、贴靠阈值编辑行与 `spin_light_threshold` 高度 40→30、两行状态文字 30/28→20，整页最小高度降到 913px（≤945），各行都按最小高度排布不再重叠；按钮尺寸只影响「快捷操作」分组，其它页面不变。
 - 2026-11-26：**新增合格判定（配置面板右侧区块 + 测量结果着色 + 中央提示窗）**：`ui/config_panel.ui` 增加 `judge_group`（总开关 `judge_enable_check` + `judge_items_widget` + 提示），判定项按测量界面「数据分析结果」的左右两列相对位置排布（`core/judge_thresholds.JUDGE_LAYOUT_ROWS`，左列 N/S 极值/均值/误差、单极均值/误差、累计误差范围、THD；右列 N/S 间隔四项、N/S/NS 面积、NS/2），每项一个勾选框控制是否参与比较，幅值/角度类填上下限、误差类只填上限（下限框灰显「—」），改动即时保存到 `configuration.txt` 的 `judge_enabled` / `judge_thresholds`，非法输入与下限>上限自动回滚。新增 `core/judge_thresholds.py`（`JUDGE_ITEMS`、`JUDGE_LAYOUT_ROWS`、`load_settings`/`save_settings`、`evaluate`：NaN 或未填限值记 skip，全跳过时不给结论，其余项全合格才算合格）；`windows/measure_panel.py` 新增 `RESULT_EDIT_BY_KEY` 与 `_apply_judge_colors()`，分析完按判定把结果刷成 合格绿 #27ae60 / 不合格红 #e74c3c / 未判定默认黑；`windows/judge_popup.py` 提供屏幕中央 440×240 无边框置顶提示窗，96px 粗体「合格 / 不良」，程序内任意鼠标点击关闭（出现 0.3 秒后才响应点击），测量结束判定生效时弹出。配套 `src/tests/test_judge_thresholds.py`（15 项：默认值/往返保存/损坏 JSON/未知键/两列布局覆盖全部项、启用条件、误差类忽略下限、pass/fail/边界/NaN/字符串值）与 `src/tests/test_judge_popup.py`（5 项：大字与颜色、点击关闭、延时前不关闭、替换旧弹窗、旧弹窗已销毁），全套 108 项测试通过
 - 2026-11-20：**评级栏去括号、结论按超下限给合格/不良、超下限点位特别标出**：`ui/dual_track_panel.ui` 的评级分组标题 `评级（残差，码）` → `评级`、`最差点角 (°)` → `最差点角`；评级栏第一格「结论」不再取 MU150 残差评级，改为按磁编码器算法裕度判定——只要有一个内道起点 H<0（超下限）就显示红字 **不良**，否则绿字 **合格**，R 最小/最大/峰值占用/最小裕量/最差点角 仍是 MU150 残差数据；图上把超下限（H<0）的点位特别标出：红点加大 + 每个点位一条红色竖向虚线（最多 12 条）+ 最差点角标「274.782° −0.0306°」，图例增加「超下限点位」，清屏一并清除。`core.zero_node_judge` 返回值新增 `inner_angles_deg` / `failed_angles_deg`，判定文案改为 合格 / 不良 / 合格（边界）。全套 86 项测试通过。
