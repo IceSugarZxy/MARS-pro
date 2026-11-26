@@ -8,7 +8,7 @@ MARS Pro 是基于 PyQt5 的旋转体表磁测量分析系统，适配 **3Axis_M
 
 ## 2026-11-26 更新要点
 
-1. **新增「合格判定」区块（配置面板右侧）**：`ui/config_panel.ui` 在右侧空白区增加 `judge_group`——顶部一个总开关 `judge_enable_check`（启用合格判定），下方 `judge_items_widget` 按测量界面「数据分析结果」的**左右两列相对位置**排布（左列 N/S 极最大/最小/均值/误差、单极均值/误差、累计误差范围、THD；右列 N/S 间隔最大/最小/均值/误差、N/S/NS 面积、NS/2），共 24 项，每项前面一个勾选框控制该项是否参与比较；幅值/角度类填**上下限**，误差类只填**上限**（下限框灰显为「—」），留空表示该侧不限。改动即时写入 `configuration.txt`（`judge_enabled` / `judge_thresholds`），非法输入（非数字、下限>上限）自动回滚并记日志。
+1. **新增「合格判定」区块（配置面板右侧）**：`ui/config_panel.ui` 在右侧空白区增加 `judge_group`——顶部一个总开关 `judge_enable_check`（启用合格判定），下方 `judge_items_widget`（背景透明，与分组面板同色，不再出现白色色块）按测量界面「数据分析结果」的**左右两列相对位置**排布（左列 N/S 极最大/最小/均值/误差、单极均值/误差、累计误差范围、THD；右列 N/S 间隔最大/最小/均值/误差、N/S/NS 面积、NS/2），共 24 项，每项前面一个勾选框控制该项是否参与比较；幅值/角度类填**上下限**，误差类只填**上限**（下限框灰显为「—」），留空表示该侧不限。改动即时写入 `configuration.txt`（`judge_enabled` / `judge_thresholds`），非法输入（非数字、下限>上限）自动回滚并记日志。
 2. **判定计算**：新增 `core/judge_thresholds.py`——`JUDGE_ITEMS` 项目定义、`load_settings/save_settings`、`evaluate(results, settings)`（返回 active / verdicts / failed / overall）；数值无效（NaN，如 THD 算不出）或该项没填限值时记 `skip`，不判不合格；全部跳过时不给结论。所有启用的项目都合格才算合格。
 3. **测量界面结果着色**：`windows/measure_panel.py` 每次分析完按判定结果给对应输入框上色——合格绿（#27ae60）、不合格红（#e74c3c）、未开启判定或该项未配置时恢复默认黑色；`_update_display_defaults()` 会同时清掉颜色。
 4. **测量结束提示窗**：新增 `windows/judge_popup.py`——屏幕中央 440×240 的小矩形（无边框、置顶、不抢焦点），用 96px 粗体显示「合格」/「不良」（绿/红边框与文字），任意点击屏幕（程序内任意鼠标点击）即关闭，出现后 0.3 秒才响应点击以免被触发它的那次点击立刻关掉；每次测量完成且判定生效时弹出，重新测量会先关掉旧的，重置界面也会关闭。

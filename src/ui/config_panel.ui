@@ -751,6 +751,9 @@
       </item>
       <item row="1" column="0">
        <widget class="QWidget" name="judge_items_widget" native="true">
+        <property name="styleSheet">
+         <string notr="true">QWidget#judge_items_widget { background-color: transparent; }</string>
+        </property>
         <property name="sizePolicy">
          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
           <horstretch>0</horstretch>
