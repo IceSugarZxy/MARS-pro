@@ -12,6 +12,7 @@ MARS Pro 是基于 PyQt5 的旋转体表磁测量分析系统，适配 **3Axis_M
 2. **判定计算**：新增 `core/judge_thresholds.py`——`JUDGE_ITEMS` 项目定义、`load_settings/save_settings`、`evaluate(results, settings)`（返回 active / verdicts / failed / overall）；数值无效（NaN，如 THD 算不出）或该项没填限值时记 `skip`，不判不合格；全部跳过时不给结论。所有启用的项目都合格才算合格。
 3. **测量界面结果着色**：`windows/measure_panel.py` 每次分析完按判定结果给对应输入框上色——合格绿（#27ae60）、不合格红（#e74c3c）、未开启判定或该项未配置时恢复默认黑色；`_update_display_defaults()` 会同时清掉颜色。
 4. **测量结束提示窗**：新增 `windows/judge_popup.py`——屏幕中央 440×240 的小矩形（无边框、置顶、不抢焦点），用 96px 粗体显示「合格」/「不良」（绿/红边框与文字），任意点击屏幕（程序内任意鼠标点击）即关闭，出现后 0.3 秒才响应点击以免被触发它的那次点击立刻关掉；每次测量完成且判定生效时弹出，重新测量会先关掉旧的，重置界面也会关闭。
+5. **配置界面布局修整**：① 判定项容器 `judge_items_widget` 背景透明（原来被全局 `QWidget` 样式刷成纯白，在 `#fafafa` 分组面板上形成一大块白底）；② 修复「快捷操作」按钮重叠——该分组内容最小高度 402px，而整页内容 1035px 超过最大化窗口可用的 945px，按钮受全局样式约束最小 46px 无法再缩，5 行按钮按 39px 行距排布相互重叠 7px；现给 `action_group` 加局部样式 `QPushButton { min-height: 24px; padding: 2px 10px; }`（46→30px）、行距 10→6、贴靠阈值编辑行与 `spin_light_threshold` 高度 40→30、两行状态文字 30/28→20，整页最小高度降到 913px（≤945），各分组按最小高度排布不再重叠；改动只影响配置面板。
 
 ## 2026-11-20 更新要点
 
