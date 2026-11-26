@@ -28,11 +28,13 @@ from core.config_manager import (
 from core.offset_calibration_config import OFFSET_PROGRESS_SECONDS
 from core.data_process import SATURATION_RETRY_HEADROOM
 from core.plot_data_reader import pole_pairs_text_from_count
+from core import judge_thresholds
 from windows.plot_window import PlotWindow
 from windows.wave_analysis import WaveAnalysis
 from windows.analysis_detail_dialog import AnalysisDetailDialog
 from windows.test_progress_dialog import TestProgressDialog
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
+from windows.judge_popup import show_judge_popup
 
 logger = get_logger('MeasurePanel')
 
@@ -42,6 +44,8 @@ SATURATION_RETRY_LIMIT = 1
 # 空测一圈采集（B~）的预计耗时（秒），按采集速度档位给出，仅用于进度条走时
 EMPTY_CAPTURE_SECONDS = {0: 60.0, 1: 25.0, 2: 16.0}
 DEFAULT_PLOT_COLOR = '#e74c3c'
+JUDGE_PASS_COLOR = '#27ae60'
+JUDGE_FAIL_COLOR = '#e74c3c'
 STAGE_LONG_PRESS_MS = 500
 # 串口连接成功后需要设置的 IDAC 电流档位
 CONNECT_IDAC_INDEX = 4
@@ -74,6 +78,34 @@ RESULT_FIELD_DEFAULTS = {
     "polar_error_sum_edit": "0.00",
     "thd_error_edit": "0.00",
     "polar_num_edit": "--",
+}
+
+# 分析结果键 → 界面输入框（合格判定着色用）
+RESULT_EDIT_BY_KEY = {
+    "N_max": "n_max_edit",
+    "N_min": "n_min_edit",
+    "N_mean": "n_mean_edit",
+    "S_max": "s_max_edit",
+    "S_min": "s_min_edit",
+    "S_mean": "s_mean_edit",
+    "NS_2": "ns_2_edit",
+    "N_se": "n_error_edit",
+    "S_se": "s_error_edit",
+    "N_interval_max": "n_interval_max_edit",
+    "N_interval_min": "n_interval_min_edit",
+    "N_interval_mean": "n_interval_mean_edit",
+    "S_interval_max": "s_interval_max_edit",
+    "S_interval_min": "s_interval_min_edit",
+    "S_interval_mean": "s_interval_mean_edit",
+    "N_interval_std": "n_interval_error_edit",
+    "S_interval_std": "s_interval_error_edit",
+    "N_area": "n_area_edit",
+    "S_area": "s_area_edit",
+    "NS_area": "ns_area_edit",
+    "SinglePolarMean": "single_polar_mean_edit",
+    "SinglePolarError": "single_polar_error_edit",
+    "PolarErrorSum": "polar_error_sum_edit",
+    "THD_error": "thd_error_edit",
 }
 
 # 样品信息输入框的默认值（测试员除外，开始测量后恢复默认值）
@@ -144,6 +176,9 @@ class MeasurePanel(QWidget):
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
         self._analysis_detail_dialogs = []
+        # 合格判定：最近一次的判定报告与提示窗
+        self._last_judge_report = None
+        self._judge_popup = None
 
         self._init_stage_picture()
         self._connect_stage_buttons()
@@ -1694,6 +1729,8 @@ class MeasurePanel(QWidget):
             edit = self.findChild(QLineEdit, name)
             if edit:
                 edit.setText(default_value)
+                edit.setStyleSheet("")
+        self._last_judge_report = None
 
     def _reset_test_interface(self):
         """重置测试界面"""
@@ -1701,10 +1738,19 @@ class MeasurePanel(QWidget):
         self.analysis_results = None
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
+        self._close_judge_popup()
         self._update_display_defaults()
         self.clear_plot()
         self.angle_data = []
         self.mag_data = []
+
+    def _close_judge_popup(self):
+        if self._judge_popup is not None:
+            try:
+                self._judge_popup.close()
+            except RuntimeError:
+                pass
+            self._judge_popup = None
 
     def _disable_function_buttons(self):
         """禁用功能按钮"""
@@ -1965,6 +2011,9 @@ class MeasurePanel(QWidget):
 
             if self.is_testing:
                 self._end_test()
+
+            if self.data_process.measure_type != "vertical":
+                self._show_judge_result_popup()
         else:
             self._update_status("警告：处理后的数据为空", is_error=True)
             if self.is_testing:
@@ -2081,5 +2130,44 @@ class MeasurePanel(QWidget):
                     self.findChild(QLineEdit, "polar_num_edit").setText(str(int(pole_num) * 2))
                 except (ValueError, TypeError):
                     self.findChild(QLineEdit, "polar_num_edit").setText("--")
+
+            self._apply_judge_colors(results)
         except Exception as e:
             logger.error(f"更新显示结果失败: {e}")
+
+    def _apply_judge_colors(self, results):
+        """按合格判定阈值给分析结果着色：合格绿、不合格红、未判定恢复默认色。"""
+        try:
+            settings = judge_thresholds.load_settings(get_config_manager())
+            report = judge_thresholds.evaluate(results, settings)
+        except Exception as e:
+            logger.error(f"合格判定失败: {e}")
+            report = {"active": False, "verdicts": {}, "failed": [], "overall": None}
+        self._last_judge_report = report
+
+        for key, edit_name in RESULT_EDIT_BY_KEY.items():
+            edit = self.findChild(QLineEdit, edit_name)
+            if edit is None:
+                continue
+            verdict = report["verdicts"].get(key)
+            if verdict == judge_thresholds.VERDICT_PASS:
+                edit.setStyleSheet(f"color: {JUDGE_PASS_COLOR};")
+            elif verdict == judge_thresholds.VERDICT_FAIL:
+                edit.setStyleSheet(f"color: {JUDGE_FAIL_COLOR};")
+            else:
+                edit.setStyleSheet("")
+
+    def _show_judge_result_popup(self):
+        """测量结束后在屏幕中央提示合格/不良（仅判定生效时）。"""
+        report = self._last_judge_report or {}
+        overall = report.get("overall")
+        if not report.get("active") or overall is None:
+            return
+        passed = overall == judge_thresholds.VERDICT_PASS
+        text = "合格" if passed else "不良"
+        color = JUDGE_PASS_COLOR if passed else JUDGE_FAIL_COLOR
+        self._judge_popup = show_judge_popup(text, color, parent=self, previous=self._judge_popup)
+        logger.info(
+            f"合格判定提示: {text}"
+            f"（不合格项: {', '.join(report.get('failed') or []) or '无'}）"
+        )

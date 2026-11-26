@@ -400,6 +400,9 @@ class ConfigManager(QObject):
         'stage_step_distance': '0.5',
         # 光电自动贴靠下降量阈值（设备 Flash 的本地镜像）
         'light_threshold': '25',
+        # 合格判定：总开关 + 各分析结果的限值（JSON，见 core/judge_thresholds.py）
+        'judge_enabled': '0',
+        'judge_thresholds': '{}',
     }
 
     def __init__(self, config_file: str = "configuration.txt"):

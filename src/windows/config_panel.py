@@ -7,7 +7,7 @@ import os
 import re
 import serial.tools.list_ports
 from PyQt5.QtCore import Qt, QTimer, QObject, QEvent
-from PyQt5.QtGui import QTextCursor
+from PyQt5.QtGui import QTextCursor, QColor
 from PyQt5.QtWidgets import (
     QWidget,
     QPushButton,
@@ -19,6 +19,8 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QPlainTextEdit,
     QMessageBox,
+    QHeaderView,
+    QTableWidgetItem,
 )
 from PyQt5 import uic
 from core.logger import get_logger
@@ -35,6 +37,7 @@ from core.config_manager import (
 )
 from windows.full_offset_calibration_dialog import FullOffsetCalibrationDialog
 from windows.scheme_edit_dialog import SchemeEditDialog
+from core import judge_thresholds
 
 logger = get_logger('ConfigPanel')
 
@@ -104,6 +107,9 @@ class ConfigPanel(QWidget):
 
         # 初始化快捷操作配置
         self._init_quick_action_settings()
+
+        # 初始化合格判定阈值
+        self._init_judge_settings()
 
         # 全量程偏置校准自动流程状态
         self._offset_all_active = False
@@ -1122,6 +1128,131 @@ class ConfigPanel(QWidget):
         config = get_config_manager()
         config.inner_z_offset = value
         logger.info(f"Z轴偏移量已更新: {value:.2f} mm")
+
+    # ==================== 合格判定阈值 ====================
+
+    def _init_judge_settings(self):
+        """加载合格判定阈值并填充判定项目表。"""
+        self._judge_loading = True
+        self._judge_settings = judge_thresholds.load_settings(get_config_manager())
+
+        table = self.judge_table
+        table.blockSignals(True)
+        table.setRowCount(len(judge_thresholds.JUDGE_ITEMS))
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        table.setColumnWidth(1, 76)
+        table.setColumnWidth(2, 76)
+
+        for row, (key, name, unit, kind) in enumerate(judge_thresholds.JUDGE_ITEMS):
+            entry = self._judge_settings["items"].get(key) or {}
+
+            name_item = QTableWidgetItem(judge_thresholds.item_label(name, unit))
+            name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            name_item.setCheckState(Qt.Checked if entry.get("on") else Qt.Unchecked)
+            name_item.setData(Qt.UserRole, key)
+            table.setItem(row, 0, name_item)
+
+            for column, field in ((1, "lo"), (2, "hi")):
+                value = entry.get(field)
+                cell = QTableWidgetItem(self._judge_cell_text(kind, field, value))
+                cell.setData(Qt.UserRole, key)
+                cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if kind == judge_thresholds.KIND_UPPER and field == "lo":
+                    # 误差类只填上限
+                    cell.setFlags(Qt.ItemIsSelectable)
+                    cell.setBackground(QColor("#f0f0f0"))
+                else:
+                    cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                table.setItem(row, column, cell)
+
+        table.blockSignals(False)
+
+        self.judge_enable_check.setChecked(bool(self._judge_settings["enabled"]))
+        self.judge_enable_check.toggled.connect(self._on_judge_enabled_toggled)
+        table.itemChanged.connect(self._on_judge_item_changed)
+        self._judge_loading = False
+
+    @staticmethod
+    def _format_judge_limit(value: float) -> str:
+        return f"{value:g}"
+
+    def _on_judge_enabled_toggled(self, checked: bool) -> None:
+        if self._judge_loading:
+            return
+        self._judge_settings["enabled"] = bool(checked)
+        judge_thresholds.save_settings(get_config_manager(), self._judge_settings)
+        logger.info(f"合格判定总开关: {'开启' if checked else '关闭'}")
+
+    @staticmethod
+    def _judge_cell_text(kind: str, field: str, value) -> str:
+        """误差类的下限不参与判定，单元格显示占位符。"""
+        if kind == judge_thresholds.KIND_UPPER and field == "lo":
+            return "—"
+        return "" if value is None else ConfigPanel._format_judge_limit(value)
+
+    def _judge_row_key(self, row: int) -> str:
+        item = self.judge_table.item(row, 0)
+        return item.data(Qt.UserRole) if item else ""
+
+    def _read_judge_limit(self, row: int, column: int):
+        """读取单元格限值：空串返回 None，非法内容返回 False。"""
+        cell = self.judge_table.item(row, column)
+        text = (cell.text() if cell else "").strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return False
+
+    def _on_judge_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._judge_loading:
+            return
+        row = item.row()
+        key = self._judge_row_key(row)
+        if not key:
+            return
+
+        kind = judge_thresholds.item_kind(key)
+        lo = None if kind == judge_thresholds.KIND_UPPER else self._read_judge_limit(row, 1)
+        hi = self._read_judge_limit(row, 2)
+        if lo is False or hi is False:
+            logger.warning(f"合格判定限值输入无效: {key}")
+            self._reload_judge_row(row)
+            return
+        if lo is not None and hi is not None and lo > hi:
+            logger.warning(f"合格判定下限大于上限: {key}")
+            self._reload_judge_row(row)
+            return
+
+        entry = self._judge_settings["items"].setdefault(key, {"on": False, "lo": None, "hi": None})
+        entry["on"] = self.judge_table.item(row, 0).checkState() == Qt.Checked
+        entry["lo"] = lo
+        entry["hi"] = hi
+        judge_thresholds.save_settings(get_config_manager(), self._judge_settings)
+        logger.info(
+            f"合格判定项已更新: {key} 启用={entry['on']} 下限={lo} 上限={hi}"
+        )
+
+    def _reload_judge_row(self, row: int) -> None:
+        """用已保存的设置覆盖回来（丢弃非法输入）。"""
+        key = self._judge_row_key(row)
+        kind = judge_thresholds.item_kind(key)
+        entry = self._judge_settings["items"].get(key) or {}
+        self._judge_loading = True
+        self.judge_table.blockSignals(True)
+        self.judge_table.item(row, 0).setCheckState(
+            Qt.Checked if entry.get("on") else Qt.Unchecked
+        )
+        for column, field in ((1, "lo"), (2, "hi")):
+            cell = self.judge_table.item(row, column)
+            if cell is not None:
+                cell.setText(self._judge_cell_text(kind, field, entry.get(field)))
+        self.judge_table.blockSignals(False)
+        self._judge_loading = False
 
     def _on_position_data_updated(self, position_data):
         """位置数据更新（M~ 响应解析后的 (x, y, z) 三元组）"""

@@ -6,6 +6,13 @@ MARS Pro 是基于 PyQt5 的旋转体表磁测量分析系统，适配 **3Axis_M
 
 > MARS Pro 是从 [MARS](https://github.com/IceSugarZxy/MARS)（V3.5 固件）升级而来，通信协议、硬件架构、控制方式均有重大变化。
 
+## 2026-11-26 更新要点
+
+1. **新增「合格判定」区块（配置面板右侧）**：`ui/config_panel.ui` 在右侧空白区增加 `judge_group`——顶部一个总开关 `judge_enable_check`（启用合格判定），下方 `judge_table` 逐行列出测量界面「数据分析结果」的 24 个值（N/S 极最大/最小/均值、NS/2、N/S 极误差、N/S 间隔最大/最小/均值、N/S 间隔误差、N/S/NS 面积、单极均值、单极误差、累计误差范围、THD 失真率），每行前面一个勾选框控制该项是否参与比较；幅值/角度类填**上下限**，误差类只填**上限**（下限格灰显为「—」），留空表示该侧不限。改动即时写入 `configuration.txt`（`judge_enabled` / `judge_thresholds`），非法输入（非数字、下限>上限）自动回滚并记日志。
+2. **判定计算**：新增 `core/judge_thresholds.py`——`JUDGE_ITEMS` 项目定义、`load_settings/save_settings`、`evaluate(results, settings)`（返回 active / verdicts / failed / overall）；数值无效（NaN，如 THD 算不出）或该项没填限值时记 `skip`，不判不合格；全部跳过时不给结论。所有启用的项目都合格才算合格。
+3. **测量界面结果着色**：`windows/measure_panel.py` 每次分析完按判定结果给对应输入框上色——合格绿（#27ae60）、不合格红（#e74c3c）、未开启判定或该项未配置时恢复默认黑色；`_update_display_defaults()` 会同时清掉颜色。
+4. **测量结束提示窗**：新增 `windows/judge_popup.py`——屏幕中央 440×240 的小矩形（无边框、置顶、不抢焦点），用 96px 粗体显示「合格」/「不良」（绿/红边框与文字），任意点击屏幕（程序内任意鼠标点击）即关闭，出现后 0.3 秒才响应点击以免被触发它的那次点击立刻关掉；每次测量完成且判定生效时弹出，重新测量会先关掉旧的，重置界面也会关闭。
+
 ## 2026-11-20 更新要点
 
 1. **双码道解算页面只保留「磁编码器算法裕度」一张图**：`ui/dual_track_panel.ui` 的 `QTabWidget`（残差曲线 / 同向过零间距 / 过零位置偏差 / 三点判定）换成单一画布 `plot_container` + `judge_grid`，`windows/dual_track_panel.py` 删除另外三张图的初始化、绘制、图例改名与清屏逻辑；残差结果仍以顶部 KPI（R 最小/最大、峰、裕量、最差点角、合格/超线）与状态栏呈现。该图即原「三点判定」，现更名「磁编码器算法裕度」，并在图上加了标题标签。
@@ -277,7 +284,7 @@ python -m PyInstaller --clean --noconfirm MARS.spec
 +--src/
 |  +--core/                      # 串口、配置、数据处理、双码道/过零算法
 |  +--ui/                        # Qt Designer .ui 文件和主题
-|  +--windows/                   # 各功能面板和对话框（含 plot_utils.py 双击复位）
+|  +--windows/                   # 各功能面板和对话框（含 plot_utils.py 双击复位、judge_popup.py 合格提示窗）
 |  +--tests/                     # 单元测试（python -m unittest discover -s tests）
 |  +--logs/                      # 源码运行时日志目录
 |  +--configuration.txt          # 本地运行配置
@@ -427,6 +434,10 @@ test_type:0
 test_speed:1                 # 0=高精度 / 1=均衡 / 2=高速（默认 1=均衡）
 inner_x_offset:5.0
 inner_z_offset:5.0
+judge_enabled:0             # 合格判定总开关（1=开启）
+judge_thresholds:{"N_max":{"on":true,"lo":300.0,"hi":420.0},"N_se":{"on":true,"lo":null,"hi":5.0}}
+                            # 各分析结果的合格限值，键见 core/judge_thresholds.py 的 JUDGE_ITEMS；
+                            # 误差类只用到 hi，lo 为 null 表示该侧不限
 ```
 
 选档规则：目标 = 估计值 + 10 mT，在 IDAC3~6 × PGA×1~×128 中取“量程 ≥ 目标且量程最小”的组合
@@ -440,6 +451,7 @@ X / Y / Z 轴位移与脉冲换算系数：
 
 ## 近期调整
 
+- 2026-11-26：**新增合格判定（配置面板右侧区块 + 测量结果着色 + 中央提示窗）**：`ui/config_panel.ui` 增加 `judge_group`（总开关 `judge_enable_check` + `judge_table` + 提示），表格 24 行对应「数据分析结果」全部字段，每行勾选框控制是否参与比较，幅值/角度类填上下限、误差类只填上限（下限灰显「—」），改动即时保存到 `configuration.txt` 的 `judge_enabled` / `judge_thresholds`，非法输入与下限>上限自动回滚。新增 `core/judge_thresholds.py`（`JUDGE_ITEMS`、`load_settings`/`save_settings`、`evaluate`：NaN 或未填限值记 skip，全跳过时不给结论，其余项全合格才算合格）；`windows/measure_panel.py` 新增 `RESULT_EDIT_BY_KEY` 与 `_apply_judge_colors()`，分析完按判定把结果刷成 合格绿 #27ae60 / 不合格红 #e74c3c / 未判定默认黑；`windows/judge_popup.py` 提供屏幕中央 440×240 无边框置顶提示窗，96px 粗体「合格 / 不良」，程序内任意鼠标点击关闭（出现 0.3 秒后才响应点击），测量结束判定生效时弹出。配套 `src/tests/test_judge_thresholds.py`（13 项：默认值/往返保存/损坏 JSON/未知键、启用条件、误差类忽略下限、pass/fail/边界/NaN/字符串值）与 `src/tests/test_judge_popup.py`（5 项：大字与颜色、点击关闭、延时前不关闭、替换旧弹窗、旧弹窗已销毁），全套 106 项测试通过
 - 2026-11-20：**评级栏去括号、结论按超下限给合格/不良、超下限点位特别标出**：`ui/dual_track_panel.ui` 的评级分组标题 `评级（残差，码）` → `评级`、`最差点角 (°)` → `最差点角`；评级栏第一格「结论」不再取 MU150 残差评级，改为按磁编码器算法裕度判定——只要有一个内道起点 H<0（超下限）就显示红字 **不良**，否则绿字 **合格**，R 最小/最大/峰值占用/最小裕量/最差点角 仍是 MU150 残差数据；图上把超下限（H<0）的点位特别标出：红点加大 + 每个点位一条红色竖向虚线（最多 12 条）+ 最差点角标「274.782° −0.0306°」，图例增加「超下限点位」，清屏一并清除。`core.zero_node_judge` 返回值新增 `inner_angles_deg` / `failed_angles_deg`，判定文案改为 合格 / 不良 / 合格（边界）。全套 86 项测试通过。
 - 2026-11-20：**磁编码器算法裕度图精简 + 去掉图下文字**：只画内道每个起点的最小余量 H（前/中/后三项差值不再绘制，插值下限 0.036° 已含在 H 里），保留不通过红点、边界黄点与一条 `判定线 H=0（插值下限 0.036°）` 参考线；`ui/dual_track_panel.ui` 删除图下方的 `status_label`（判定结果、最小余量、最差内道起点角、不通过比例改由图标题与日志给出），解算失败/缺 DLL 的提示也改为写进图标题 + 弹窗。
 - 2026-11-20：**「三点判定」更名「磁编码器算法裕度」**：`ui/dual_track_panel.ui` 的 `judge_grid` 增加标题标签 `judge_title_label`（加粗「磁编码器算法裕度」，图放在第 1 行），流程图标题、无数据/异常提示、状态栏文案同步改口（状态栏变为「…；磁编码器算法裕度合格，最小余量 +0.0547°…」）；算法本身与判定口径不变，仍按《CC01 实际过零节点三点判断_算法说明》。顺手修掉上一版 `.ui` 里 `<item>` 多缩进、以及 `dual_track_panel.py` 被写成 CRLF 的问题（恢复 LF，避免整文件 diff）。
