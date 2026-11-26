@@ -47,17 +47,38 @@ VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
 VERDICT_SKIP = "skip"
 
+# 判定项在配置界面的排布：(左列, 右列)，与测量界面「数据分析结果」的两列布局一一对应
+JUDGE_LAYOUT_ROWS: Tuple[Tuple[str, str], ...] = (
+    ("N_max", "N_interval_max"),
+    ("N_min", "N_interval_min"),
+    ("N_mean", "N_interval_mean"),
+    ("N_se", "N_interval_std"),
+    ("S_max", "S_interval_max"),
+    ("S_min", "S_interval_min"),
+    ("S_mean", "S_interval_mean"),
+    ("S_se", "S_interval_std"),
+    ("SinglePolarMean", "N_area"),
+    ("SinglePolarError", "S_area"),
+    ("PolarErrorSum", "NS_area"),
+    ("THD_error", "NS_2"),
+)
+
 
 def item_label(name: str, unit: str) -> str:
     """表格中显示的“名称（单位）”。"""
     return f"{name}（{unit}）" if unit else name
 
 
-def item_kind(key: str) -> str:
-    for item_key, _name, _unit, kind in JUDGE_ITEMS:
+def item_info(key: str) -> Tuple[str, str, str]:
+    """返回 (显示名, 单位, 判定方式)。"""
+    for item_key, name, unit, kind in JUDGE_ITEMS:
         if item_key == key:
-            return kind
-    return KIND_RANGE
+            return name, unit, kind
+    return key, "", KIND_RANGE
+
+
+def item_kind(key: str) -> str:
+    return item_info(key)[2]
 
 
 def default_item_settings() -> Dict[str, Dict[str, object]]:

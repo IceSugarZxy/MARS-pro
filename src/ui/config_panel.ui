@@ -750,52 +750,33 @@
        </widget>
       </item>
       <item row="1" column="0">
-       <widget class="QTableWidget" name="judge_table">
-        <property name="editTriggers">
-         <set>QAbstractItemView::DoubleClicked|QAbstractItemView::SelectedClicked|QAbstractItemView::EditKeyPressed</set>
+       <widget class="QWidget" name="judge_items_widget" native="true">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
         </property>
-        <property name="alternatingRowColors">
-         <bool>true</bool>
-        </property>
-        <property name="selectionBehavior">
-         <enum>QAbstractItemView::SelectRows</enum>
-        </property>
-        <property name="columnCount">
-         <number>3</number>
-        </property>
-        <property name="rowCount">
-         <number>0</number>
-        </property>
-        <attribute name="horizontalHeaderVisible">
-         <bool>true</bool>
-        </attribute>
-        <attribute name="horizontalHeaderHighlightSections">
-         <bool>false</bool>
-        </attribute>
-        <attribute name="horizontalHeaderStretchLastSection">
-         <bool>false</bool>
-        </attribute>
-        <attribute name="verticalHeaderVisible">
-         <bool>false</bool>
-        </attribute>
-        <attribute name="verticalHeaderDefaultSectionSize">
-         <number>20</number>
-        </attribute>
-        <column>
-         <property name="text">
-          <string>判定项目</string>
+        <layout class="QGridLayout" name="judge_items_layout">
+         <property name="leftMargin">
+          <number>0</number>
          </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>下限</string>
+         <property name="topMargin">
+          <number>0</number>
          </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>上限</string>
+         <property name="rightMargin">
+          <number>0</number>
          </property>
-        </column>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <property name="horizontalSpacing">
+          <number>4</number>
+         </property>
+         <property name="verticalSpacing">
+          <number>3</number>
+         </property>
+        </layout>
        </widget>
       </item>
       <item row="2" column="0">

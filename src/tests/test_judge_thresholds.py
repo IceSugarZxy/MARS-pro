@@ -69,6 +69,25 @@ class LoadSaveTests(unittest.TestCase):
         settings = jt.load_settings(config)
         self.assertNotIn("Nope", settings["items"])
 
+    def test_layout_covers_every_item_once(self):
+        """两列布局必须覆盖全部判定项且不重复。"""
+        layout_keys = [key for row in jt.JUDGE_LAYOUT_ROWS for key in row]
+        item_keys = [key for key, _n, _u, _k in jt.JUDGE_ITEMS]
+        self.assertEqual(len(layout_keys), len(set(layout_keys)))
+        self.assertEqual(sorted(layout_keys), sorted(item_keys))
+        for left_key, right_key in jt.JUDGE_LAYOUT_ROWS:
+            self.assertTrue(left_key and right_key)
+
+    def test_layout_matches_measure_panel_columns(self):
+        """左右两列与测量界面数据分析结果的列一致：左列 N/S 极与统计量，右列间隔与面积。"""
+        left = [left_key for left_key, _right in jt.JUDGE_LAYOUT_ROWS]
+        right = [right_key for _left, right_key in jt.JUDGE_LAYOUT_ROWS]
+        self.assertEqual(left[:4], ["N_max", "N_min", "N_mean", "N_se"])
+        self.assertEqual(right[:4], ["N_interval_max", "N_interval_min",
+                                     "N_interval_mean", "N_interval_std"])
+        self.assertEqual(right[-1], "NS_2")
+        self.assertEqual(left[-1], "THD_error")
+
 
 class ActiveItemTests(unittest.TestCase):
     def test_item_needs_checkbox_and_a_limit(self):
