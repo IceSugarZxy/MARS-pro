@@ -19,6 +19,9 @@
      <property name="title">
       <string>快捷操作</string>
      </property>
+     <property name="styleSheet">
+      <string notr="true">QPushButton { min-height: 24px; padding: 2px 10px; }</string>
+     </property>
      <layout class="QGridLayout" name="action_layout">
       <property name="leftMargin">
        <number>10</number>
@@ -33,7 +36,7 @@
        <number>10</number>
       </property>
       <property name="spacing">
-       <number>10</number>
+       <number>6</number>
       </property>
       <item row="0" column="0">
        <widget class="QPushButton" name="btn_zeroing">
@@ -224,7 +227,7 @@
         <property name="minimumSize">
          <size>
           <width>250</width>
-          <height>40</height>
+          <height>30</height>
          </size>
         </property>
         <property name="maximumSize">
@@ -260,13 +263,13 @@
            <property name="minimumSize">
             <size>
              <width>132</width>
-             <height>40</height>
+             <height>30</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
              <width>132</width>
-             <height>40</height>
+             <height>30</height>
             </size>
            </property>
            <property name="toolTip">
@@ -372,7 +375,7 @@
         <property name="minimumSize">
          <size>
           <width>0</width>
-          <height>30</height>
+          <height>20</height>
          </size>
         </property>
         <property name="text">
@@ -388,7 +391,7 @@
         <property name="minimumSize">
          <size>
           <width>0</width>
-          <height>28</height>
+          <height>20</height>
          </size>
         </property>
         <property name="text">
