@@ -1102,6 +1102,11 @@ class ConfigPanel(QWidget):
         """初始化快捷操作配置"""
         config = get_config_manager()
 
+        # 按钮行均分「快捷操作」分组的剩余高度：分组变高时按钮跟着变高，
+        # 而不是在底部两行状态文字下面留一片空白
+        for row in range(5):
+            self.action_layout.setRowStretch(row, 1)
+
         self._bind_double_spin(
             "spin_x_offset",
             config.inner_x_offset,
