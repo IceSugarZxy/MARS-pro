@@ -34,7 +34,6 @@ from windows.wave_analysis import WaveAnalysis
 from windows.analysis_detail_dialog import AnalysisDetailDialog
 from windows.test_progress_dialog import TestProgressDialog
 from windows.offset_calibration_dialog import OffsetCalibrationDialog
-from windows.judge_popup import show_judge_popup
 
 logger = get_logger('MeasurePanel')
 
@@ -176,9 +175,8 @@ class MeasurePanel(QWidget):
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
         self._analysis_detail_dialogs = []
-        # 合格判定：最近一次的判定报告与提示窗
+        # 合格判定：最近一次的判定报告
         self._last_judge_report = None
-        self._judge_popup = None
 
         self._init_stage_picture()
         self._connect_stage_buttons()
@@ -1738,19 +1736,10 @@ class MeasurePanel(QWidget):
         self.analysis_results = None
         self._persistent_status_message = ""
         self._persistent_status_is_error = False
-        self._close_judge_popup()
         self._update_display_defaults()
         self.clear_plot()
         self.angle_data = []
         self.mag_data = []
-
-    def _close_judge_popup(self):
-        if self._judge_popup is not None:
-            try:
-                self._judge_popup.close()
-            except RuntimeError:
-                pass
-            self._judge_popup = None
 
     def _disable_function_buttons(self):
         """禁用功能按钮"""
@@ -2013,7 +2002,8 @@ class MeasurePanel(QWidget):
                 self._end_test()
 
             if self.data_process.measure_type != "vertical":
-                self._show_judge_result_popup()
+                # 合格判定结果显示在「测量结束」弹窗里（判定未开启时保持原样）
+                self._show_judge_verdict_in_dialog()
         else:
             self._update_status("警告：处理后的数据为空", is_error=True)
             if self.is_testing:
@@ -2157,16 +2147,18 @@ class MeasurePanel(QWidget):
             else:
                 edit.setStyleSheet("")
 
-    def _show_judge_result_popup(self):
-        """测量结束后在屏幕中央提示合格/不良（仅判定生效时）。"""
+    def _show_judge_verdict_in_dialog(self):
+        """把合格/不良写进「测量结束」弹窗（仅判定生效且弹窗还在时）。"""
         report = self._last_judge_report or {}
         overall = report.get("overall")
         if not report.get("active") or overall is None:
             return
+        if not self.test_progress_dialog:
+            return
         passed = overall == judge_thresholds.VERDICT_PASS
         text = "合格" if passed else "不良"
         color = JUDGE_PASS_COLOR if passed else JUDGE_FAIL_COLOR
-        self._judge_popup = show_judge_popup(text, color, parent=self, previous=self._judge_popup)
+        self.test_progress_dialog.show_judge_verdict(text, color)
         logger.info(
             f"合格判定提示: {text}"
             f"（不合格项: {', '.join(report.get('failed') or []) or '无'}）"

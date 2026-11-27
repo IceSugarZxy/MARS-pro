@@ -68,6 +68,13 @@ class TestProgressDialog(QDialog):
 
         self.btn_cancel.setText("确定")
 
+    def show_judge_verdict(self, text, color):
+        """在「测量结束」弹窗里用大字显示合格/不良（合格判定开启时才调用）。"""
+        self.label_title.setText(text)
+        self.label_title.setStyleSheet(
+            "color: %s; font-size: 40px; font-weight: bold;" % color
+        )
+
     def set_title(self, text):
         """设置标题"""
         self.label_title.setText(text)
